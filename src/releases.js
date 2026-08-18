@@ -8,7 +8,7 @@
 window.Releases = [
   {
     version: '0.1.0',
-    state: 'development',
+    date: '2026-08-18',
     title: 'First working build',
     summary:
       'A Git client that reads history as coloured lanes, with per-hunk staging, ' +
