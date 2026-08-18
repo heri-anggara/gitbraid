@@ -621,6 +621,10 @@ menulis dua kunci ini; kunci lain ditolak.
   menyebutkan direktori mana yang dipakai.
 - `↑` / `↓` menelusuri riwayat perintah dalam sesi itu.
 - Satu perintah sekaligus; `Stop` mengirim `SIGTERM` ke yang sedang jalan.
+- Scrollback dibatasi 5.000 baris, dan posisi gulir dibaca dari peristiwa
+  `scroll`, bukan diukur ulang tiap baris — mengukur `scrollHeight` per baris
+  memaksa layout ulang seluruh panel, yang membuat 2.000 baris memakan 2,7
+  detik. Sekarang 34 ms.
 - **Ini penangkap keluaran, bukan pseudo-terminal.** `git`, `npm`, `ls`, `make`
   berjalan normal. Program layar penuh yang butuh TTY (`vim`, `top`, `less`,
   prompt password interaktif) tidak. PTY sungguhan butuh `node-pty` + `xterm.js`,

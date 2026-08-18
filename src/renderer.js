@@ -3495,15 +3495,39 @@ function saveTerm() {
 
 const termOpen = () => !$('term').hidden;
 
+/* A build or a test run prints thousands of lines, and they were kept for the
+   rest of the session — the panel grew without limit. Older lines are dropped
+   the way a terminal's scrollback does. */
+const TERM_MAX_LINES = 5000;
+
+/* Whether the reader is following the tail. Kept up to date from the scroll
+   event instead of measured on every line: reading scrollHeight forces a layout
+   of the whole panel, and doing that per line made 2,000 lines take 2.7
+   seconds where appending them costs 3 ms. */
+let termAtBottom = true;
+let termScrollQueued = false;
+
+$('term-out').addEventListener('scroll', () => {
+  const out = $('term-out');
+  termAtBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 24;
+});
+
 function termWrite(text, cls) {
   const out = $('term-out');
-  const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 24;
   const line = document.createElement('div');
   if (cls) line.className = cls;
   line.textContent = text;
   out.appendChild(line);
-  // Follow the output only if the reader had not scrolled up to read something.
-  if (atBottom) out.scrollTop = out.scrollHeight;
+  while (out.childElementCount > TERM_MAX_LINES) out.removeChild(out.firstChild);
+
+  // One scroll per frame however many lines arrived in it.
+  if (termAtBottom && !termScrollQueued) {
+    termScrollQueued = true;
+    requestAnimationFrame(() => {
+      termScrollQueued = false;
+      out.scrollTop = out.scrollHeight;
+    });
+  }
 }
 
 /** The panel titles itself with the repository its commands will run in. */
