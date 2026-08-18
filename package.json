@@ -1,0 +1,87 @@
+{
+  "name": "gitbraid",
+  "version": "0.1.0",
+  "description": "Read your Git history as coloured lanes",
+  "main": "main.js",
+  "author": "Heri Anggara <herianggara2409@gmail.com>",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --linux AppImage deb",
+    "test": "node test/parsers.test.js",
+    "dist:win": "electron-builder --win nsis portable",
+    "dist:mac": "electron-builder --mac dmg zip"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "io.github.heri_anggara.GitBraid",
+    "productName": "GitBraid",
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "build/icons/**/*",
+      "package.json",
+      "!test/**/*"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development;RevisionControl",
+      "maintainer": "Heri Anggara <herianggara2409@gmail.com>",
+      "icon": "build/icons",
+      "desktop": {
+        "StartupWMClass": "GitBraid",
+        "GenericName": "Git Client",
+        "Keywords": "git;version control;vcs;commit;diff;merge;",
+        "StartupNotify": "true"
+      }
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icons/512x512.png",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icons/512x512.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "extraResources": [
+      {
+        "from": "build/linux/io.github.heri_anggara.GitBraid.metainfo.xml",
+        "to": "io.github.heri_anggara.GitBraid.metainfo.xml"
+      }
+    ],
+    "deb": {
+      "afterInstall": "build/linux/after-install.sh",
+      "afterRemove": "build/linux/after-remove.sh"
+    }
+  },
+  "homepage": "https://github.com/heri-anggara/gitbraid",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/heri-anggara/gitbraid.git"
+  },
+  "bugs": {
+    "url": "https://github.com/heri-anggara/gitbraid/issues"
+  }
+}
