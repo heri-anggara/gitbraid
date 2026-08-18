@@ -1124,6 +1124,24 @@ function computeContainment() {
   return out;
 }
 
+/**
+ * Is this ref's tip already an ancestor of the branch you are on? The answer is
+ * already in `containedBy`, the same walk the ghost badge uses, so saying it
+ * before you click costs nothing.
+ *
+ * Built from local tips over the commits loaded so far, so it is used to
+ * explain, never to block. Returns null when there is no answer.
+ */
+function alreadyIn(refName) {
+  const head = state.status?.branch;
+  if (!head) return null;
+  const tip = state.refs.branches.find((b) => b.name === refName)?.oid;
+  if (!tip) return null;
+  const holders = state.containedBy?.get(tip);
+  if (!holders) return null;
+  return holders.includes(head);
+}
+
 /** The one branch worth naming for a commit: the one you are on, if it has it. */
 function ghostBranch(hash) {
   const list = state.containedBy?.get(hash);
@@ -2023,17 +2041,35 @@ async function newBranch(startPoint) {
 /* Shared by the sidebar's context menu and the Repository menu. */
 
 async function mergeBranch(ref) {
+  let out = '';
   const ok = await gitAction(null, `Merging ${ref}`,
-    () => call('repo:merge', repoPath(), ref),
-    async () => { await refresh({ keepSelection: false }); setStatus(`Merged ${ref}`, 'ok'); });
+    async () => (out = await call('repo:merge', repoPath(), ref)),
+    async () => {
+      await refresh({ keepSelection: false });
+      /* git succeeds and changes nothing when the branch is already contained.
+         Saying "Merged" there would claim something that did not happen. */
+      setStatus(nothingHappened(out)
+        ? `${ref} is already in this branch — nothing to merge`
+        : `Merged ${ref}`, nothingHappened(out) ? '' : 'ok');
+    });
   // A conflict stops the merge half-done; the history has to show that state.
   if (!ok) await refresh({ keepSelection: false });
 }
 
+/** git's way of saying it did nothing, on merge, pull and rebase alike. */
+const nothingHappened = (out) =>
+  /already up to date|is up to date|current branch .* is up to date/i.test(String(out || ''));
+
 async function rebaseOnto(ref) {
+  let out = '';
   const ok = await gitAction(null, `Rebasing onto ${ref}`,
-    () => call('repo:rebase', repoPath(), ref),
-    async () => { await refresh({ keepSelection: false }); setStatus(`Rebased onto ${ref}`, 'ok'); });
+    async () => (out = await call('repo:rebase', repoPath(), ref)),
+    async () => {
+      await refresh({ keepSelection: false });
+      setStatus(nothingHappened(out)
+        ? `Already on top of ${ref} — nothing to rebase`
+        : `Rebased onto ${ref}`, nothingHappened(out) ? '' : 'ok');
+    });
   if (!ok) await refresh({ keepSelection: false });
 }
 
@@ -3887,9 +3923,16 @@ $('btn-pull').addEventListener('click', () => pull());
    anything. Only when that is impossible is there a decision to make, and it is
    yours — the shape of your history is not something to settle silently. */
 async function pull(mode = 'ff') {
+  let out = '';
   const ok = await gitAction('btn-pull', 'Pulling',
-    () => call('repo:pull', repoPath(), { mode }),
-    async () => { await refresh(); setStatus(mode === 'ff' ? 'Pulled' : `Pulled with ${mode}`, 'ok'); });
+    async () => (out = await call('repo:pull', repoPath(), { mode })),
+    async () => {
+      await refresh();
+      setStatus(nothingHappened(out)
+        ? 'Already up to date — nothing to pull'
+        : (mode === 'ff' ? 'Pulled' : `Pulled with ${mode}`),
+        nothingHappened(out) ? '' : 'ok');
+    });
   if (ok || mode !== 'ff') {
     // A merge pull can stop on a conflict; the banner takes over from here.
     if (!ok) await refresh({ keepSelection: false });
@@ -4163,11 +4206,18 @@ $('sidebar').addEventListener('contextmenu', (e) => {
       { label: `Push ${ref}…`, disabled: !hasRemote,
         hint: hasRemote ? '' : 'This repository has no remote', run: () => pushBranch(b) },
       '-',
-      { label: `Merge ${ref} into ${head || 'current'}`, disabled: b.current,
-        hint: b.current ? 'A branch cannot be merged into itself' : '',
+      /* Merging a branch that is already contained succeeds and changes
+         nothing, which only becomes clear afterwards. Say it beforehand — but
+         still allow it, since the answer comes from the commits loaded so far
+         and must not turn into a wall. */
+      { label: `Merge ${ref} into ${head || 'current'}`
+          + (alreadyIn(ref) ? ' — already merged' : ''), disabled: b.current,
+        hint: b.current ? 'A branch cannot be merged into itself'
+          : alreadyIn(ref) ? `${head} already contains every commit of ${ref}` : '',
         run: () => mergeBranch(ref) },
       { label: `Rebase ${head || 'current'} onto ${ref}`, disabled: b.current,
-        hint: b.current ? 'A branch cannot be rebased onto itself' : '',
+        hint: b.current ? 'A branch cannot be rebased onto itself'
+          : alreadyIn(ref) ? `${head} is already on top of ${ref}` : '',
         run: () => rebaseOnto(ref) },
       { label: 'Compare with HEAD', disabled: b.current,
         hint: b.current ? 'This is HEAD' : '', run: () => compareWithHead(ref) },

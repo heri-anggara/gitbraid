@@ -55,6 +55,7 @@ window.Releases = [
           'A merge, rebase, cherry-pick or revert that git stopped part-way through announces itself across the window, with Abort and Continue, a count of what is left, and conflicted files in a group of their own.',
           'Conflicts are settled per file — keep yours, keep theirs, or mark resolved — and the commit button stays locked until none are left.',
           'Pull tries fast-forward first and asks whether to merge or rebase when the histories have diverged, rather than deciding the shape of your history for you.',
+          'A merge, pull or rebase that git completes without changing anything says so, instead of reporting success for work that did not happen; the branch menu marks an already-merged branch before you click it.',
           'Reword a commit in place. HEAD is amended; an older commit rebases the ones after it, and says how many before you agree.',
         ],
       },
