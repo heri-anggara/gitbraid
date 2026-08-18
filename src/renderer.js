@@ -1848,6 +1848,14 @@ function closeFile() {
   state.compareRef = null;
   $('app').classList.remove('viewing-file');
   $('fileview').hidden = true;
+  /* Hiding the viewer left everything in place: a diff of an 8,000-line file
+     is ~118,000 DOM nodes, and they stayed in the document for the rest of the
+     session along with the parsed hunks. Closing a file should cost nothing to
+     keep, the way parking a tab already frees its diff. */
+  $('fv-body').innerHTML = '';
+  state.diffFiles = [];
+  nav.blocks = [];
+  nav.at = -1;
   renderDetail();
 }
 
