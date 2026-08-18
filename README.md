@@ -523,6 +523,18 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   atau **Rebase** beserta akibat masing-masing. Bentuk riwayat Anda tidak
   diputuskan diam-diam
 
+**Saat git tidak melakukan apa-apa**
+- Merge cabang yang sudah tergabung, pull yang tidak ketinggalan apa pun, dan
+  rebase yang sudah di puncak semuanya **berhasil** menurut git dan tidak
+  mengubah apa pun. GitBraid membaca keluarannya dan mengatakan itu apa adanya
+  — *"fitur is already in this branch — nothing to merge"* — bukan "Merged"
+  dengan gaya sukses untuk sesuatu yang tidak terjadi
+- Menu klik-kanan menyebutkannya lebih dulu: entri merge diberi keterangan
+  **— already merged**, dengan penjelasan saat di-hover. Datanya dari
+  perhitungan yang sama dengan ghost badge, jadi tidak ada biaya tambahan
+- Entrinya **tetap bisa diklik**. Perhitungan itu hanya melihat commit yang
+  sudah dimuat, jadi ia dipakai untuk menjelaskan, bukan untuk menghalangi
+
 **Branch dan remote**
 - Checkout, buat, hapus (dengan fallback force kalau belum ter-merge)
 - Merge dan rebase lewat klik kanan di sidebar
