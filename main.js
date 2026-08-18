@@ -1531,6 +1531,16 @@ handle('repo:unstageAll', async (repo) => {
 });
 
 handle('repo:discard', async (repo, files, untracked) => {
+  /* The one command here that destroys work outright, so it checks what it was
+     handed. A bare string would spread into single letters, and an empty list
+     would leave `git clean -fd --` with no pathspec at all — which cleans the
+     entire working tree. Neither is reachable from the UI today; both would be
+     unrecoverable if it ever changed. */
+  const list = (Array.isArray(files) ? files : [files])
+    .filter((f) => typeof f === 'string' && f.trim());
+  if (!list.length) throw new Error('Nothing was named to discard.');
+  files = list;
+
   if (untracked) return git(repo, ['clean', '-fd', '--', ...files]);
   try {
     return await git(repo, ['restore', '--worktree', '--', ...files]);
