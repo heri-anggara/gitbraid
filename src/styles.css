@@ -1,0 +1,3028 @@
+/* ── tokens ─────────────────────────────────────────────────── */
+/* Dark is the default. Every colour below is restated in the light block
+   further down, so nothing may be hardcoded outside these two lists. */
+:root {
+  --bg:          #0f1118;
+  --bg-graph:    #12141d;
+  --surface:     #161924;
+  --surface-2:   #1c2030;
+  --surface-3:   #232839;
+  --line:        #262b3b;
+  --line-soft:   #1e2231;
+  --line-strong: #333a52;
+  --scroll:      #232839;
+  --scroll-hi:   #2e3448;
+
+  --text:        #dde2f0;
+  --text-dim:    #99a1ba;
+  --text-faint:  #656d87;
+
+  --accent:      #7c8cff;
+  --accent-hi:   #8f9cff;
+  --accent-ink:  #0f1118;
+  /* Small coloured text sits on the page background, where the fill colours
+     above are too light to read. Same hue, enough contrast. */
+  --accent-text: #7c8cff;
+  --pending-text: #e9a13b;
+  --pending:     #e9a13b;
+  --add:         #3fbf9f;
+  --del:         #e2705a;
+  --danger:      #e2705a;
+
+  --add-bg:      rgba(63, 191, 159, .10);
+  --del-bg:      rgba(226, 112, 90, .10);
+  --add-ink:     #93e2cc;
+  --del-ink:     #f0a894;
+
+  --row-hover:   rgba(124, 140, 255, .06);
+  --row-sel:     rgba(124, 140, 255, .16);
+  --lane-tint:   13%;   /* how strongly a row is washed in its lane colour */
+  --pill-fill:   22%;
+  --pill-line:   55%;
+
+  /* Ahead/behind counts. Measured against their own ink: 6.33:1 and 7.60:1. */
+  --badge-up-1:   #8f9cff;
+  --badge-up-2:   #7c8cff;
+  --badge-up-ink: #0f1118;
+  --badge-dn-1:   #ecac53;
+  --badge-dn-2:   #e9a13b;
+  --badge-dn-ink: #2a1c05;
+
+  --row-h: 31px;
+  --head-h: 26px;
+  --radius: 6px;
+
+  /* Side panels give ground on a narrow window instead of squeezing the
+     history to nothing. Dragging a handle overrides these inline. */
+  --sidebar-w: clamp(170px, 17vw, 250px);
+  --detail-w:  clamp(300px, 31vw, 460px);
+
+  /* Fallback only: applyColumns() rewrites this from the columns actually on
+     screen, since they can be resized and switched off. */
+  --hist-min: 700px;
+
+  --ui: "Inter", "Cantarell", "Ubuntu", system-ui, -apple-system, sans-serif;
+  --mono: "JetBrains Mono", "IBM Plex Mono", "Ubuntu Mono", "DejaVu Sans Mono",
+          ui-monospace, monospace;
+}
+
+/* Deliberately not a white theme. Large fields of #fff at full monitor
+   brightness are what make a light UI tiring, so the ramp tops out around
+   93% luminance and the text stops short of pure black. */
+:root[data-theme="light"] {
+  --bg:          #eceef3;
+  --bg-graph:    #eceef3;
+  --surface:     #e3e6ed;
+  --surface-2:   #d9dde6;
+  --surface-3:   #ccd2dd;
+  --line:        #bfc6d2;
+  --line-soft:   #d4d9e2;
+  --line-strong: #a8b0bf;
+  --scroll:      #c0c7d3;
+  --scroll-hi:   #a9b1bf;
+
+  --text:        #22262e;
+  --text-dim:    #545b6a;
+  --text-faint:  #79808f;
+
+  /* 5.07:1 and 6.49:1 on white; the plain --accent would only reach 4.13. */
+  --badge-up-1:   #2270bf;
+  --badge-up-2:   #1b5fa6;
+  --badge-up-ink: #ffffff;
+  --badge-dn-1:   #cf8a2e;
+  --badge-dn-2:   #c97a12;
+  --badge-dn-ink: #2a1c05;
+
+  --accent:      #2b7fd4;
+  --accent-hi:   #1f6dbd;
+  --accent-ink:  #ffffff;
+  --accent-text: #17538c;
+  --pending-text: #8a5104;
+  --pending:     #c97a12;
+  --add:         #14875f;
+  --del:         #c33f33;
+  --danger:      #c33f33;
+
+  --add-bg:      rgba(20, 135, 95, .10);
+  --del-bg:      rgba(195, 63, 51, .10);
+  --add-ink:     #0b6446;
+  --del-ink:     #9c2b20;
+
+  --row-hover:   rgba(43, 127, 212, .07);
+  --row-sel:     rgba(43, 127, 212, .17);
+  --lane-tint:   11%;
+  --pill-fill:   15%;
+  --pill-line:   45%;
+}
+
+/* The toggle shows the theme you would switch *to*. */
+.ic-sun { display: none; }
+:root[data-theme="light"] .ic-moon { display: none; }
+:root[data-theme="light"] .ic-sun { display: inline; }
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--ui);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
+
+/* The UA rule for [hidden] loses to any author `display:`, and plenty of the
+   classes below set one. Restate it here so `el.hidden = true` actually hides. */
+[hidden] { display: none !important; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: var(--scroll);
+  border-radius: 6px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--scroll-hi); }
+::-webkit-scrollbar-track { background: transparent; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ── layout ─────────────────────────────────────────────────── */
+.app {
+  display: grid;
+  /* No child may widen the window: an over-long path or ref name must clip
+     inside its own panel instead of pushing the layout sideways. */
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+  /* The tab strip is `auto`: hidden it takes no row at all. Every child is
+     placed by hand, because a `display:none` tab bar stops being a grid item
+     and the rows below would each slide up one — the toolbar into `auto`, the
+     welcome screen into the 44px row, the status bar into 1fr. */
+  /* Rows 3 and 5 are `auto`: the interrupted-operation banner and the terminal
+     take no height at all while hidden. */
+  grid-template-rows: auto 52px auto 1fr auto 24px;
+  height: 100vh;
+}
+/* Explicit placement everywhere: a `display:none` grid child stops being a grid
+   item, and without this every element below a hidden one slides up a row. */
+.tabbar   { grid-row: 1; }
+.toolbar  { grid-row: 2; }
+.opstate  { grid-row: 3; }
+.welcome  { grid-row: 4; }
+.main     { grid-row: 4; }
+.booting  { grid-row: 4; }
+.repomgr  { grid-row: 4; }
+.prefs    { grid-row: 4; }
+.notes    { grid-row: 4; }
+.term      { grid-row: 5; }
+.statusbar { grid-row: 6; }
+
+/* Nothing but the shell until the first page is decided. */
+.app.is-booting .welcome,
+.app.is-booting .main,
+.app:not(.is-booting) .booting { display: none; }
+
+/* Repo management covers whatever was on screen, and gives it back on close. */
+.app.managing .welcome,
+.app.managing .main,
+.app:not(.managing) .repomgr { display: none; }
+
+.app.reading-notes .welcome,
+.app.reading-notes .main,
+.app.reading-notes .repomgr,
+.app:not(.reading-notes) .notes { display: none; }
+
+.app.prefs-open .welcome,
+.app.prefs-open .main,
+.app.prefs-open .repomgr,
+.app.prefs-open .notes,
+.app:not(.prefs-open) .prefs { display: none; }
+.booting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-faint);
+}
+
+/* ── tabs ───────────────────────────────────────────────────── */
+/* The bar carries no bottom border: the active tab wears the toolbar's own
+   surface, so the two read as one band. That also retires the old
+   `margin-bottom:-1px` trick, which made the active tab a pixel taller than its
+   scroll container and summoned a 10px vertical scrollbar beside it. */
+.tabbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  padding: 6px 8px 0;
+  background: var(--bg);
+}
+.tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;            /* Firefox */
+}
+.tabs::-webkit-scrollbar { width: 0; height: 0; }
+
+.tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 116px;
+  max-width: 216px;
+  padding: 8px 8px 8px 11px;
+  border-radius: 9px 9px 0 0;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .13s ease, color .13s ease;
+}
+.tab:hover { background: color-mix(in srgb, var(--surface) 62%, transparent); color: var(--text); }
+.tab.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+}
+/* A hairline of accent along the top edge marks the active tab without
+   drawing a box around it. */
+.tab.active::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 10px; right: 10px;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+  background: var(--accent);
+}
+.tab .side-i { color: var(--text-faint); flex: none; transition: color .13s ease; }
+.tab.active .side-i { color: var(--accent); }
+/* A tab with no repository yet reads as a placeholder, not as a repo. */
+.tab.blank .tab-name { font-style: italic; color: var(--text-dim); }
+.tab.blank.active .side-i { color: var(--text-dim); }
+.tab-name { overflow: hidden; text-overflow: ellipsis; }
+
+.tab-close {
+  display: grid;
+  place-items: center;
+  width: 21px; height: 21px;
+  padding: 0;
+  flex: none;
+  margin-left: auto;
+  background: none;
+  border: 0;
+  border-radius: 50%;
+  color: var(--text-faint);
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity .13s ease, background .13s ease, color .13s ease;
+}
+.tab:hover .tab-close, .tab.active .tab-close { opacity: 1; }
+.tab-close:hover { background: var(--surface-3); color: var(--text); }
+
+/* `align-self: center` puts these on the same centre line as the tab labels —
+   and therefore as the close cross. Nothing may nudge them off it. */
+.tab-btn {
+  flex: none;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 26px; height: 26px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  color: var(--text-faint);
+  cursor: pointer;
+  line-height: 1;
+  transition: background .13s ease, color .13s ease;
+}
+/* One size for every drawn glyph in the strip. */
+.tb-i, .x-i { width: 13px; height: 13px; display: block; }
+
+/* ── kelompok kanan: berlaku untuk aplikasi, bukan satu repo ─── */
+.tabbar-right {
+  margin-left: auto;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding-left: 8px;
+}
+
+.profile-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 190px;
+  padding: 3px 10px 3px 3px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .13s ease, border-color .13s ease, color .13s ease;
+}
+.profile-chip:hover {
+  background: var(--surface-2);
+  border-color: var(--line);
+  color: var(--text);
+}
+.profile-name { overflow: hidden; text-overflow: ellipsis; }
+
+/* Hue comes from the address, so the same person keeps the same colour. */
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 22px; height: 22px;
+  flex: none;
+  border-radius: 50%;
+  background: hsl(var(--hue, 240) 52% 46%);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+.avatar.unset {
+  background: none;
+  border: 1px dashed var(--line-strong);
+  color: var(--text-faint);
+}
+.tab-btn:hover { background: var(--surface-2); color: var(--text); }
+
+/* ── search tabs ────────────────────────────────────────────── */
+.tabmenu {
+  position: fixed;
+  z-index: 60;
+  width: 320px;
+  max-width: 90vw;
+  padding: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .45);
+}
+.tabmenu-input {
+  width: 100%;
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.tabmenu-input:focus { border-color: var(--accent); outline: none; }
+.tabmenu-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.tabmenu-list li {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: baseline;
+  gap: 7px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.tabmenu-list li:hover { background: var(--surface-3); }
+.tabmenu-list li.active { background: var(--row-sel); }
+.tabmenu-list .side-i { align-self: center; }
+.tm-name { font-weight: 600; white-space: nowrap; }
+.tm-path {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tm-close {
+  display: grid;
+  place-items: center;
+  width: 20px; height: 20px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 50%;
+  color: var(--text-faint);
+  cursor: pointer;
+  line-height: 1;
+}
+.tm-close:hover { background: var(--surface); color: var(--danger); }
+.app.is-empty .main { display: none; }
+.app:not(.is-empty) .welcome { display: none; }
+
+.main {
+  display: grid;
+  grid-template-columns: var(--sidebar-w, 230px) 4px 1fr 4px var(--detail-w, 420px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Pinned to their tracks, so hiding one pane cannot shuffle the others along. */
+.sidebar { grid-column: 1; }
+.drag-handle[data-resize="sidebar"] { grid-column: 2; }
+.history { grid-column: 3; }
+.fileview { grid-column: 3; }
+.drag-handle[data-resize="detail"] { grid-column: 4; }
+.detail { grid-column: 5; }
+
+/* An open file takes the history's place rather than shrinking it. */
+.app.viewing-file .history { display: none; }
+
+/* View ▸ Show Left Panel / Show Commit Details Panel */
+.app.no-sidebar .main { grid-template-columns: 0 0 1fr 4px var(--detail-w, 420px); }
+.app.no-detail  .main { grid-template-columns: var(--sidebar-w, 230px) 4px 1fr 0 0; }
+.app.no-sidebar.no-detail .main { grid-template-columns: 0 0 1fr 0 0; }
+.app.no-sidebar .sidebar,
+.app.no-sidebar .drag-handle[data-resize="sidebar"],
+.app.no-detail .detail,
+.app.no-detail .drag-handle[data-resize="detail"] { display: none; }
+
+.drag-handle { cursor: col-resize; background: var(--line-soft); }
+.drag-handle:hover { background: var(--accent); }
+
+/* ── toolbar ────────────────────────────────────────────────── */
+/* Three tracks rather than space-between: the middle group must sit on the
+   window's centre line, not merely between two others of unequal width. */
+.toolbar {
+  position: relative;      /* the progress hairline hangs off its bottom edge */
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.toolbar-left   { justify-self: start; }
+.toolbar-center { justify-self: center; min-width: 0; }
+.toolbar-right  { justify-self: end; }
+.toolbar-left, .toolbar-right, .repo-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tb-sep { width: 1px; height: 22px; background: var(--line); margin: 0 5px; }
+
+/* ── tombol aksi: ikon di atas, label di bawah ───────────────── */
+.btn-tool {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 3px;
+  min-width: 56px;
+  padding: 4px 9px 5px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.app.no-tool-labels .btn-tool > span { display: none; }
+/* While a command runs its label is the only place the phase and percentage
+   appear, so it comes back even when labels are switched off. */
+.app.no-tool-labels .btn-tool.busy > span:not(.tool-state) { display: block; }
+
+/* ── a git action in progress ────────────────────────────────── */
+.tool-state { display: none; width: 17px; height: 17px; }
+.tool-state svg { width: 100%; height: 100%; display: block; }
+/* The glyph takes the icon's place rather than sitting beside it, so the
+   button neither grows nor shifts the row while it works. */
+.btn-tool.busy .tool-i,
+.btn-tool.done .tool-i,
+.btn-tool.failed .tool-i { display: none; }
+.btn-tool.busy .tool-state,
+.btn-tool.done .tool-state,
+.btn-tool.failed .tool-state { display: block; }
+
+/* Reserved once, for the whole command: without it the button would resize on
+   every percentage tick and nudge its neighbours along with it. Digits are
+   tabular for the same reason. */
+.btn-tool.busy { color: var(--accent-text); min-width: 104px; }
+.btn-tool.busy .tool-state { color: var(--accent-text); }
+.btn-tool.busy > span:not(.tool-state) {
+  color: var(--accent-text);
+  font-variant-numeric: tabular-nums;
+}
+.btn-tool.done .tool-state { color: var(--add); }
+.btn-tool.failed .tool-state { color: var(--danger); }
+
+.tool-spin { animation: tool-spin .75s linear infinite; transform-origin: 50% 50%; }
+@keyframes tool-spin { to { transform: rotate(360deg); } }
+
+/* A locked button stays readable and still answers on hover — it explains what
+   it is waiting for rather than going silently dead. */
+.btn-tool.locked { opacity: .38; cursor: progress; }
+.btn-tool.locked:hover { background: none; border-color: transparent; }
+
+/* ── the toolbar's hairline of progress ──────────────────────── */
+.tb-progress {
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: 2px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  overflow: hidden;
+}
+.tb-progress > span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+  transition: width .18s ease-out;
+}
+/* A command that reports no percentage — checkout, merge, rebase — still has
+   to look alive, so the bar sweeps instead of filling. */
+.tb-progress.wait > span {
+  width: 30%;
+  transition: none;
+  animation: tb-sweep 1.15s ease-in-out infinite;
+}
+@keyframes tb-sweep {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(370%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-spin { animation-duration: 2.4s; }
+  .tb-progress > span { transition: none; }
+  .tb-progress.wait > span { animation-duration: 3s; }
+}
+.app.no-tool-labels .btn-tool { min-width: 40px; padding: 7px 9px; }
+.btn-tool:hover { background: var(--surface-2); border-color: var(--line); }
+.btn-tool:active { background: var(--surface-3); }
+.tool-i { width: 17px; height: 17px; color: var(--text-dim); transition: color .12s; }
+.btn-tool:hover .tool-i { color: var(--text); }
+.btn-tool span {
+  font-size: 10.5px;
+  line-height: 1.2;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.btn-tool:hover span { color: var(--text); }
+
+/* Dimmed but still hoverable, so it can say why it is dimmed. */
+.btn-tool[aria-disabled="true"] { cursor: default; }
+.btn-tool[aria-disabled="true"] .tool-i,
+.btn-tool[aria-disabled="true"] span { color: var(--text-faint); opacity: .55; }
+.btn-tool[aria-disabled="true"]:hover { background: none; border-color: transparent; }
+
+/* On a stacked button the count belongs on the icon's shoulder. A ring in the
+   toolbar's own colour lifts it clear of the arrow underneath, so the two read
+   as separate things rather than one smudge. The two directions get different
+   hues: what is waiting to come down is not the same news as what is waiting
+   to go up. */
+.btn-tool .badge {
+  position: absolute;
+  top: 2px;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .01em;
+  box-shadow: 0 0 0 2px var(--surface), 0 1px 3px rgba(0, 0, 0, .28);
+}
+#badge-ahead {
+  background: linear-gradient(180deg, var(--badge-up-1), var(--badge-up-2));
+  color: var(--badge-up-ink);
+}
+#badge-behind {
+  background: linear-gradient(180deg, var(--badge-dn-1), var(--badge-dn-2));
+  color: var(--badge-dn-ink);
+}
+/* While that button is running its own command the spinner is the message;
+   a count sitting beside it just competes for the same corner. */
+.btn-tool.busy .badge { display: none; }
+
+/* ── tooltip ─────────────────────────────────────────────────── */
+.tooltip {
+  position: fixed;
+  z-index: 80;
+  max-width: 420px;
+  /* A ceiling as well as a width: no tooltip may outgrow the window it must
+     stay inside. */
+  max-height: 42vh;
+  overflow: hidden;
+  padding: 5px 9px;
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, .38);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+/* The repository name lives in the sidebar now, so the toolbar keeps the
+   wordmark — with or without a repository open. */
+.brand { display: flex; align-items: center; gap: 8px; padding-left: 2px; }
+/* Sedikit lebih besar dari mark lama: bidangnya penuh, bukan garis tipis. */
+.brand-mark { width: 20px; height: 20px; flex: none; }
+.brand-name { font-weight: 650; letter-spacing: -.01em; }
+
+
+/* ── buttons ────────────────────────────────────────────────── */
+.btn {
+  padding: 5px 11px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--line-strong); }
+.btn:disabled { opacity: .4; cursor: default; }
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.btn-primary:hover:not(:disabled) { background: var(--accent-hi); border-color: var(--accent-hi); }
+.btn-quiet { background: transparent; }
+.btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 7px;
+  color: var(--text-dim);
+}
+.btn-icon:hover:not(:disabled) { color: var(--text); }
+.btn-sm { padding: 3px 8px; font-size: 12px; }
+.btn-danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+
+.badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  min-width: 16px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.linkbtn {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.linkbtn:hover { color: var(--accent); }
+
+/* ── welcome ────────────────────────────────────────────────── */
+/* The history needs to stay dense, but this screen is a landing page: on a
+   large display a fixed 13px block just floats in the middle. Everything below
+   is sized in em against this one fluid root instead. */
+.welcome {
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: 24px;
+  font-size: clamp(13px, 1.05vw, 18px);
+}
+.welcome-inner { width: 100%; max-width: clamp(720px, 60vw, 1080px); }
+
+.welcome-head { display: flex; align-items: center; gap: 1.2em; margin-bottom: 2em; }
+.welcome-mark { flex: none; line-height: 0; }
+/* Lencana padat butuh sedikit lebih besar dari mark garis yang lama untuk
+   terbaca sebanding dengan judulnya. */
+.welcome-mark svg { width: 5.4em; height: 5.4em; }
+.welcome h1 {
+  margin: 0;
+  font-size: 2.05em;
+  font-weight: 700;
+  letter-spacing: -.03em;
+}
+.welcome-sub { margin: .2em 0 0; color: var(--text-dim); }
+
+.welcome-grid {
+  display: grid;
+  grid-template-columns: minmax(20em, 1.1fr) minmax(16em, .9fr);
+  gap: 1.7em;
+  align-items: start;
+}
+@media (max-width: 940px) {
+  .welcome-grid { grid-template-columns: 1fr; }
+}
+
+/* ── start actions ──────────────────────────────────────────── */
+.start-actions { display: flex; flex-direction: column; gap: .6em; }
+.action-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: .9em;
+  width: 100%;
+  min-height: 4.6em;   /* all three match even if a description wraps */
+  padding: .9em 1em;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: .7em;
+  cursor: pointer;
+  transition: background .12s, border-color .12s, transform .12s;
+}
+.action-card:hover { background: var(--surface-2); border-color: var(--line-strong); }
+.action-card:active { transform: translateY(1px); }
+.ac-icon {
+  display: grid;
+  place-items: center;
+  width: 2.6em; height: 2.6em;
+  border-radius: .6em;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+}
+.ac-icon svg { width: 1.5em; height: 1.5em; }
+.action-card:hover .ac-icon { color: var(--text); }
+.ac-text { display: block; min-width: 0; }
+.ac-title { display: block; font-weight: 600; letter-spacing: -.01em; }
+.ac-desc {
+  display: block;
+  margin-top: .1em;
+  font-size: .88em;
+  color: var(--text-faint);
+}
+.ac-key {
+  flex: none;
+  padding: .2em .5em;
+  border: 1px solid var(--line);
+  border-radius: .35em;
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: .74em;
+  color: var(--text-faint);
+}
+
+/* The one action most people want is coloured; the rest stay quiet. */
+.action-card.is-primary {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+.action-card.is-primary:hover {
+  background: color-mix(in srgb, var(--accent) 19%, var(--surface));
+  border-color: var(--accent);
+}
+.action-card.is-primary .ac-icon {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* ── recents ────────────────────────────────────────────────── */
+.recents { min-width: 0; }
+.recents-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .6em;
+  margin-bottom: .6em;
+  padding: 0 .3em;
+}
+.recents-title {
+  margin: 0;
+  font-size: .74em;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.recents .empty-row { padding: .4em .7em; font-size: .9em; }
+.recent-list { list-style: none; margin: 0; padding: 0; }
+.recent-list li.recent {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: .6em;
+  padding: .55em .7em;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.recent-list li.recent:hover {
+  background: var(--surface);
+  border-color: var(--line);
+}
+.rc-text { min-width: 0; }
+.rc-name {
+  display: block;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Left to right: the paths are already shortened to ~, and an RTL run would
+   push that leading ~ to the far end of the line. */
+.rc-path {
+  display: block;
+  font-family: var(--mono);
+  font-size: .8em;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rc-time { font-size: .8em; color: var(--text-faint); white-space: nowrap; }
+.rc-remove {
+  width: 1.6em; height: 1.6em;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: .3em;
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+  font-size: 1.1em;
+  line-height: 1;
+}
+.recent-list li.recent:hover .rc-remove { opacity: 1; }
+.rc-remove:hover { background: var(--surface-3); color: var(--danger); }
+
+.welcome-foot {
+  margin: 2em 0 0;
+  text-align: center;
+  font-size: .88em;
+  color: var(--text-faint);
+}
+
+/* drag a folder onto the window */
+.app.drop-active .welcome-inner { opacity: .35; }
+.dropzone {
+  position: fixed;
+  inset: 10px;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* ── sidebar ────────────────────────────────────────────────── */
+.sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+  padding-bottom: 20px;
+}
+
+/* Repository and branch sit at the top of the panel, as in GitKraken —
+   but wearing GitBraid's own surfaces rather than its colours. */
+.side-top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 8px 8px 9px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.side-pick {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "label label" "value chev";
+  gap: 0 6px;
+  width: 100%;
+  padding: 5px 8px 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  text-align: left;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.side-pick + .side-pick { margin-top: 5px; }
+.side-pick:hover { background: var(--surface-3); border-color: var(--line-strong); }
+.side-pick.is-static { cursor: default; }
+.side-pick.is-static:hover { background: var(--surface-2); border-color: var(--line); }
+
+.sp-label {
+  grid-area: label;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.sp-value {
+  grid-area: value;
+  min-width: 0;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sp-chev { grid-area: chev; align-self: center; font-size: 9px; color: var(--text-faint); }
+
+/* The branch you are on is the one fact this panel exists to answer. */
+#side-branch .sp-value {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent);
+}
+#side-branch.detached .sp-value { color: var(--pending); }
+.side-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 9px 10px 5px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  text-align: left;
+}
+.side-head:hover { color: var(--text-dim); }
+.chev { font-size: 9px; transition: transform .12s; }
+.side-group.collapsed .chev { transform: rotate(-90deg); }
+.side-group.collapsed .side-list { display: none; }
+.side-count { margin-left: auto; font-family: var(--mono); }
+
+.side-list { list-style: none; margin: 0; padding: 0 6px; }
+.side-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* --d is the tree depth; each level steps in by one notch. */
+  padding: 4px 8px 4px calc(8px + var(--d, 0) * 13px);
+  border-radius: 4px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.side-list li:hover { background: var(--surface-2); }
+.side-list li.current {
+  background: var(--surface-3);
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
+.side-list li.current .side-i { color: var(--accent); }
+
+/* Icons carry the row's meaning at a glance: folder, branch, cloud, tag. */
+.side-i { width: 12px; height: 12px; flex: none; color: var(--text-faint); }
+.side-list li:hover .side-i { color: var(--text-dim); }
+
+.tree-folder { color: var(--text-dim); }
+.tree-folder.shut .chev { transform: rotate(-90deg); }
+/* A leaf has no chevron, so it stands in for one — otherwise its icon sits a
+   notch right of the folders it shares a level with. */
+.side-list .chev { width: 10px; flex: none; text-align: center; }
+.tree-leaf::before { content: ''; width: 10px; flex: none; }
+
+.side-list li.empty-row { cursor: default; }
+.side-list li.empty-row:hover { background: none; }
+
+.side-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-track {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* ── history ────────────────────────────────────────────────── */
+/* A single minmax(0, …) column: without it the implicit column is auto-sized,
+   the scroller grows to fit its widest row instead of clipping, and the rows
+   spill out over the detail panel. */
+.history {
+  display: grid;
+  /* Explicit rows, and explicit placement below: with `display:none` the find
+     bar stops being a grid item entirely, and the list would slide up into the
+     auto row and lose its scroll height. */
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  background: var(--bg-graph);
+  overflow: hidden;
+}
+
+/* ── repo management ─────────────────────────────────────────── */
+/* Side padding grows with the window instead of letting the columns drift to
+   opposite edges of a wide screen. */
+.repomgr {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
+  background: var(--bg);
+  --rm-pad: clamp(20px, 5vw, 76px);
+}
+.rm-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 22px var(--rm-pad) 14px;
+}
+.rm-head h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -.025em;
+}
+.rm-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+
+.rm-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 var(--rm-pad) 14px;
+  border-bottom: 1px solid var(--line);
+}
+.rm-bar input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  max-width: 560px;
+  padding: 7px 11px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.rm-bar input[type="text"]:focus { border-color: var(--accent); outline: none; }
+.rm-total {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.rm-groups { overflow-y: auto; padding-bottom: 28px; }
+.rm-group { padding-top: 6px; }
+
+/* Section labels borrow the sidebar's voice, so the page belongs to the app. */
+.rm-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px max(var(--rm-pad), calc((100% - var(--rm-max)) / 2)) 6px;
+}
+.rm-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+.rm-toggle:hover { color: var(--text-dim); }
+.rm-toggle .chev { font-size: 9px; transition: transform .12s; }
+.rm-group.shut .chev { transform: rotate(-90deg); }
+.rm-group.shut .rm-list, .rm-group.shut .rm-empty { display: none; }
+.rm-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.rm-group-tools { margin-left: auto; }
+
+.rm-list { list-style: none; margin: 0; padding: 0; }
+/* Beyond this the columns would drift apart on a very wide screen and the row
+   would read as four separate things instead of one. */
+.rm-group-head, .rm-row, .rm-empty { --rm-max: 1220px; }
+/* Star · name+owner · branch · work · menu.
+   Every track except the name is a fixed width, because each row is its own
+   grid: a track sized to its own content makes the columns land in a different
+   place on every line. A row saying "clean" and one saying "45 modified 121
+   added 21 deleted" would otherwise start their branch chips 90px apart. 228px
+   is the measured width of that worst case, so nothing is ever clipped. */
+.rm-row {
+  display: grid;
+  grid-template-columns: 26px minmax(220px, 1fr) var(--rm-branch-w, 240px) var(--rm-wip-w, 228px) 28px;
+  align-items: center;
+  gap: 14px;
+  padding: 8px max(var(--rm-pad), calc((100% - var(--rm-max)) / 2));
+  border-bottom: 1px solid var(--line-soft);
+  cursor: pointer;
+  transition: background .12s;
+}
+.rm-row:hover { background: var(--surface); }
+.rm-row:last-child { border-bottom: 0; }
+
+.rm-main { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.rm-name {
+  font-weight: 600;
+  letter-spacing: -.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rm-openpill {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.rm-openpill.rm-gone {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+.rm-owner {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+/* A thin divider dot, so name and owner read as one label in two weights. */
+.rm-owner::before { content: '·'; margin-right: 7px; }
+/* The branch is data, so it wears the mono chip the rest of the app uses. */
+.rm-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  justify-self: start;
+  max-width: min(100%, 260px);
+  white-space: nowrap;
+}
+.rm-branch .side-i { flex: none; color: var(--text-faint); }
+/* A long branch name used to wrap inside its own pill, which made that one row
+   taller than every other and broke the column into a ragged edge. It stays on
+   one line now and ends in an ellipsis; the whole name is on hover. */
+.rm-branch-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rm-wip { display: flex; gap: 5px; justify-content: flex-end; }
+.w-chip {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.w-mod { background: color-mix(in srgb, var(--pending) 16%, transparent); color: var(--pending); }
+.w-add { background: var(--add-bg); color: var(--add-ink); }
+.w-del { background: var(--del-bg); color: var(--del-ink); }
+.w-clean { color: var(--text-faint); }
+
+.rm-row.missing .rm-name { color: var(--text-faint); text-decoration: line-through; }
+
+.rm-star {
+  display: grid;
+  place-items: center;
+  width: 24px; height: 24px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: .45;
+  transition: opacity .12s, color .12s, background .12s;
+}
+.rm-row:hover .rm-star { opacity: 1; }
+.rm-star:hover { background: var(--surface-2); color: var(--pending); }
+.rm-star.on { opacity: 1; color: var(--pending); }
+
+.rm-iconbtn {
+  display: grid;
+  place-items: center;
+  width: 26px; height: 26px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.rm-iconbtn:hover { background: var(--surface-2); color: var(--text); }
+.rm-more { opacity: 0; transition: opacity .12s; }
+.rm-row:hover .rm-more { opacity: 1; }
+
+.rm-empty {
+  margin: 0;
+  padding: 6px max(var(--rm-pad), calc((100% - var(--rm-max)) / 2)) 14px;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+@media (max-width: 880px) {
+  /* Owner and work counts are the first to go when there is no room. */
+  .rm-row { grid-template-columns: 26px minmax(120px, 1fr) minmax(120px, 1fr) 28px; }
+  .rm-owner, .rm-wip { display: none; }
+}
+
+.wip-viewbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 14px 8px;
+}
+.wip-viewbar .btn-sm:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ── preferences ─────────────────────────────────────────────── */
+.prefs {
+  display: grid;
+  grid-template-columns: minmax(190px, 232px) minmax(0, 1fr);
+  min-height: 0;
+  background: var(--bg);
+}
+
+/* Flex, not grid: hiding the exit button and the label on a narrow window
+   would shift every remaining child up a grid row, which is how the footer
+   ended up under the tab list instead of at the foot of the rail. */
+.pf-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  padding: 14px 10px 10px;
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+}
+.pf-exit {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  background: none;
+  border: 0;
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-size: 12.5px;
+  font-weight: 550;
+  cursor: pointer;
+  text-align: left;
+}
+.pf-exit:hover { background: var(--surface-2); color: var(--text); }
+.pf-nav-label {
+  margin: 14px 0 2px;
+  padding: 0 9px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.pf-tabs { display: flex; flex-direction: column; gap: 1px; overflow-y: auto; }
+.pf-tab {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 9px;
+  background: none;
+  border: 0;
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.pf-tab:hover { background: var(--surface-2); color: var(--text); }
+/* The selected page keeps a left marker so it reads as a place, not a button. */
+.pf-tab.on {
+  background: var(--surface-3);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.pf-i { width: 14px; height: 14px; flex: none; opacity: .85; }
+
+.pf-nav-foot {
+  margin-top: auto;          /* pinned to the foot however many tabs there are */
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.pf-mark { width: 14px; height: 14px; flex: none; }
+
+.pf-body {
+  overflow-y: auto;
+  padding: 26px clamp(20px, 4vw, 54px) 60px;
+}
+.pf-title {
+  margin: 0 0 6px;
+  font-size: 21px;
+  font-weight: 620;
+  letter-spacing: -.015em;
+}
+
+.pf-group {
+  max-width: 760px;
+  margin-top: 26px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+.pf-group > h2 {
+  margin: 0 0 3px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+.pf-note { margin: 0 0 12px; font-size: 12px; line-height: 1.55; color: var(--text-dim); }
+.pf-note code, .pf-help code {
+  padding: 0 3px;
+  background: var(--surface-2);
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: .92em;
+}
+
+/* label | control on one line, with any explanation flowing under the label */
+.pf-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 18px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.pf-row:last-child { border-bottom: 0; }
+.pf-label { font-size: 13px; }
+.pf-control { justify-self: end; display: flex; align-items: center; gap: 6px; }
+.pf-help, .pf-warn {
+  grid-column: 1 / -1;
+  margin: 0;
+  max-width: 62ch;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.pf-warn { color: var(--pending-text); }
+.pf-warn::before { content: '⚠ '; }
+
+.pf-num, .pf-text, .pf-select {
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 12.5px;
+}
+.pf-num:focus, .pf-text:focus, .pf-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.pf-num { width: 74px; text-align: right; font-variant-numeric: tabular-nums; }
+.pf-text { width: min(300px, 42vw); font-family: var(--mono); font-size: 11.5px; }
+.pf-select { min-width: 180px; }
+.pf-numwrap { display: flex; align-items: center; gap: 6px; }
+.pf-unit { font-size: 11.5px; color: var(--text-faint); }
+.pf-zoom { display: flex; align-items: center; gap: 6px; }
+.pf-zoom-now {
+  min-width: 46px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* switch, so a boolean reads as on/off rather than as a tick to interpret */
+.pf-switch { position: relative; display: block; width: 34px; height: 18px; flex: none; }
+.pf-switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.pf-track {
+  position: absolute;
+  inset: 0;
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  transition: background .14s, border-color .14s;
+  pointer-events: none;
+}
+.pf-track::after {
+  content: '';
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 12px; height: 12px;
+  background: var(--text-faint);
+  border-radius: 50%;
+  transition: transform .14s, background .14s;
+}
+.pf-switch input:checked + .pf-track { background: var(--accent); border-color: var(--accent); }
+.pf-switch input:checked + .pf-track::after { transform: translateX(16px); background: var(--accent-ink); }
+.pf-switch input:focus-visible + .pf-track { box-shadow: 0 0 0 2px var(--accent); }
+
+/* identity cards */
+.pf-card {
+  margin-bottom: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.pf-card.off { opacity: .6; }
+.pf-card-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.pf-card-head strong { display: block; font-size: 13px; font-weight: 620; }
+.pf-where { display: block; font-size: 11.5px; color: var(--text-dim); font-family: var(--mono); }
+.pf-avatar {
+  display: grid;
+  place-items: center;
+  width: 32px; height: 32px;
+  flex: none;
+  background: var(--accent);
+  border-radius: 50%;
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 650;
+}
+.pf-avatar-alt { background: var(--surface-3); color: var(--text-dim); }
+
+.pf-fields { display: grid; gap: 10px; padding: 14px; }
+.pf-field { display: grid; grid-template-columns: 66px minmax(0, 1fr); align-items: center; gap: 10px; }
+.pf-field > span { font-size: 12px; color: var(--text-dim); }
+.pf-field input {
+  padding: 6px 9px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 12.5px;
+}
+.pf-field input:focus { outline: none; border-color: var(--accent); }
+.pf-field input:disabled { opacity: .5; cursor: not-allowed; }
+.pf-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px 14px;
+}
+.pf-said { font-size: 11.5px; color: var(--add-ink); }
+
+@media (max-width: 1000px) {
+  .prefs { grid-template-columns: 56px minmax(0, 1fr); }
+  .pf-tab { justify-content: center; padding: 9px 0; }
+  .pf-tab span, .pf-tab { font-size: 0; }
+  .pf-i { width: 16px; height: 16px; }
+  .pf-exit, .pf-nav-label, .pf-nav-foot { display: none; }
+}
+
+/* Showing a conflicted file whole means git reports every line as an addition.
+   Strip the green so the file reads as itself, and let the markers stand out. */
+.fv-body.as-file .dl-add { background: none; }
+.fv-body.as-file .dl-add .dl-sign { visibility: hidden; }
+.fv-body.as-file .dl-add .dl-text { color: var(--text-dim); }
+.stat-conflict { font-size: 11px; color: var(--danger); }
+/* The per-file "+7 −0" counts the whole file as new for the same reason. */
+.fv-body.as-file .difffile-stat { visibility: hidden; }
+
+/* A combined diff's sign column holds two characters, not one. */
+.difftable .dl-sign { white-space: pre; min-width: 14px; width: auto; padding: 0 2px; }
+
+/* ── merge commits: two parents, three questions ─────────────── */
+.c-parents { display: flex; flex-wrap: wrap; gap: 6px; }
+.c-parent { display: inline-flex; align-items: baseline; gap: 5px; }
+.cp-role {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.cp-name { font-family: inherit; font-size: 11px; color: var(--text-dim); }
+.cp-sha { font-family: var(--mono); font-size: 11px; }
+
+.c-mergebar {
+  display: flex;
+  gap: 4px;
+  padding: 10px 14px 0;
+}
+.mb-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.mb-side:hover { background: var(--surface-2); color: var(--text); }
+.mb-side.on {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
+.mb-n {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: center;
+}
+.mb-side.on .mb-n { background: var(--accent); color: var(--accent-ink); }
+/* A side with nothing in it says so before you click it. */
+.mb-n.zero { background: none; color: var(--text-faint); }
+
+/* A conflict group announces itself: the same list styling, but it cannot be
+   mistaken for the ordinary run of changes above it. */
+.fg-conflict .filegroup-head {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+.fg-conflict .fg-label { color: var(--del-ink); }
+.fg-conflict .fg-count {
+  background: var(--danger);
+  color: #fff;
+}
+.filelist .s-U { color: var(--danger); font-weight: 700; }
+
+/* Choices in a dialog, where each one needs its reason next to it. */
+.modal-choices { display: grid; gap: 8px; }
+.choice {
+  display: flex;
+  align-items: start;
+  gap: 9px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.choice:hover { background: var(--surface-2); }
+.choice:has(input:checked) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.choice input { margin-top: 2px; flex: none; accent-color: var(--accent); }
+.choice strong { display: block; font-size: 13px; font-weight: 600; }
+.choice-help { display: block; margin-top: 2px; font-size: 12px; color: var(--text-dim); line-height: 1.45; }
+
+/* ── an operation git stopped part-way through ───────────────── */
+.opstate {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--pending) 14%, var(--surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--pending) 45%, transparent);
+  /* A line of colour along the top edge, so the strip reads as a state the
+     repository is in rather than another toolbar. */
+  box-shadow: inset 0 2px 0 var(--pending);
+  font-size: 13px;
+}
+.op-i { width: 16px; height: 16px; flex: none; color: var(--pending); }
+.op-what { font-weight: 600; }
+.op-what b { font-weight: 700; }
+.op-left { color: var(--text-dim); font-size: 12px; }
+.op-tools { margin-left: auto; display: flex; gap: 8px; flex: none; }
+
+/* ── terminal ────────────────────────────────────────────────── */
+.term {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: var(--term-h, 220px);
+  min-height: 0;
+  background: var(--bg-graph);
+  border-top: 1px solid var(--line);
+}
+/* Grabbed from above, like every resizable panel in the app. */
+.term-grip {
+  position: absolute;
+  top: -3px; left: 0; right: 0;
+  height: 6px;
+  cursor: row-resize;
+  z-index: 4;
+}
+.term-grip:hover { background: var(--accent); }
+
+.term-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line-soft);
+}
+.term-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.term-cwd {
+  /* A flex item defaults to min-width:auto, so a long repository path would
+     refuse to shrink and widen the whole window's grid column with it. */
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.term-tools { margin-left: auto; display: flex; gap: 2px; flex: none; }
+
+.term-out {
+  overflow: auto;
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-dim);
+}
+.term-out .term-hint { color: var(--text-dim); font-style: italic; }
+.term-out .term-cmd-echo { color: var(--text); font-weight: 600; margin-top: 6px; }
+.term-out .term-err { color: var(--del-ink); }
+.term-out .term-ok { color: var(--add-ink); }
+
+.term-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--line-soft);
+  background: var(--surface);
+}
+.term-prompt { font-family: var(--mono); color: var(--accent); flex: none; }
+.term-input input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 0;
+  background: none;
+  border: 0;
+  outline: none;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+/* ── status bar right ────────────────────────────────────────── */
+.statusbar { display: flex; align-items: center; gap: 8px; }
+.sb-right { margin-left: auto; display: flex; align-items: center; gap: 2px; flex: none; }
+.sb-btn {
+  display: grid;
+  place-items: center;
+  width: 22px; height: 20px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.sb-btn:hover { background: var(--surface-2); color: var(--text); }
+.sb-i { width: 13px; height: 13px; display: block; }
+.sb-sep { width: 1px; height: 13px; background: var(--line); margin: 0 5px; }
+.sb-zoom { display: flex; align-items: center; gap: 1px; }
+.sb-level {
+  min-width: 40px;
+  padding: 1px 4px;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.sb-level:hover { background: var(--surface-2); color: var(--text); }
+.sb-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 7px 1px 4px;
+  background: none;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--text-faint);
+}
+.sb-brand:hover { background: var(--surface-2); color: var(--text); }
+.sb-mark { width: 14px; height: 14px; flex: none; }
+.sb-version { font-family: var(--mono); font-size: 10.5px; }
+
+/* ── activity log ────────────────────────────────────────────── */
+.logs {
+  position: fixed;
+  inset: 0;
+  z-index: 88;
+  display: grid;
+  place-items: center;
+  padding: 30px;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+}
+.logs-card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  max-width: 780px;
+  max-height: 76vh;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .45);
+  overflow: hidden;
+}
+.logs-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.logs-head h3 { margin: 0; font-size: 15px; font-weight: 650; }
+.logs-sub { margin: 2px 0 0; font-size: 12px; color: var(--text-faint); }
+.logs-tools { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.logs-count { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+
+.logs-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; }
+.logs-list li {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr) 62px;
+  gap: 10px;
+  align-items: baseline;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.logs-list li:hover { background: var(--surface-2); }
+.lg-time { color: var(--text-faint); }
+.lg-cmd { color: var(--text-dim); overflow-wrap: anywhere; }
+.lg-ms { color: var(--text-faint); text-align: right; font-variant-numeric: tabular-nums; }
+/* A failed command shows its reason on the next line, spanning the row. */
+.lg-err { grid-column: 2 / -1; color: var(--del-ink); }
+.logs-list li.failed .lg-cmd { color: var(--text); }
+.lg-code {
+  margin-left: 8px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* ── about ───────────────────────────────────────────────────── */
+.about {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  backdrop-filter: blur(2px);
+}
+.about-card {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  padding: 30px 30px 22px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .45);
+  text-align: center;
+}
+.about-close {
+  position: absolute;
+  top: 10px; right: 10px;
+  display: grid;
+  place-items: center;
+  width: 26px; height: 26px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.about-close:hover { background: var(--surface-2); color: var(--text); }
+/* The mark is the point of this box, so it gets the room. */
+.about-mark { width: 92px; height: 92px; }
+.about-name {
+  margin: 12px 0 2px;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -.03em;
+}
+.about-version { margin: 0; font-family: var(--mono); font-size: 12px; color: var(--accent); }
+.about-tagline { margin: 10px 0 0; color: var(--text-dim); font-size: 13px; }
+
+.about-specs {
+  margin: 20px 0 0;
+  padding: 12px 14px;
+  background: var(--bg);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  display: grid;
+  gap: 4px;
+  text-align: left;
+}
+.about-specs > div { display: flex; align-items: baseline; gap: 10px; }
+.about-specs dt {
+  width: 74px;
+  flex: none;
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.about-specs dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.about-specs dd.missing { color: var(--danger); }
+
+.about-note { margin: 14px 0 0; font-size: 12px; color: var(--text-faint); }
+.about-note code { font-family: var(--mono); }
+.about-actions { display: flex; justify-content: center; gap: 8px; margin-top: 18px; }
+.about-foot {
+  margin: 16px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* ── release notes ───────────────────────────────────────────── */
+.notes {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  background: var(--bg);
+  --nt-pad: clamp(20px, 5vw, 76px);
+}
+.nt-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 22px var(--nt-pad) 14px;
+  border-bottom: 1px solid var(--line);
+}
+.nt-eyebrow {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.nt-head h1 {
+  margin: 2px 0 0;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -.03em;
+}
+.nt-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.nt-count { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+
+.nt-body { overflow-y: auto; padding: 0 var(--nt-pad) 48px; }
+/* A measured column: release notes are read, not scanned. */
+.nt-rel { max-width: 760px; padding: 26px 0 8px; }
+.nt-rel + .nt-rel { border-top: 1px solid var(--line-soft); }
+.nt-relhead { display: flex; flex-direction: column; gap: 6px; }
+.nt-ver {
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 2px 11px;
+}
+.nt-pill {
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.nt-dev { background: color-mix(in srgb, var(--pending) 18%, transparent); color: var(--pending); }
+.nt-date { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.nt-relhead h2 {
+  margin: 6px 0 0;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -.02em;
+  text-wrap: balance;
+}
+.nt-summary { margin: 4px 0 0; color: var(--text-dim); max-width: 64ch; }
+
+.nt-sec { margin-top: 22px; }
+.nt-sec h3 {
+  margin: 0 0 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.nt-sec ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 7px; }
+.nt-sec li {
+  position: relative;
+  padding-left: 16px;
+  color: var(--text-dim);
+  max-width: 68ch;
+}
+.nt-sec li::before {
+  content: '';
+  position: absolute;
+  left: 2px; top: .62em;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: .7;
+}
+/* Limitations are part of an honest release note, and marked as such. */
+.nt-known li::before { background: var(--pending); }
+.nt-known h3 { color: var(--pending); }
+.nt-empty { padding: 40px 0; color: var(--text-faint); }
+
+/* ── panel commit ────────────────────────────────────────────── */
+.c-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.c-top-label {
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.c-msgbox { padding: 12px; }
+.c-msg-read { position: relative; padding-right: 26px; }
+.c-msg-read h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -.01em;
+  overflow-wrap: anywhere;
+}
+.c-body {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.c-edit {
+  position: absolute;
+  top: -2px; right: -4px;
+  display: grid;
+  place-items: center;
+  width: 24px; height: 24px;
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s, background .12s, color .12s;
+}
+.c-msg-read:hover .c-edit { opacity: 1; }
+.c-edit:hover { background: var(--surface-2); color: var(--text); }
+
+.c-edit-subject, .c-edit-body {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  resize: vertical;
+}
+.c-edit-subject:focus, .c-edit-body:focus { border-color: var(--accent); outline: none; }
+.c-edit-subject { font-weight: 600; }
+/* A commit description is prose, not a label — give it room to be read and
+   written, and let it grow with the panel rather than staying a slit. */
+.c-edit-body {
+  margin-top: 7px;
+  min-height: 190px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+/* Rewriting history deserves a sentence before the button, not after. */
+.c-reword-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--pending);
+}
+.c-edit-actions { display: flex; gap: 6px; margin-top: 9px; }
+
+.c-who {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.c-who-text { display: flex; flex-direction: column; min-width: 0; }
+.c-who-text span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.c-date { font-size: 11px; color: var(--text-faint); }
+.c-parent { margin-left: auto; flex: none; }
+
+.c-filebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 6px;
+}
+.c-stats { display: flex; gap: 10px; font-size: 12px; color: var(--text-dim); }
+.c-stats b { font-weight: 600; }
+.c-viewtoggle { margin-left: auto; display: flex; gap: 4px; }
+.c-viewtoggle .btn.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* ── penampil berkas di tengah ───────────────────────────────── */
+.fileview {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  background: var(--bg-graph);
+  overflow: hidden;
+}
+.fv-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.fv-status {
+  flex: none;
+  width: 18px;
+  text-align: center;
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 11px;
+}
+.fv-path {
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+.fv-stat { flex: none; font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.fv-tools { margin-left: auto; display: flex; align-items: center; gap: 2px; flex: none; }
+.fv-group { display: flex; align-items: center; gap: 2px; }
+
+/* Icon buttons: the label lives in the tooltip now, so the row stays short
+   enough to hold twelve of them. */
+.fv-ib {
+  display: grid;
+  place-items: center;
+  width: 26px; height: 26px;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.fv-ib:hover { background: var(--surface-2); border-color: var(--line); color: var(--text); }
+.fv-ib:disabled { opacity: .35; cursor: default; }
+.fv-ib:disabled:hover { background: none; border-color: transparent; color: var(--text-dim); }
+.fv-ib.danger:hover { border-color: var(--danger); color: var(--danger); }
+/* A toggle that is on wears the accent, so its state reads without a label. */
+.fv-ib.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.fv-i { width: 14px; height: 14px; display: block; }
+
+.fv-counter {
+  min-width: 34px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The block you jumped to gets a rail so the eye lands on it. */
+.difftable tr.dl-here td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+.fv-body { overflow: auto; }
+.fv-body.wrap .dl-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Side-by-side: two number/text pairs, with a rule down the middle. */
+.difftable.split { table-layout: fixed; width: 100%; }
+.difftable.split td.dl-text { width: 50%; }
+.difftable.split td:nth-child(3) { border-left: 1px solid var(--line); }
+.dl-void { background: var(--surface); opacity: .35; }
+
+/* ── find in history ────────────────────────────────────────── */
+/* Docked rather than floating: an overlay would sit on top of the very row it
+   just found whenever the match is near the top of the list. */
+.find {
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 5px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.find-i { color: var(--text-faint); flex: none; }
+.find-input {
+  width: min(320px, 34vw);
+  padding: 3px 4px;
+  background: none;
+  border: 0;
+  outline: none;
+}
+.find-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.find-count.none { color: var(--danger); }
+.find-btn {
+  width: 20px; height: 20px;
+  padding: 0;
+  flex: none;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text-dim);
+  cursor: pointer;
+  line-height: 1;
+}
+.find-btn:hover { background: var(--surface-3); color: var(--text); }
+
+/* ── syntax colours ─────────────────────────────────────────── */
+/* Hues sit on the same ramp as the rest of the app, and both themes get their
+   own values — a palette tuned for dark ink goes muddy on light paper. */
+:root {
+  --hl-com:  #6b7490;
+  --hl-str:  #7fd6a8;
+  --hl-num:  #e0a56a;
+  --hl-key:  #a98cff;
+  --hl-lit:  #e08cc0;
+  --hl-type: #59b8e0;
+  --hl-fn:   #7fa6ff;
+  --hl-tag:  #e2739a;
+  --hl-attr: #d9b06a;
+  --hl-prop: #6ec6c0;
+  --hl-op:   #93a0bd;
+}
+:root[data-theme="light"] {
+  --hl-com:  #7a8296;
+  --hl-str:  #0f7a52;
+  --hl-num:  #9a5a12;
+  --hl-key:  #6a3fc4;
+  --hl-lit:  #a83f7c;
+  --hl-type: #10627f;
+  --hl-fn:   #24559c;
+  --hl-tag:  #b03357;
+  --hl-attr: #85601a;
+  --hl-prop: #10706c;
+  --hl-op:   #5b6478;
+}
+.hl-com  { color: var(--hl-com); font-style: italic; }
+.hl-str  { color: var(--hl-str); }
+.hl-num  { color: var(--hl-num); }
+.hl-key  { color: var(--hl-key); font-weight: 600; }
+.hl-lit  { color: var(--hl-lit); }
+.hl-type { color: var(--hl-type); }
+.hl-fn   { color: var(--hl-fn); }
+.hl-tag  { color: var(--hl-tag); }
+.hl-attr { color: var(--hl-attr); }
+.hl-prop { color: var(--hl-prop); }
+.hl-op   { color: var(--hl-op); }
+
+/* A hint, not a label: dashed and faint, and only while the row is hovered. */
+.pill.ghost {
+  border-style: dashed;
+  opacity: 0;
+  transition: opacity .12s;
+}
+.commit-row:hover .pill.ghost { opacity: .62; }
+.commit-row.selected .pill.ghost { opacity: .5; }
+
+/* Tooltips carry whole commit messages now, so their line breaks must survive. */
+.tooltip { white-space: pre-line; }
+
+/* ── column header ──────────────────────────────────────────── */
+.history-head .hh { position: relative; min-width: 0; }
+/* A wide grab area over a hairline: easy to hit, barely visible until touched. */
+.col-grip {
+  position: absolute;
+  top: -6px; bottom: -6px; right: -4px;
+  width: 9px;
+  cursor: col-resize;
+  z-index: 3;
+}
+.col-grip::after {
+  content: '';
+  position: absolute;
+  top: 4px; bottom: 4px; left: 4px;
+  width: 1px;
+  background: var(--line);
+  transition: background .12s;
+}
+.col-grip:hover::after, body.col-resizing .col-grip::after { background: var(--accent); }
+/* While dragging, nothing else may take the cursor or start selecting text. */
+body.col-resizing { cursor: col-resize; user-select: none; }
+body.col-resizing * { cursor: col-resize !important; }
+
+.c-adate { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+
+/* Misses fade instead of disappearing — the graph beside them must stay whole. */
+.commit-row.faded { opacity: .32; }
+.commit-row.find-current { box-shadow: inset 0 0 0 1px var(--accent); }
+/* Every search hit — history rows and the tab switcher alike. The browser
+   default is a hard yellow that belongs to neither theme. */
+mark {
+  padding: 0 1px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 38%, transparent);
+  color: inherit;
+}
+
+/* Header and rows share one track list so the columns stay locked together.
+   --graph-w is written by the renderer from the measured graph width. */
+.history-head,
+.commit-row {
+  display: grid;
+  /* Written by applyColumns(): one list drives the header and every row, so a
+     resized or hidden column can never leave them out of step. */
+  grid-template-columns: var(--hist-cols);
+  align-items: center;
+  /* Keep full width while scrolled sideways, so row tint and hover do not
+     stop short of the right-hand columns. Mirrors the track list above. */
+  min-width: var(--hist-min);
+}
+
+/* Rides inside the scroller: sticks while scrolling down, travels with the
+   columns while scrolling across. */
+.history-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: var(--head-h);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.history-head > span {
+  padding: 0 9px;
+  line-height: 25px;
+  border-left: 1px solid var(--line-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-head > span:first-child { border-left: 0; }
+
+.history-scroll {
+  grid-row: 2; position: relative; overflow: auto; }
+
+/* The SVG sits behind the rows, shifted past the branch column and below the
+   sticky header. */
+.graph-layer {
+  position: absolute;
+  top: var(--head-h);
+  left: var(--graph-x, 0px);
+  pointer-events: none;
+  z-index: 0;
+}
+.graph-svg { display: block; }
+
+.commit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+  z-index: 1;
+  min-width: var(--hist-min);
+}
+
+.commit-row {
+  height: var(--row-h);
+  cursor: pointer;
+  /* Lane wash for this row; --lane is set inline from the graph colour. */
+  --tint: color-mix(in srgb, var(--lane, transparent) var(--lane-tint), transparent);
+}
+.commit-row > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  min-width: 0;
+  padding: 0 9px;
+  border-left: 1px solid var(--line-soft);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.commit-row > span:first-child { border-left: 0; }
+
+/* Painted as an image so the row's own background can still show through. */
+.c-msg { background-image: linear-gradient(var(--tint), var(--tint)); }
+.c-graph { padding: 0; }
+
+.commit-row:hover { background-color: var(--row-hover); }
+.commit-row.selected { background-color: var(--row-sel); }
+.commit-row.pending .c-msg-text { color: var(--pending); font-weight: 600; }
+
+.c-msg-text {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.c-msg-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.c-author, .c-date {
+  color: var(--text-dim);
+  font-size: 12px;
+  text-overflow: ellipsis;
+}
+.c-date { font-variant-numeric: tabular-nums; }
+.c-sha {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  text-overflow: ellipsis;
+}
+
+/* ── branch / tag pills ─────────────────────────────────────── */
+.c-refs { gap: 4px; }
+.pill {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  gap: 4px;
+  min-width: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--pc) var(--pill-line), transparent);
+  background: color-mix(in srgb, var(--pc) var(--pill-fill), transparent);
+}
+/* The checked-out branch is filled solid, the way GitKraken marks HEAD. */
+.pill.current {
+  background: var(--pc);
+  border-color: var(--pc);
+  color: #fff;
+  font-weight: 600;
+}
+.pill-name { overflow: hidden; text-overflow: ellipsis; }
+.pill-i { width: 11px; height: 11px; flex: none; opacity: .75; }
+.pill.current .pill-i { opacity: 1; }
+
+/* Narrow window: drop the SHA column and tighten the rest, so the history
+   scrolls sideways later than it otherwise would. The track list and
+   --hist-min have to be changed together or the header drifts off the rows. */
+/* Narrow windows simply scroll sideways: the column set is the reader's choice
+   now, so a media query may not quietly rewrite it. */
+
+.load-more { margin: 12px auto 24px; display: block; }
+
+/* ── detail ─────────────────────────────────────────────────── */
+/* One row, not two: the second row used to hold the diff pane, and after that
+   moved to the middle it stayed behind as dead space under the file list. */
+.detail {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  min-width: 0;
+  overflow: hidden;
+  /* Outrank the commit list's z-index:1 so it can never be painted over. */
+  position: relative;
+  z-index: 2;
+}
+/* No height cap: the panel owns the whole column and scrolls inside it, so a
+   long file list runs to the bottom instead of being cut off mid-row. */
+/* No height cap: the panel owns the whole column and scrolls inside it, so a
+   long file list runs to the bottom instead of being cut off mid-row. */
+.panel { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+
+/* ── uncommitted changes ─────────────────────────────────────── */
+.wip-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.wip-head h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
+.wip-total {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.file-filter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 10px 12px 4px;
+  padding: 0 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.file-filter:focus-within { border-color: var(--accent); }
+.ff-i { width: 13px; height: 13px; flex: none; color: var(--text-faint); }
+.file-filter input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 0;
+  background: none;
+  border: 0;
+  outline: none;
+}
+.ff-clear {
+  display: grid;
+  place-items: center;
+  width: 18px; height: 18px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 50%;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.ff-clear:hover { background: var(--surface-3); color: var(--text); }
+
+/* Section labels speak with the same voice as the sidebar's. */
+.filegroup-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 5px;
+}
+.fg-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.fg-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.fg-tools { margin-left: auto; display: flex; gap: 3px; }
+.fg-ib {
+  display: grid;
+  place-items: center;
+  width: 24px; height: 24px;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.fg-ib:hover { background: var(--surface-2); border-color: var(--line); color: var(--text); }
+.fg-ib.danger:hover { border-color: var(--danger); color: var(--danger); }
+
+.f-dir { color: var(--text-faint); }
+.f-act {
+  display: grid;
+  place-items: center;
+  width: 22px; height: 22px;
+  flex: none;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .12s, background .12s, color .12s;
+}
+.filelist li:hover .f-act, .filelist li.selected .f-act { opacity: 1; }
+.f-act:hover { background: var(--surface-3); color: var(--text); }
+.f-act.danger:hover { color: var(--danger); }
+
+/* ── commit box ──────────────────────────────────────────────── */
+.commitbox {
+  margin-top: auto;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cb-summary-wrap { position: relative; display: flex; }
+.cb-summary, .cb-body {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  resize: vertical;
+}
+.cb-summary { font-weight: 600; padding-right: 42px; }
+.cb-body { min-height: 76px; font-family: var(--mono); font-size: 12px; line-height: 1.5; }
+.cb-summary:focus, .cb-body:focus { border-color: var(--accent); outline: none; }
+/* Counts only appear once the line is long enough to be worth watching. */
+.cb-count {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+.cb-count.near { color: var(--pending); }
+.cb-count.over { color: var(--danger); font-weight: 600; }
+.commitbox-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.panel { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.panel-head { padding: 12px 14px 10px; border-bottom: 1px solid var(--line-soft); }
+.panel-head h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+.c-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: center;
+  color: var(--text-faint);
+  font-size: 12px;
+  min-width: 0;
+}
+.c-meta > span { overflow: hidden; text-overflow: ellipsis; }
+.hashbtn {
+  margin-left: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.hashbtn:hover { color: var(--accent); border-color: var(--accent); }
+.c-body {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  color: var(--text-dim);
+  font-size: 12px;
+  max-height: 140px;
+  overflow: auto;
+}
+.c-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+
+.filegroup { border-bottom: 1px solid var(--line-soft); }
+.filegroup-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 14px 5px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.filelist { list-style: none; margin: 0; padding: 0 6px 6px; }
+.filelist li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* --d is the tree depth, exactly as in the sidebar. */
+  padding: 3px 8px 3px calc(8px + var(--d, 0) * 13px);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.filelist li:hover { background: var(--surface-2); }
+.filelist li.selected { background: var(--surface-3); }
+/* Folder rows come from the same tree builder the sidebar uses. */
+.filelist .tree-folder { color: var(--text-dim); }
+.filelist .tree-folder .chev { width: 10px; flex: none; text-align: center; font-size: 9px; }
+.filelist .tree-folder.shut .chev { transform: rotate(-90deg); }
+.filelist .tree-leaf::before { content: ''; width: 10px; flex: none; }
+.f-status {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+.f-status.s-A, .f-status.s-\? { color: var(--add); }
+.f-status.s-M, .f-status.s-R  { color: var(--pending); }
+.f-status.s-D                 { color: var(--del); }
+.f-status.s-U                 { color: #e05a8f; }
+.f-path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.f-act {
+  flex: none;
+  opacity: 0;
+  background: none;
+  border: 0;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 3px;
+  font-size: 14px;
+  line-height: 1;
+}
+.filelist li:hover .f-act { opacity: 1; }
+.f-act:hover { color: var(--accent); }
+.f-act.danger:hover { color: var(--danger); }
+
+.empty-row { padding: 5px 14px; color: var(--text-faint); font-size: 12px; }
+
+/* commit box */
+.commitbox { padding: 10px 14px 12px; border-top: 1px solid var(--line-soft); }
+.commit-msg {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  resize: vertical;
+  min-height: 58px;
+}
+.commit-msg:focus { border-color: var(--accent); outline: none; }
+.commitbox-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+.check { display: flex; align-items: center; gap: 5px; color: var(--text-dim); font-size: 12px; }
+
+/* ── diff ───────────────────────────────────────────────────── */
+.diffpane { display: grid; grid-template-rows: auto 1fr; min-height: 0; border-top: 1px solid var(--line); }
+.diff-head {
+  padding: 6px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diff-body { overflow: auto; background: var(--bg); }
+
+.difffile { border-bottom: 1px solid var(--line); }
+.difffile-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--surface-2);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.difffile-name { font-family: var(--mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.difffile-stat { margin-left: auto; display: flex; gap: 8px; font-family: var(--mono); font-size: 11px; }
+.stat-add { color: var(--add); }
+.stat-del { color: var(--del); }
+
+.hunk { border-top: 1px solid var(--line-soft); }
+.hunk-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 12px;
+  background: rgba(124, 140, 255, .05);
+}
+.hunk-range { font-family: var(--mono); font-size: 11px; color: var(--accent); opacity: .8; }
+.hunk-actions { margin-left: auto; display: flex; gap: 4px; opacity: 0; transition: opacity .1s; }
+.hunk:hover .hunk-actions { opacity: 1; }
+.hunk-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 7px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.hunk-btn:hover { color: var(--text); border-color: var(--accent); }
+
+.difftable {
+  width: 100%;
+  border-collapse: collapse;
+  /* Set from Preferences → Editor; both fall back to the theme's own values. */
+  font-family: var(--diff-font, var(--mono));
+  font-size: var(--diff-size, 12px);
+  line-height: 1.5;
+  tab-size: var(--diff-tab, 4);
+}
+.app.no-line-numbers .dl-num { display: none; }
+.dl-num {
+  width: 44px;
+  padding: 0 8px;
+  text-align: right;
+  color: var(--text-faint);
+  user-select: none;
+  vertical-align: top;
+  opacity: .65;
+}
+.dl-sign { width: 14px; text-align: center; user-select: none; vertical-align: top; }
+.dl-text { white-space: pre-wrap; word-break: break-word; padding-right: 12px; }
+.dl-add { background: var(--add-bg); }
+.dl-add .dl-sign, .dl-add .dl-text { color: var(--add-ink); }
+.dl-del { background: var(--del-bg); }
+.dl-del .dl-sign, .dl-del .dl-text { color: var(--del-ink); }
+.dl-meta .dl-text { color: var(--text-faint); font-style: italic; }
+
+.empty-note { padding: 24px 16px; text-align: center; color: var(--text-faint); font-size: 12px; }
+
+/* ── status bar ─────────────────────────────────────────────── */
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.status-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-text.error { color: var(--danger); }
+.status-text.ok { color: var(--add); }
+
+.spinner {
+  width: 11px; height: 11px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+  flex: none;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Clone progress: the one operation slow enough to need a bar. */
+.progress {
+  width: 120px;
+  height: 4px;
+  flex: none;
+  margin-left: auto;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.progress-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  border-radius: inherit;
+  transition: width .15s linear;
+}
+
+/* ── modal ──────────────────────────────────────────────────── */
+.modal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 9, 14, .6);
+  z-index: 50;
+}
+/* Dialogs follow the display the way the start screen does, just more gently —
+   they also open over the dense history, which must not be dwarfed. */
+.modal { font-size: clamp(13px, .8vw, 16px); }
+.modal-card {
+  width: clamp(400px, 32vw, 560px);
+  max-width: 90vw;
+  padding: 1.35em;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: .75em;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, .5);
+}
+.modal-card h3 { margin: 0 0 .25em; font-size: 1.15em; }
+.modal-desc { margin: 0 0 1.1em; color: var(--text-dim); font-size: .92em; }
+.modal-field { margin-bottom: .75em; }
+.modal-field label {
+  display: block;
+  margin-bottom: .3em;
+  font-size: .85em;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.modal-field input[type="text"] {
+  width: 100%;
+  padding: .45em .7em;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.modal-field input:focus { border-color: var(--accent); outline: none; }
+.modal-field .with-button { display: flex; gap: .45em; }
+.modal-field .with-button input[type="text"] { flex: 1; min-width: 0; }
+.modal-note {
+  margin: .15em 0 0;
+  font-family: var(--mono);
+  font-size: .85em;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+.modal-note.error { color: var(--danger); }
+
+/* Help ▸ Keyboard Shortcuts */
+.sc-group {
+  margin: 1.1em 0 .4em;
+  font-size: .78em;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.sc-group:first-child { margin-top: 0; }
+.sc-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: .3em .9em;
+  margin: 0;
+  align-items: baseline;
+}
+.sc-list dt { display: flex; gap: .25em; justify-content: flex-end; align-items: baseline; }
+.sc-or { color: var(--text-faint); font-size: .8em; }
+.sc-list dd { margin: 0; color: var(--text-dim); }
+.sc-list kbd {
+  padding: .1em .45em;
+  border: 1px solid var(--line);
+  border-radius: .3em;
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: .82em;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.modal-actions { display: flex; justify-content: flex-end; gap: .6em; margin-top: 1.2em; }
+
+/* ── context menu ───────────────────────────────────────────── */
+.ctxmenu {
+  position: fixed;
+  z-index: 60;
+  min-width: 178px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .45);
+}
+.ctxmenu li { padding: 5px 10px; border-radius: 4px; cursor: pointer; }
+.ctxmenu li:hover { background: var(--accent); color: var(--accent-ink); }
+.ctxmenu li.sep { height: 1px; padding: 0; margin: 4px 2px; background: var(--line); pointer-events: none; }
+.ctxmenu li.danger:hover { background: var(--danger); }
+/* Shown but not available — the reason sits in its tooltip. */
+.ctxmenu li.checkable { display: flex; align-items: baseline; gap: 7px; }
+.ctxmenu li .ctx-tick {
+  width: 10px;
+  flex: none;
+  text-align: center;
+  font-size: 11px;
+  color: var(--accent);
+}
+.ctxmenu li.checkable:hover .ctx-tick { color: var(--accent-ink); }
+.ctxmenu li.has-accel { display: flex; align-items: baseline; gap: 7px; }
+.ctxmenu li .ctx-accel {
+  margin-left: auto;
+  padding-left: 18px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.ctxmenu li:hover .ctx-accel { color: var(--accent-ink); opacity: .75; }
+.ctxmenu li.off { color: var(--text-faint); cursor: default; }
+/* A heading, not an action. */
+.ctxmenu li.off:first-child {
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.ctxmenu li.off:hover { background: none; color: var(--text-faint); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
