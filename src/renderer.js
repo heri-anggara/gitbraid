@@ -2913,6 +2913,7 @@ async function gitAction(id, verb, fn, done) {
     const finished = action;
     action = null;
     tbProgress(null);
+    hideProgress();          // in case anything left the status bar's bar showing
     if (finished.label && toolLabel(id)) toolLabel(id).textContent = finished.label;
     lockToolbar(false);
     setToolState(id, ok ? 'done' : 'failed');
@@ -2930,7 +2931,14 @@ async function gitAction(id, verb, fn, done) {
 
 /* git narrates on stderr; this turns that narration into the button's label. */
 window.gitbraid.on('repo:progress', (p) => {
-  if (!action) return;                       // a clone runs before any tab exists
+  /* A clone runs from the start page, before any tab or toolbar button exists,
+     so it reports on the status bar instead. Everything else is owned by a
+     button and reports there — one listener, so the two cannot both draw. */
+  if (!action) {
+    setStatus(firstLine(p.text));
+    if (p.percent !== null && p.percent !== undefined) showProgress(p.percent);
+    return;
+  }
   tbProgress(p.percent);
   const label = toolLabel(action.id);
   if (!label) return;
@@ -4612,11 +4620,6 @@ window.addEventListener('drop', async (e) => {
 });
 
 /* ═════ startup ═════════════════════════════════════════════════ */
-
-window.gitbraid.on('repo:progress', ({ text, percent }) => {
-  setStatus(firstLine(text));
-  if (percent !== null && percent !== undefined) showProgress(percent);
-});
 
 (async () => {
   applyColumns();
