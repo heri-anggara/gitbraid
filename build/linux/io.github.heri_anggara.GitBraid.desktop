@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=GitBraid
+GenericName=Git Client
+Comment=Read your Git history as coloured lanes
+Exec=gitbraid %U
+Icon=io.github.heri_anggara.GitBraid
+Terminal=false
+Categories=Development;RevisionControl;
+Keywords=git;version control;vcs;commit;diff;merge;
+StartupNotify=true
+StartupWMClass=GitBraid
