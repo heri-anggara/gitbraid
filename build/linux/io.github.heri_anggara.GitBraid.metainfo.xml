@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata: this is what GNOME Software, KDE Discover and Flathub
+     read to build the store listing. Rename the file to match <id> exactly. -->
+<component type="desktop-application">
+  <id>io.github.heri_anggara.GitBraid</id>
+  <!-- The name of the desktop file as it is actually installed. The .deb and
+       AppImage ship gitbraid.desktop; a Flatpak renames it to match <id>, and
+       this line has to be changed with it. -->
+  <launchable type="desktop-id">gitbraid.desktop</launchable>
+
+  <name>GitBraid</name>
+  <summary>Read your Git history as coloured lanes</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <developer id="io.github.heri_anggara">
+    <name>Heri Anggara</name>
+  </developer>
+
+  <description>
+    <p>
+      GitBraid is a desktop Git client that draws history as coloured lanes, so
+      the shape of a branch is visible before you read a word of it.
+    </p>
+    <p>Made for people who want to see what git is doing, not be shielded from it:</p>
+    <ul>
+      <li>Several repositories open at once in tabs, each keeping its own history, selection and commit draft</li>
+      <li>Stage, unstage and discard by file or by individual hunk</li>
+      <li>A full-width diff viewer with side-by-side view, syntax colouring and whitespace-only changes hidden on request</li>
+      <li>Conflicts handled in the app: a banner while a merge or rebase is suspended, per-file resolution, and Abort or Continue</li>
+      <li>Merge commits show what they brought in, what the other side had, and what a person resolved by hand</li>
+      <li>Branch, remote and tag operations from context menus that explain why an entry cannot run</li>
+      <li>Git-Flow built on plain git, writing the same config keys the command line tool uses</li>
+      <li>An activity log of every git command the app ran, with how long each took</li>
+    </ul>
+    <p>
+      GitBraid carries no runtime dependencies and shells out to the real git,
+      so nothing it does is invisible to the command line.
+    </p>
+  </description>
+
+  <categories>
+    <category>Development</category>
+    <category>RevisionControl</category>
+  </categories>
+
+  <keywords>
+    <keyword>git</keyword>
+    <keyword>version control</keyword>
+    <keyword>vcs</keyword>
+    <keyword>commit</keyword>
+    <keyword>diff</keyword>
+    <keyword>merge</keyword>
+  </keywords>
+
+  <url type="homepage">https://github.com/heri-anggara/gitbraid</url>
+  <url type="bugtracker">https://github.com/heri-anggara/gitbraid/issues</url>
+  <url type="vcs-browser">https://github.com/heri-anggara/gitbraid</url>
+
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/heri-anggara/gitbraid/main/screenshots/history.png</image>
+      <caption>Commit history drawn as coloured lanes</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/heri-anggara/gitbraid/main/screenshots/diff.png</image>
+      <caption>Side-by-side diff with syntax colouring</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/heri-anggara/gitbraid/main/screenshots/conflict.png</image>
+      <caption>A suspended merge, with its conflicts listed separately</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/heri-anggara/gitbraid/main/screenshots/history-light.png</image>
+      <caption>The same history in the light theme</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/heri-anggara/gitbraid/main/screenshots/diff-light.png</image>
+      <caption>Side-by-side diff in the light theme</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/heri-anggara/gitbraid/main/screenshots/conflict-light.png</image>
+      <caption>Resolving a conflict in the light theme</caption>
+    </screenshot>
+  </screenshots>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.1.0" date="2026-08-18">
+      <description>
+        <p>First working build.</p>
+      </description>
+    </release>
+  </releases>
+</component>
