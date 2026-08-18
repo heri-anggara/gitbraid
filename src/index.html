@@ -1,0 +1,956 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.gravatar.com https://secure.gravatar.com; font-src 'self';">
+<title>GitBraid</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ── logo ──────────────────────────────────────────────────────
+     Didefinisikan sekali, dipakai di toolbar dan layar awal. Alurnya
+     dipotong dari kepingnya, jadi warnanya selalu warna latar di
+     belakangnya — ikut tema gelap maupun terang tanpa versi kedua. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="gb-t1" x1="0" y1="0" x2=".6" y2="1">
+      <stop offset="0" stop-color="#98a3ff"/><stop offset="1" stop-color="#5f6ee8"/>
+    </linearGradient>
+    <linearGradient id="gb-t2" x1="0" y1="0" x2=".6" y2="1">
+      <stop offset="0" stop-color="#3fc79b"/><stop offset="1" stop-color="#118a67"/>
+    </linearGradient>
+    <linearGradient id="gb-t3" x1="0" y1="0" x2=".6" y2="1">
+      <stop offset="0" stop-color="#e05cb4"/><stop offset="1" stop-color="#ad2d82"/>
+    </linearGradient>
+    <linearGradient id="gb-t4" x1="0" y1="0" x2=".6" y2="1">
+      <stop offset="0" stop-color="#5b9bf5"/><stop offset="1" stop-color="#2864c4"/>
+    </linearGradient>
+    <!-- Simpul duduk di pusat tiap keping: (60,28.9) (91.1,60) (28.9,60) (60,91.1). -->
+    <mask id="gb-cut" maskUnits="userSpaceOnUse" x="0" y="0" width="120" height="120">
+      <rect width="120" height="120" fill="#fff"/>
+      <g fill="none" stroke="#000" stroke-width="9" stroke-linecap="round">
+        <path d="M60 29 L60 91"/>
+        <path d="M60 44 C60 57 74 60 91 60"/>
+        <path d="M29 60 C46 60 60 63 60 76"/>
+      </g>
+      <circle cx="60" cy="29" r="7.5" fill="none" stroke="#000" stroke-width="8"/>
+      <circle cx="91" cy="60" r="7.5" fill="none" stroke="#000" stroke-width="8"/>
+      <circle cx="29" cy="60" r="7.5" fill="none" stroke="#000" stroke-width="8"/>
+      <circle cx="60" cy="91" r="9.5" fill="#000"/>
+    </mask>
+  </defs>
+  <symbol id="gb-logo" viewBox="0 0 120 120">
+    <g mask="url(#gb-cut)">
+      <g transform="rotate(45 60 60)">
+        <rect x="18" y="18" width="40" height="40" rx="8.5" fill="url(#gb-t1)"/>
+        <rect x="62" y="18" width="40" height="40" rx="8.5" fill="url(#gb-t2)"/>
+        <rect x="18" y="62" width="40" height="40" rx="8.5" fill="url(#gb-t3)"/>
+        <rect x="62" y="62" width="40" height="40" rx="8.5" fill="url(#gb-t4)"/>
+      </g>
+    </g>
+  </symbol>
+</svg>
+
+<!-- `is-booting` is in the markup from the very first paint: until the renderer
+     knows whether a repository is being resumed, neither the start page nor the
+     history may be drawn, or one of them flashes past on the way to the other. -->
+<div id="app" class="app is-empty is-booting">
+
+  <!-- ── tabs ────────────────────────────────────────────────── -->
+  <div class="tabbar" id="tabbar">
+    <button id="btn-repomgr" class="tab-btn" title="Repo Management (Ctrl+Shift+O)">
+      <svg class="tb-i" viewBox="0 0 14 14" aria-hidden="true">
+        <path d="M1.6 3.4a1 1 0 0 1 1-1h2.6l1.1 1.4h6.1a1 1 0 0 1 1 1v6.4a1 1 0 0 1-1 1H2.6a1 1 0 0 1-1-1z"
+              fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <div class="tabs" id="tabs"></div>
+    <!-- Digambar, bukan karakter: tebal dan ukurannya sama persis dengan
+         silang tutup di dalam tab. -->
+    <button id="btn-newtab" class="tab-btn" title="Open another repository (Ctrl+O)">
+      <svg class="tb-i" viewBox="0 0 12 12" aria-hidden="true">
+        <path d="M6 2.3V9.7M2.3 6H9.7" fill="none" stroke="currentColor"
+              stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+    </button>
+
+    <!-- Kelompok kanan: berlaku untuk aplikasi, bukan untuk satu repo. -->
+    <div class="tabbar-right">
+      <button id="btn-tabsearch" class="tab-btn" title="Search open tabs">
+        <svg class="tb-i" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M2.7 4.5 6 7.8 9.3 4.5" fill="none" stroke="currentColor"
+                stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <!-- Roda gigi: garis luarnya dibangkitkan sebagai poligon 8 gigi.
+           Goresnya sengaja 1,3 — bukan 1,8 seperti ikon lain di strip ini —
+           karena pada 13 px gores tebal membuat celah antar giginya mampet. -->
+      <button id="btn-settings" class="tab-btn" title="Settings">
+        <svg class="tb-i" viewBox="0 0 14 14" aria-hidden="true">
+          <path d="M13.60 7.00L13.21 9.24L11.37 8.98L10.65 10.12L11.67 11.67L9.81 12.97L8.70 11.49L7.38 11.79L7.00 13.60L4.76 13.21L5.02 11.37L3.88 10.65L2.33 11.67L1.03 9.81L2.51 8.70L2.21 7.38L0.40 7.00L0.79 4.76L2.63 5.02L3.35 3.88L2.33 2.33L4.19 1.03L5.30 2.51L6.62 2.21L7.00 0.40L9.24 0.79L8.98 2.63L10.12 3.35L11.67 2.33L12.97 4.19L11.49 5.30L11.79 6.62Z" fill="none" stroke="currentColor"
+                stroke-width="1.3" stroke-linejoin="round"/>
+          <circle cx="7" cy="7" r="2.4" fill="none" stroke="currentColor" stroke-width="1.3"/>
+        </svg>
+      </button>
+      <button id="btn-profile" class="profile-chip" title="Your Git identity">
+        <span class="avatar" id="profile-avatar">?</span>
+        <span class="profile-name" id="profile-name">Identity</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ── toolbar ─────────────────────────────────────────────── -->
+  <header class="toolbar">
+    <div class="toolbar-left">
+      <!-- Shown only before a repository is open, where the toolbar would
+           otherwise be a row of buttons that cannot do anything yet. -->
+      <div class="brand" id="brand">
+        <svg class="brand-mark" viewBox="0 0 120 120" aria-hidden="true"><use href="#gb-logo"/></svg>
+        <span class="brand-name">GitBraid</span>
+      </div>
+
+      <!-- The repository name and its branch live at the top of the sidebar,
+           the way GitKraken puts them: one home, not two. -->
+    </div>
+
+    <!-- Aksi git duduk di tengah jendela, bukan menempel di salah satu tepi.
+         Setiap kontrol di sini butuh repositori, jadi kelompoknya tidak
+         muncul sampai ada satu. -->
+    <div class="toolbar-center">
+      <div class="repo-actions" id="repo-actions" hidden>
+        <button id="btn-fetch" class="btn-tool"
+                title="Check the remotes for new commits, without touching your files (F)">
+          <svg class="tool-i" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M13.2 6.2A5.4 5.4 0 1 0 13.5 9.4" fill="none" stroke="currentColor"
+                  stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M9.6 6.1h3.7V2.5" fill="none" stroke="currentColor"
+                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>Fetch</span>
+        </button>
+
+        <button id="btn-pull" class="btn-tool"
+                title="Bring the remote commits into this branch and update your files (P)">
+          <svg class="tool-i" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 2.6v6.9M5.2 6.9 8 9.7l2.8-2.8M3.2 13.2h9.6" fill="none"
+                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                  stroke-linejoin="round"/>
+          </svg>
+          <span>Pull</span>
+          <span id="badge-behind" class="badge" hidden></span>
+        </button>
+
+        <button id="btn-push" class="btn-tool"
+                title="Send this branch’s commits to the remote (Shift+P) — right-click to force push">
+          <svg class="tool-i" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 13.4V6.5M5.2 9.3 8 6.5l2.8 2.8M3.2 2.8h9.6" fill="none"
+                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                  stroke-linejoin="round"/>
+          </svg>
+          <span>Push</span>
+          <span id="badge-ahead" class="badge" hidden></span>
+        </button>
+
+        <span class="tb-sep"></span>
+
+        <button id="btn-stash" class="btn-tool"
+                title="Put your uncommitted changes aside and clean the working tree">
+          <svg class="tool-i" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M2.8 9.6v3.2h10.4V9.6" fill="none" stroke="currentColor"
+                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M8 2.6v6M5.6 6.2 8 8.6l2.4-2.4" fill="none" stroke="currentColor"
+                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>Stash</span>
+        </button>
+
+        <button id="btn-pop" class="btn-tool" title="Apply the newest stash and drop it">
+          <svg class="tool-i" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M2.8 9.6v3.2h10.4V9.6" fill="none" stroke="currentColor"
+                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M8 8.6v-6M5.6 5 8 2.6 10.4 5" fill="none" stroke="currentColor"
+                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>Pop</span>
+        </button>
+
+        <span class="tb-sep"></span>
+
+        <button id="btn-branch" class="btn-tool"
+                title="Create a branch starting from where you are now (B)">
+          <!-- Tanda tambahnya yang membedakannya dari ikon Git-Flow di sebelah. -->
+          <svg class="tool-i" viewBox="0 0 16 16" aria-hidden="true">
+            <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+              <circle cx="4.6" cy="12.4" r="1.8"/>
+              <path d="M4.6 10.6V7.6"/>
+              <path d="M4.6 8.4C4.6 5.6 7.4 5.4 9.4 4.9"/>
+              <path d="M12 2.6v4.2M9.9 4.7h4.2"/>
+            </g>
+          </svg>
+          <span>New branch</span>
+        </button>
+
+        <button id="btn-flow" class="btn-tool" title="Git-Flow">
+          <!-- Cabang yang keluar lalu kembali: keluar-masuknya dibiarkan terbuka,
+               karena lengkung tertutup berubah jadi gumpalan di 17 px. -->
+          <svg class="tool-i" viewBox="0 0 16 16" aria-hidden="true">
+            <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+              <path d="M4.4 5.1v5.8"/>
+              <path d="M5.2 5.6C7 6.1 9 6.3 10.3 7"/>
+              <path d="M10.3 9C9 9.7 7 9.9 5.2 10.4"/>
+              <circle cx="4.4" cy="3.3" r="1.7"/>
+              <circle cx="4.4" cy="12.7" r="1.7"/>
+              <circle cx="11.6" cy="8" r="1.7"/>
+            </g>
+          </svg>
+          <span id="flow-label">Git-Flow</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- A hairline along the foot of the toolbar, right under the button that
+         started the work. Hidden until git reports a percentage. -->
+    <div class="tb-progress" id="tb-progress" hidden><span id="tb-progress-fill"></span></div>
+
+    <div class="toolbar-right">
+      <button id="btn-theme" class="btn btn-icon" title="Switch between the light and dark theme">
+        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+          <path class="ic-moon" d="M13 9.6A5.6 5.6 0 0 1 6.4 3a5.6 5.6 0 1 0 6.6 6.6z"
+                fill="currentColor"/>
+          <g class="ic-sun" fill="none" stroke="currentColor" stroke-width="1.5"
+             stroke-linecap="round">
+            <circle cx="8" cy="8" r="3.1"/>
+            <path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3 3l1.1 1.1M11.9 11.9 13 13M13 3l-1.1 1.1M4.1 11.9 3 13"/>
+          </g>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- shown only while resuming the last repository -->
+  <div class="booting" id="booting">
+    <span class="spinner"></span>
+    <span id="booting-text">Opening…</span>
+  </div>
+
+  <!-- ── repo management ─────────────────────────────────────── -->
+  <!-- Preferences. The left rail names the four pages; the body is rendered
+       from the PREF_PAGES spec in renderer.js so every control is bound to a
+       real setting rather than to markup that only looks like one. -->
+  <section class="prefs" id="prefs" hidden>
+    <aside class="pf-nav">
+      <button class="pf-exit" id="pf-close">
+        <svg viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
+          <path d="M8.5 3 4.5 7l4 4" fill="none" stroke="currentColor"
+                stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Exit preferences
+      </button>
+
+      <p class="pf-nav-label">Preferences</p>
+      <nav class="pf-tabs" id="pf-tabs"></nav>
+
+      <footer class="pf-nav-foot">
+        <svg class="pf-mark" viewBox="0 0 120 120" aria-hidden="true"><use href="#gb-logo"/></svg>
+        <span>GitBraid <span id="pf-version">—</span></span>
+      </footer>
+    </aside>
+
+    <div class="pf-body" id="pf-body"></div>
+  </section>
+
+  <section class="repomgr" id="repomgr" hidden>
+    <header class="rm-head">
+      <h1>Repository management</h1>
+      <div class="rm-actions">
+        <button class="btn" id="rm-browse">Browse</button>
+        <button class="btn" id="rm-clone">Clone</button>
+        <button class="btn" id="rm-init">Init</button>
+        <span class="tb-sep"></span>
+        <button class="btn" id="rm-scan" title="Look through a folder for repositories and remember them">Scan a folder…</button>
+        <button class="btn btn-icon" id="rm-close" title="Close (Esc)">
+          <svg viewBox="0 0 12 12" width="13" height="13" aria-hidden="true">
+            <path d="M3 3 9 9M9 3 3 9" fill="none" stroke="currentColor"
+                  stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="rm-bar">
+      <button class="linkbtn" id="rm-collapse">Collapse</button>
+      <button class="linkbtn" id="rm-expand">Expand</button>
+      <input id="rm-search" type="text" spellcheck="false" placeholder="Search repositories">
+      <span class="rm-total" id="rm-total"></span>
+      <label class="check">
+        <input type="checkbox" id="rm-wip"> WIP summary
+      </label>
+    </div>
+
+    <div class="rm-groups" id="rm-groups"></div>
+  </section>
+
+  <!-- ── release notes ───────────────────────────────────────── -->
+  <section class="notes" id="notes" hidden>
+    <header class="nt-head">
+      <div>
+        <div class="nt-eyebrow">GitBraid</div>
+        <h1>Release notes</h1>
+      </div>
+      <div class="nt-actions">
+        <span class="nt-count" id="nt-count"></span>
+        <button class="btn btn-icon" id="nt-close" title="Close (Esc)">
+          <svg viewBox="0 0 12 12" width="13" height="13" aria-hidden="true">
+            <path d="M3 3 9 9M9 3 3 9" fill="none" stroke="currentColor"
+                  stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+    <div class="nt-body" id="nt-body"></div>
+  </section>
+
+  <!-- ── welcome ─────────────────────────────────────────────── -->
+  <section id="welcome" class="welcome">
+    <div class="welcome-inner">
+
+      <header class="welcome-head">
+        <div class="welcome-mark" aria-hidden="true">
+          <svg viewBox="0 0 120 120"><use href="#gb-logo"/></svg>
+        </div>
+        <div>
+          <h1>GitBraid</h1>
+          <p class="welcome-sub">Read your history as lanes, not as a wall of text.</p>
+        </div>
+      </header>
+
+      <div class="welcome-grid">
+
+        <!-- what you can actually do from here -->
+        <div class="start-actions">
+          <button class="action-card is-primary" id="card-open">
+            <span class="ac-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+                   stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
+                <path d="M3 6.5a1.5 1.5 0 0 1 1.5-1.5h4.2l1.8 2h8A1.5 1.5 0 0 1 20 8.5V18a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3 18z"/>
+              </svg>
+            </span>
+            <span class="ac-text">
+              <span class="ac-title">Open a local repository</span>
+              <span class="ac-desc">Pick a folder that is already a repository.</span>
+            </span>
+            <kbd class="ac-key">Ctrl O</kbd>
+          </button>
+
+          <button class="action-card" id="card-clone">
+            <span class="ac-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+                   stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                <path d="M12 3v11"/><path d="M8 10.5 12 14.5l4-4"/>
+                <path d="M4.5 16.5v2A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5v-2"/>
+              </svg>
+            </span>
+            <span class="ac-text">
+              <span class="ac-title">Clone from a URL</span>
+              <span class="ac-desc">Download a remote repository and open it.</span>
+            </span>
+            <kbd class="ac-key">Ctrl N</kbd>
+          </button>
+
+          <button class="action-card" id="card-init">
+            <span class="ac-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+                   stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+                <circle cx="12" cy="12" r="8"/><path d="M12 8.6v6.8M8.6 12h6.8"/>
+              </svg>
+            </span>
+            <span class="ac-text">
+              <span class="ac-title">Create a new repository</span>
+              <span class="ac-desc">Run git init on a folder to start fresh.</span>
+            </span>
+            <kbd class="ac-key">Ctrl I</kbd>
+          </button>
+        </div>
+
+        <!-- where you were last -->
+        <div class="recents">
+          <div class="recents-head">
+            <h2 class="recents-title">Recent repositories</h2>
+            <button class="linkbtn" id="btn-recents-clear" hidden>Clear</button>
+          </div>
+          <ul id="recent-list" class="recent-list"></ul>
+        </div>
+      </div>
+
+      <p class="welcome-foot">Or drop a repository folder anywhere on this window.</p>
+    </div>
+  </section>
+
+  <!-- ── main ────────────────────────────────────────────────── -->
+  <!-- A merge, rebase, cherry-pick or revert that git stopped part-way through.
+       It spans the window because it is a fact about the repository, not about
+       whichever panel happens to be open. -->
+  <div class="opstate" id="opstate" hidden>
+    <svg class="op-i" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M8 1.8 15 14H1z" fill="none" stroke="currentColor" stroke-width="1.5"
+            stroke-linejoin="round"/>
+      <path d="M8 6.2v3.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      <circle cx="8" cy="11.8" r=".9" fill="currentColor"/>
+    </svg>
+    <span class="op-what" id="op-what"></span>
+    <span class="op-left" id="op-left"></span>
+    <span class="op-tools">
+      <button class="btn" id="op-abort">Abort</button>
+      <button class="btn btn-primary" id="op-continue">Continue</button>
+    </span>
+  </div>
+
+  <main id="main" class="main" hidden>
+
+    <!-- sidebar -->
+    <aside class="sidebar" id="sidebar">
+
+      <div class="side-top">
+        <button class="side-pick" id="side-repo" title="Switch repository, or open another one">
+          <span class="sp-label">Repository</span>
+          <span class="sp-value" id="side-repo-name"></span>
+          <span class="sp-chev" aria-hidden="true">▾</span>
+        </button>
+        <div class="side-pick is-static" id="side-branch" title="The branch you have checked out">
+          <span class="sp-label">Branch</span>
+          <span class="sp-value" id="side-branch-name"></span>
+        </div>
+      </div>
+
+      <div class="side-group" data-group="local">
+        <button class="side-head" data-toggle="local">
+          <span class="chev">▾</span>Local branches
+          <span class="side-count" id="count-local"></span>
+        </button>
+        <ul class="side-list" id="list-local"></ul>
+      </div>
+      <div class="side-group" data-group="remote">
+        <button class="side-head" data-toggle="remote">
+          <span class="chev">▾</span>Remote branches
+          <span class="side-count" id="count-remote"></span>
+        </button>
+        <ul class="side-list" id="list-remote"></ul>
+      </div>
+      <!-- Tags and stashes start shut: a repository can carry hundreds of tags,
+           and neither is what you look at first. -->
+      <div class="side-group collapsed" data-group="tags">
+        <button class="side-head" data-toggle="tags">
+          <span class="chev">▾</span>Tags
+          <span class="side-count" id="count-tags"></span>
+        </button>
+        <ul class="side-list" id="list-tags"></ul>
+      </div>
+      <div class="side-group collapsed" data-group="stash">
+        <button class="side-head" data-toggle="stash">
+          <span class="chev">▾</span>Stashes
+          <span class="side-count" id="count-stash"></span>
+        </button>
+        <ul class="side-list" id="list-stash"></ul>
+      </div>
+    </aside>
+
+    <div class="drag-handle" data-resize="sidebar"></div>
+
+    <!-- history -->
+    <section class="history">
+      <!-- find bar, floating over the commit list -->
+      <div class="find" id="find" hidden>
+        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" class="find-i">
+          <circle cx="7" cy="7" r="4.4" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <path d="m10.4 10.4 3.1 3.1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <input id="find-input" class="find-input" type="text" spellcheck="false"
+               placeholder="Search commit message, author or SHA">
+        <span id="find-count" class="find-count"></span>
+        <button id="find-prev" class="find-btn" title="Previous match (Shift+Enter)">↑</button>
+        <button id="find-next" class="find-btn" title="Next match (Enter)">↓</button>
+        <button id="find-close" class="find-btn" title="Close (Esc)">×</button>
+      </div>
+
+      <div class="history-scroll" id="history-scroll">
+        <!-- Diisi oleh renderHistoryHead(): kolomnya bisa disembunyikan. -->
+        <div class="history-head" id="history-head"
+             title="Drag a divider to resize · right-click to choose columns"></div>
+        <div class="graph-layer" id="graph-layer"></div>
+        <ul class="commit-list" id="commit-list"></ul>
+        <button id="btn-more" class="btn btn-quiet load-more" hidden>Load more commits</button>
+      </div>
+    </section>
+
+    <!-- Penampil berkas: menempati ruang riwayat saat sebuah berkas dibuka,
+         supaya perbandingan sebelum/sesudah dapat lebar penuh. -->
+    <section class="fileview" id="fileview" hidden>
+      <header class="fv-head">
+        <span class="fv-status" id="fv-status"></span>
+        <span class="fv-path" id="fv-path"></span>
+        <span class="fv-stat" id="fv-stat"></span>
+
+        <span class="fv-tools">
+          <!-- Navigasi antar blok perubahan di dalam berkas ini. -->
+          <span class="fv-group">
+            <button class="fv-ib" id="fv-first" title="First difference (Alt+Home)">
+              <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+                <path d="M3 4.6 7 8.6l4-4M3 10.4h8" fill="none" stroke="currentColor"
+                      stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+                      transform="rotate(180 7 7)"/>
+              </svg>
+            </button>
+            <button class="fv-ib" id="fv-prev" title="Previous difference (Alt+Up)">
+              <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+                <path d="M3.4 8.6 7 5l3.6 3.6" fill="none" stroke="currentColor"
+                      stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <span class="fv-counter" id="fv-counter">0/0</span>
+            <button class="fv-ib" id="fv-next" title="Next difference (Alt+Down)">
+              <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+                <path d="M3.4 5.4 7 9l3.6-3.6" fill="none" stroke="currentColor"
+                      stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <button class="fv-ib" id="fv-last" title="Last difference (Alt+End)">
+              <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+                <path d="M3 4.6 7 8.6l4-4M3 10.4h8" fill="none" stroke="currentColor"
+                      stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </span>
+
+          <span class="tb-sep"></span>
+
+          <span class="fv-group" id="fv-stage-tools" hidden>
+            <button class="fv-ib" id="fv-stage" title="Stage this whole file">
+              <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+                <path d="M7 2.6v8.8M2.6 7h8.8" fill="none" stroke="currentColor"
+                      stroke-width="1.7" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <button class="fv-ib" id="fv-unstage" title="Unstage this whole file">
+              <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+                <path d="M2.6 7h8.8" fill="none" stroke="currentColor"
+                      stroke-width="1.7" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <button class="fv-ib danger" id="fv-discard" title="Discard every change in this file">
+              <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+                <path d="M2.8 4.4h8.4M5.6 4.4V3.2h2.8v1.2M4.2 4.4l.5 7h4.6l.5-7"
+                      fill="none" stroke="currentColor" stroke-width="1.4"
+                      stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </span>
+
+          <span class="tb-sep"></span>
+
+          <!-- Sakelar tampilan; yang menyala memakai warna aksen. -->
+          <button class="fv-ib" id="fv-split" title="Side by side, before and after">
+            <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+              <rect x="1.8" y="2.6" width="10.4" height="8.8" rx="1.2" fill="none"
+                    stroke="currentColor" stroke-width="1.4"/>
+              <path d="M7 2.6v8.8" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            </svg>
+          </button>
+          <button class="fv-ib" id="fv-ws" title="Ignore changes that are only whitespace">
+            <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+              <path d="M2.4 4.2h3M8.6 4.2h3M2.4 9.8h9.2" fill="none" stroke="currentColor"
+                    stroke-width="1.5" stroke-linecap="round"/>
+              <path d="M6.2 7.4h1.6" fill="none" stroke="currentColor" stroke-width="1.5"
+                    stroke-linecap="round"/>
+            </svg>
+          </button>
+          <button class="fv-ib" id="fv-all" title="Show the whole file, not just the changed parts">
+            <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+              <path d="M2.4 3.2h9.2M2.4 5.8h9.2M2.4 8.2h9.2M2.4 10.8h9.2" fill="none"
+                    stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <button class="fv-ib" id="fv-syntax" title="Colour the code by syntax">
+            <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+              <path d="M5.4 3.6 2.6 7l2.8 3.4M8.6 3.6 11.4 7l-2.8 3.4" fill="none"
+                    stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                    stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <button class="fv-ib" id="fv-wrap" title="Wrap long lines instead of scrolling sideways">
+            <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+              <path d="M2.4 3.6h9.2M2.4 7h7.2a2 2 0 0 1 0 4H7.4M2.4 10.4h1.6" fill="none"
+                    stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              <path d="M8.6 9 7.2 10.4l1.4 1.4" fill="none" stroke="currentColor"
+                    stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+
+          <span class="tb-sep"></span>
+
+          <button class="fv-ib" id="fv-copy" title="Copy the file path">
+            <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+              <rect x="4.6" y="4.6" width="7" height="7" rx="1.2" fill="none"
+                    stroke="currentColor" stroke-width="1.4"/>
+              <path d="M9 2.6H3.6a1 1 0 0 0-1 1V9" fill="none" stroke="currentColor"
+                    stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <button class="fv-ib" id="fv-open" title="Open this file in your code editor">
+            <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+              <path d="M11.4 8v3a1 1 0 0 1-1 1H3.6a1 1 0 0 1-1-1V4.2a1 1 0 0 1 1-1H6"
+                    fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              <path d="M8.8 2.4h3v3M11.6 2.6 7 7.2" fill="none" stroke="currentColor"
+                    stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <button class="fv-ib fv-close" id="fv-close" title="Close this file and go back to the history (Esc)">
+            <svg class="fv-i" viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M3 3 9 9M9 3 3 9" fill="none" stroke="currentColor"
+                    stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </span>
+      </header>
+      <div class="fv-body" id="fv-body"></div>
+    </section>
+
+    <div class="drag-handle" data-resize="detail"></div>
+
+    <!-- detail -->
+    <section class="detail" id="detail">
+      <!-- working directory panel -->
+      <div class="panel" id="panel-wip" hidden>
+        <div class="wip-head">
+          <h2>Uncommitted changes</h2>
+          <span class="wip-total" id="wip-total"></span>
+        </div>
+
+        <div class="file-filter">
+          <svg class="ff-i" viewBox="0 0 14 14" aria-hidden="true">
+            <circle cx="6.2" cy="6.2" r="3.9" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <path d="m9.2 9.2 2.7 2.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+          <input id="file-filter" type="text" spellcheck="false" placeholder="Filter files">
+          <button id="btn-filter-clear" class="ff-clear" title="Clear the filter" hidden>
+            <svg class="tb-i" viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M3 3 9 9M9 3 3 9" fill="none" stroke="currentColor"
+                    stroke-width="1.7" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="wip-viewbar">
+          <span class="c-viewtoggle">
+            <button class="btn btn-sm" id="w-view-list"
+                    title="One row per file, named only — the folder is on hover">List</button>
+            <button class="btn btn-sm" id="w-view-tree"
+                    title="Group the files into their folders">Tree</button>
+          </span>
+        </div>
+
+        <!-- Conflicts come first: nothing else in this panel can be finished
+             until they are dealt with. -->
+        <div class="filegroup fg-conflict" id="group-conflicts" hidden>
+          <div class="filegroup-head">
+            <span class="fg-label">Conflicts <span class="fg-count" id="count-conflicts">0</span></span>
+          </div>
+          <ul class="filelist" id="list-conflicts"></ul>
+        </div>
+
+        <div class="filegroup">
+          <div class="filegroup-head">
+            <span class="fg-label">Staged <span class="fg-count" id="count-staged">0</span></span>
+            <span class="fg-tools">
+              <button class="fg-ib" id="btn-unstage-all" title="Unstage every file">
+                <svg class="tb-i" viewBox="0 0 14 14" aria-hidden="true">
+                  <path d="M7 10.6V3.4M4.4 8l2.6 2.6L9.6 8M2.6 12.4h8.8" fill="none"
+                        stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                        stroke-linejoin="round"/>
+                </svg>
+              </button>
+            </span>
+          </div>
+          <ul class="filelist" id="list-staged"></ul>
+        </div>
+
+        <div class="filegroup">
+          <div class="filegroup-head">
+            <span class="fg-label">Changes <span class="fg-count" id="count-unstaged">0</span></span>
+            <span class="fg-tools">
+              <button class="fg-ib" id="btn-stage-all" title="Stage every file">
+                <svg class="tb-i" viewBox="0 0 14 14" aria-hidden="true">
+                  <path d="M7 3.4v7.2M4.4 6 7 3.4 9.6 6M2.6 1.6h8.8" fill="none"
+                        stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+                        stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <button class="fg-ib danger" id="btn-discard-all" title="Throw away every change">
+                <svg class="tb-i" viewBox="0 0 14 14" aria-hidden="true">
+                  <path d="M2.8 4.4h8.4M5.6 4.4V3.2h2.8v1.2M4.2 4.4l.5 7h4.6l.5-7"
+                        fill="none" stroke="currentColor" stroke-width="1.4"
+                        stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+            </span>
+          </div>
+          <ul class="filelist" id="list-unstaged"></ul>
+        </div>
+
+        <!-- Judul dan deskripsi dipisah, sesuai kebiasaan pesan commit git. -->
+        <div class="commitbox">
+          <div class="cb-summary-wrap">
+            <input id="commit-msg" class="cb-summary" type="text"
+                   placeholder="Summary of this change">
+            <span class="cb-count" id="cb-count"></span>
+          </div>
+          <textarea id="commit-body" class="cb-body" rows="3"
+                    placeholder="Description — why, not what (optional)"></textarea>
+          <div class="commitbox-row">
+            <label class="check"><input type="checkbox" id="chk-amend"> Amend last commit</label>
+            <button id="btn-commit" class="btn btn-primary" disabled>Commit</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- commit panel -->
+      <div class="panel" id="panel-commit" hidden>
+        <div class="c-top">
+          <span class="c-top-label">commit</span>
+          <button class="hashbtn" id="c-hash" title="Copy the full SHA"></button>
+        </div>
+
+        <!-- Pesan commit, bisa disunting di tempat. -->
+        <div class="c-msgbox" id="c-msgbox">
+          <div class="c-msg-read" id="c-msg-read">
+            <h2 id="c-subject"></h2>
+            <p id="c-body" class="c-body"></p>
+            <button class="c-edit" id="c-edit" title="Reword this commit">
+              <svg viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
+                <path d="M9.4 2.2 11.8 4.6M2.5 9.5 9.4 2.6a1.2 1.2 0 0 1 1.7 0l.8.8a1.2 1.2 0 0 1 0 1.7L5 12H2.5z"
+                      fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+
+          <div class="c-msg-edit" id="c-msg-edit" hidden>
+            <input id="c-edit-subject" class="c-edit-subject" type="text" placeholder="Summary">
+            <textarea id="c-edit-body" class="c-edit-body" rows="10"
+                      placeholder="Description (optional)"></textarea>
+            <p class="c-reword-note" id="c-reword-note"></p>
+            <div class="c-edit-actions">
+              <button class="btn btn-primary btn-sm" id="c-edit-save">Update message</button>
+              <button class="btn btn-sm" id="c-edit-cancel">Cancel</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="c-who">
+          <span class="avatar" id="c-avatar"></span>
+          <span class="c-who-text">
+            <span id="c-author"></span>
+            <span id="c-date" class="c-date"></span>
+          </span>
+          <span class="c-parents" id="c-parents"></span>
+        </div>
+
+        <!-- Only for merges: which of the two questions the file list answers. -->
+        <div class="c-mergebar" id="c-mergebar" hidden></div>
+
+        <div class="c-filebar">
+          <span class="c-stats" id="c-stats"></span>
+          <span class="c-viewtoggle">
+            <button class="btn btn-sm" id="c-sort" title="Sort by name, or keep git's own order">A–Z</button>
+            <button class="btn btn-sm" id="c-view-path" title="One row per file, showing the whole path">Path</button>
+            <button class="btn btn-sm" id="c-view-tree" title="Group files into their folders">Tree</button>
+          </span>
+        </div>
+        <ul class="filelist" id="list-commit-files"></ul>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── terminal ────────────────────────────────────────────── -->
+  <section class="term" id="term" hidden>
+    <div class="term-grip" id="term-grip" title="Drag to resize"></div>
+    <header class="term-head">
+      <span class="term-title">Terminal</span>
+      <span class="term-cwd" id="term-cwd"></span>
+      <span class="term-tools">
+        <button class="fv-ib" id="term-stop" title="Stop the running command" disabled>
+          <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+            <rect x="3.6" y="3.6" width="6.8" height="6.8" rx="1.2" fill="currentColor"/>
+          </svg>
+        </button>
+        <button class="fv-ib" id="term-clear" title="Clear the output">
+          <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+            <path d="M2.8 4.4h8.4M5.6 4.4V3.2h2.8v1.2M4.2 4.4l.5 7h4.6l.5-7" fill="none"
+                  stroke="currentColor" stroke-width="1.4" stroke-linecap="round"
+                  stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <button class="fv-ib" id="term-external" title="Open your system terminal here">
+          <svg class="fv-i" viewBox="0 0 14 14" aria-hidden="true">
+            <path d="M11.4 8v3a1 1 0 0 1-1 1H3.6a1 1 0 0 1-1-1V4.2a1 1 0 0 1 1-1H6"
+                  fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            <path d="M8.8 2.4h3v3M11.6 2.6 7 7.2" fill="none" stroke="currentColor"
+                  stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <button class="fv-ib fv-close" id="term-close" title="Hide the terminal (Ctrl+`)">
+          <svg class="fv-i" viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M3 3 9 9M9 3 3 9" fill="none" stroke="currentColor"
+                  stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </span>
+    </header>
+    <div class="term-out" id="term-out"></div>
+    <div class="term-input">
+      <span class="term-prompt" id="term-prompt">$</span>
+      <input id="term-cmd" type="text" spellcheck="false" autocomplete="off"
+             placeholder="git status — Enter to run, ↑ ↓ for history">
+    </div>
+  </section>
+
+  <!-- ── status bar ──────────────────────────────────────────── -->
+  <footer class="statusbar">
+    <span id="status-text" class="status-text">Ready</span>
+    <span id="status-spinner" class="spinner" hidden></span>
+
+    <span class="sb-right">
+      <button class="sb-btn" id="sb-term" title="Show or hide the terminal (Ctrl+`)">
+        <svg class="sb-i" viewBox="0 0 14 14" aria-hidden="true">
+          <rect x="1.6" y="2.6" width="10.8" height="8.8" rx="1.4" fill="none"
+                stroke="currentColor" stroke-width="1.3"/>
+          <path d="M4 6.2l1.6 1.4L4 9M7.2 9.2h3" fill="none" stroke="currentColor"
+                stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <button class="sb-btn" id="sb-logs" title="Activity log — every git command GitBraid ran">
+        <svg class="sb-i" viewBox="0 0 14 14" aria-hidden="true">
+          <path d="M2.4 3.6h1.2M2.4 7h1.2M2.4 10.4h1.2M5.6 3.6h6M5.6 7h6M5.6 10.4h6"
+                fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+        </svg>
+      </button>
+
+      <span class="sb-sep"></span>
+
+      <span class="sb-zoom">
+        <button class="sb-btn" id="sb-zoom-out" title="Zoom out (Ctrl+-)">
+          <svg class="sb-i" viewBox="0 0 14 14" aria-hidden="true">
+            <path d="M3.4 7h7.2" fill="none" stroke="currentColor" stroke-width="1.5"
+                  stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button class="sb-level" id="sb-zoom-level" title="Reset zoom to 100% (Ctrl+0)">100%</button>
+        <button class="sb-btn" id="sb-zoom-in" title="Zoom in (Ctrl+=)">
+          <svg class="sb-i" viewBox="0 0 14 14" aria-hidden="true">
+            <path d="M7 3.4v7.2M3.4 7h7.2" fill="none" stroke="currentColor"
+                  stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </span>
+
+      <span class="sb-sep"></span>
+
+      <button class="sb-brand" id="sb-brand" title="GitBraid — project page, release notes, about">
+        <svg class="sb-mark" viewBox="0 0 120 120" aria-hidden="true"><use href="#gb-logo"/></svg>
+        <span class="sb-version" id="sb-version"></span>
+      </button>
+    </span>
+    <span id="status-progress" class="progress" hidden><span id="status-bar" class="progress-fill"></span></span>
+  </footer>
+</div>
+
+<!-- activity log -->
+<div id="logs" class="logs" hidden>
+  <div class="logs-card" role="dialog" aria-modal="true" aria-label="Activity log">
+    <header class="logs-head">
+      <div>
+        <h3>Activity log</h3>
+        <p class="logs-sub">Every git command GitBraid ran, newest first.</p>
+      </div>
+      <span class="logs-tools">
+        <span class="logs-count" id="logs-count"></span>
+        <button class="btn btn-sm" id="logs-copy">Copy</button>
+        <button class="btn btn-sm" id="logs-clear">Clear</button>
+        <button class="fv-ib fv-close" id="logs-close" title="Close (Esc)">
+          <svg class="fv-i" viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M3 3 9 9M9 3 3 9" fill="none" stroke="currentColor"
+                  stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </span>
+    </header>
+    <ul class="logs-list" id="logs-list"></ul>
+  </div>
+</div>
+
+<!-- about -->
+<div id="about" class="about" hidden>
+  <div class="about-card" role="dialog" aria-modal="true" aria-label="About GitBraid">
+    <button class="about-close" id="about-close" title="Close (Esc)">
+      <svg viewBox="0 0 12 12" width="14" height="14" aria-hidden="true">
+        <path d="M3 3 9 9M9 3 3 9" fill="none" stroke="currentColor"
+              stroke-width="1.8" stroke-linecap="round"/>
+      </svg>
+    </button>
+
+    <svg class="about-mark" viewBox="0 0 120 120" aria-hidden="true"><use href="#gb-logo"/></svg>
+    <h2 class="about-name">GitBraid</h2>
+    <p class="about-version" id="about-version"></p>
+    <p class="about-tagline">Read your history as lanes, not as a wall of text.</p>
+
+    <dl class="about-specs" id="about-specs"></dl>
+
+    <p class="about-note">
+      GitBraid drives the real <code>git</code> command line — no bundled Git library,
+      no runtime dependencies beyond Electron itself.
+    </p>
+
+    <div class="about-actions">
+      <button class="btn btn-primary btn-sm" id="about-notes">Release notes</button>
+      <button class="btn btn-sm" id="about-copy">Copy version info</button>
+    </div>
+    <p class="about-foot" id="about-foot"></p>
+  </div>
+</div>
+
+<!-- open-tab switcher -->
+<div id="tabmenu" class="tabmenu" hidden>
+  <input id="tabmenu-input" class="tabmenu-input" type="text" spellcheck="false" placeholder="Search tabs">
+  <ul id="tabmenu-list" class="tabmenu-list"></ul>
+</div>
+
+<!-- drop target overlay -->
+<div id="dropzone" class="dropzone" hidden>Drop a repository folder to open it</div>
+
+<!-- modal -->
+<div id="modal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true">
+    <h3 id="modal-title"></h3>
+    <p id="modal-desc" class="modal-desc"></p>
+    <div id="modal-fields"></div>
+    <p id="modal-note" class="modal-note" hidden></p>
+    <div class="modal-actions">
+      <button id="modal-cancel" class="btn">Cancel</button>
+      <button id="modal-ok" class="btn btn-primary">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- context menu -->
+<ul id="ctxmenu" class="ctxmenu" hidden></ul>
+
+<!-- hover explanation, styled like the rest of the app -->
+<div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+
+<script src="releases.js"></script>
+<script src="highlight.js"></script>
+<script src="graph.js"></script>
+<script src="diff.js"></script>
+<script src="renderer.js"></script>
+</body>
+</html>
