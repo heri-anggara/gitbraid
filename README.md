@@ -565,6 +565,10 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   disembunyikan selama tombol itu sedang menjalankan perintahnya sendiri
 
 **Umpan balik saat perintah git berjalan**
+- Hanya **satu** tempat yang menggambar kemajuan pada satu waktu: tombol yang
+  memulai perintahnya, atau — untuk clone dari halaman awal, yang belum punya
+  tombol pemilik — bilah di status bar. Satu pendengar `repo:progress` dengan
+  dua cabang, supaya keduanya tidak pernah menyala bersamaan
 
 - Tombol yang Anda tekan berubah jadi indikatornya sendiri: ikonnya jadi
   spinner, labelnya menyebutkan tahap dan persen yang dilaporkan git
