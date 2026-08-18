@@ -1124,6 +1124,24 @@ function computeContainment() {
   return out;
 }
 
+/**
+ * Is this ref's tip already an ancestor of the branch you are on? The answer is
+ * already in `containedBy`, the same walk the ghost badge uses, so saying it
+ * before you click costs nothing.
+ *
+ * Built from local tips over the commits loaded so far, so it is used to
+ * explain, never to block. Returns null when there is no answer.
+ */
+function alreadyIn(refName) {
+  const head = state.status?.branch;
+  if (!head) return null;
+  const tip = state.refs.branches.find((b) => b.name === refName)?.oid;
+  if (!tip) return null;
+  const holders = state.containedBy?.get(tip);
+  if (!holders) return null;
+  return holders.includes(head);
+}
+
 /** The one branch worth naming for a commit: the one you are on, if it has it. */
 function ghostBranch(hash) {
   const list = state.containedBy?.get(hash);
@@ -1830,6 +1848,14 @@ function closeFile() {
   state.compareRef = null;
   $('app').classList.remove('viewing-file');
   $('fileview').hidden = true;
+  /* Hiding the viewer left everything in place: a diff of an 8,000-line file
+     is ~118,000 DOM nodes, and they stayed in the document for the rest of the
+     session along with the parsed hunks. Closing a file should cost nothing to
+     keep, the way parking a tab already frees its diff. */
+  $('fv-body').innerHTML = '';
+  state.diffFiles = [];
+  nav.blocks = [];
+  nav.at = -1;
   renderDetail();
 }
 
@@ -2023,17 +2049,35 @@ async function newBranch(startPoint) {
 /* Shared by the sidebar's context menu and the Repository menu. */
 
 async function mergeBranch(ref) {
+  let out = '';
   const ok = await gitAction(null, `Merging ${ref}`,
-    () => call('repo:merge', repoPath(), ref),
-    async () => { await refresh({ keepSelection: false }); setStatus(`Merged ${ref}`, 'ok'); });
+    async () => (out = await call('repo:merge', repoPath(), ref)),
+    async () => {
+      await refresh({ keepSelection: false });
+      /* git succeeds and changes nothing when the branch is already contained.
+         Saying "Merged" there would claim something that did not happen. */
+      setStatus(nothingHappened(out)
+        ? `${ref} is already in this branch — nothing to merge`
+        : `Merged ${ref}`, nothingHappened(out) ? '' : 'ok');
+    });
   // A conflict stops the merge half-done; the history has to show that state.
   if (!ok) await refresh({ keepSelection: false });
 }
 
+/** git's way of saying it did nothing, on merge, pull and rebase alike. */
+const nothingHappened = (out) =>
+  /already up to date|is up to date|current branch .* is up to date/i.test(String(out || ''));
+
 async function rebaseOnto(ref) {
+  let out = '';
   const ok = await gitAction(null, `Rebasing onto ${ref}`,
-    () => call('repo:rebase', repoPath(), ref),
-    async () => { await refresh({ keepSelection: false }); setStatus(`Rebased onto ${ref}`, 'ok'); });
+    async () => (out = await call('repo:rebase', repoPath(), ref)),
+    async () => {
+      await refresh({ keepSelection: false });
+      setStatus(nothingHappened(out)
+        ? `Already on top of ${ref} — nothing to rebase`
+        : `Rebased onto ${ref}`, nothingHappened(out) ? '' : 'ok');
+    });
   if (!ok) await refresh({ keepSelection: false });
 }
 
@@ -2877,6 +2921,7 @@ async function gitAction(id, verb, fn, done) {
     const finished = action;
     action = null;
     tbProgress(null);
+    hideProgress();          // in case anything left the status bar's bar showing
     if (finished.label && toolLabel(id)) toolLabel(id).textContent = finished.label;
     lockToolbar(false);
     setToolState(id, ok ? 'done' : 'failed');
@@ -2894,7 +2939,14 @@ async function gitAction(id, verb, fn, done) {
 
 /* git narrates on stderr; this turns that narration into the button's label. */
 window.gitbraid.on('repo:progress', (p) => {
-  if (!action) return;                       // a clone runs before any tab exists
+  /* A clone runs from the start page, before any tab or toolbar button exists,
+     so it reports on the status bar instead. Everything else is owned by a
+     button and reports there — one listener, so the two cannot both draw. */
+  if (!action) {
+    setStatus(firstLine(p.text));
+    if (p.percent !== null && p.percent !== undefined) showProgress(p.percent);
+    return;
+  }
   tbProgress(p.percent);
   const label = toolLabel(action.id);
   if (!label) return;
@@ -3443,15 +3495,39 @@ function saveTerm() {
 
 const termOpen = () => !$('term').hidden;
 
+/* A build or a test run prints thousands of lines, and they were kept for the
+   rest of the session — the panel grew without limit. Older lines are dropped
+   the way a terminal's scrollback does. */
+const TERM_MAX_LINES = 5000;
+
+/* Whether the reader is following the tail. Kept up to date from the scroll
+   event instead of measured on every line: reading scrollHeight forces a layout
+   of the whole panel, and doing that per line made 2,000 lines take 2.7
+   seconds where appending them costs 3 ms. */
+let termAtBottom = true;
+let termScrollQueued = false;
+
+$('term-out').addEventListener('scroll', () => {
+  const out = $('term-out');
+  termAtBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 24;
+});
+
 function termWrite(text, cls) {
   const out = $('term-out');
-  const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 24;
   const line = document.createElement('div');
   if (cls) line.className = cls;
   line.textContent = text;
   out.appendChild(line);
-  // Follow the output only if the reader had not scrolled up to read something.
-  if (atBottom) out.scrollTop = out.scrollHeight;
+  while (out.childElementCount > TERM_MAX_LINES) out.removeChild(out.firstChild);
+
+  // One scroll per frame however many lines arrived in it.
+  if (termAtBottom && !termScrollQueued) {
+    termScrollQueued = true;
+    requestAnimationFrame(() => {
+      termScrollQueued = false;
+      out.scrollTop = out.scrollHeight;
+    });
+  }
 }
 
 /** The panel titles itself with the repository its commands will run in. */
@@ -3887,9 +3963,16 @@ $('btn-pull').addEventListener('click', () => pull());
    anything. Only when that is impossible is there a decision to make, and it is
    yours — the shape of your history is not something to settle silently. */
 async function pull(mode = 'ff') {
+  let out = '';
   const ok = await gitAction('btn-pull', 'Pulling',
-    () => call('repo:pull', repoPath(), { mode }),
-    async () => { await refresh(); setStatus(mode === 'ff' ? 'Pulled' : `Pulled with ${mode}`, 'ok'); });
+    async () => (out = await call('repo:pull', repoPath(), { mode })),
+    async () => {
+      await refresh();
+      setStatus(nothingHappened(out)
+        ? 'Already up to date — nothing to pull'
+        : (mode === 'ff' ? 'Pulled' : `Pulled with ${mode}`),
+        nothingHappened(out) ? '' : 'ok');
+    });
   if (ok || mode !== 'ff') {
     // A merge pull can stop on a conflict; the banner takes over from here.
     if (!ok) await refresh({ keepSelection: false });
@@ -4163,11 +4246,18 @@ $('sidebar').addEventListener('contextmenu', (e) => {
       { label: `Push ${ref}…`, disabled: !hasRemote,
         hint: hasRemote ? '' : 'This repository has no remote', run: () => pushBranch(b) },
       '-',
-      { label: `Merge ${ref} into ${head || 'current'}`, disabled: b.current,
-        hint: b.current ? 'A branch cannot be merged into itself' : '',
+      /* Merging a branch that is already contained succeeds and changes
+         nothing, which only becomes clear afterwards. Say it beforehand — but
+         still allow it, since the answer comes from the commits loaded so far
+         and must not turn into a wall. */
+      { label: `Merge ${ref} into ${head || 'current'}`
+          + (alreadyIn(ref) ? ' — already merged' : ''), disabled: b.current,
+        hint: b.current ? 'A branch cannot be merged into itself'
+          : alreadyIn(ref) ? `${head} already contains every commit of ${ref}` : '',
         run: () => mergeBranch(ref) },
       { label: `Rebase ${head || 'current'} onto ${ref}`, disabled: b.current,
-        hint: b.current ? 'A branch cannot be rebased onto itself' : '',
+        hint: b.current ? 'A branch cannot be rebased onto itself'
+          : alreadyIn(ref) ? `${head} is already on top of ${ref}` : '',
         run: () => rebaseOnto(ref) },
       { label: 'Compare with HEAD', disabled: b.current,
         hint: b.current ? 'This is HEAD' : '', run: () => compareWithHead(ref) },
@@ -4562,11 +4652,6 @@ window.addEventListener('drop', async (e) => {
 });
 
 /* ═════ startup ═════════════════════════════════════════════════ */
-
-window.gitbraid.on('repo:progress', ({ text, percent }) => {
-  setStatus(firstLine(text));
-  if (percent !== null && percent !== undefined) showProgress(percent);
-});
 
 (async () => {
   applyColumns();

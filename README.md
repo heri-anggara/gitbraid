@@ -523,6 +523,18 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   atau **Rebase** beserta akibat masing-masing. Bentuk riwayat Anda tidak
   diputuskan diam-diam
 
+**Saat git tidak melakukan apa-apa**
+- Merge cabang yang sudah tergabung, pull yang tidak ketinggalan apa pun, dan
+  rebase yang sudah di puncak semuanya **berhasil** menurut git dan tidak
+  mengubah apa pun. GitBraid membaca keluarannya dan mengatakan itu apa adanya
+  — *"fitur is already in this branch — nothing to merge"* — bukan "Merged"
+  dengan gaya sukses untuk sesuatu yang tidak terjadi
+- Menu klik-kanan menyebutkannya lebih dulu: entri merge diberi keterangan
+  **— already merged**, dengan penjelasan saat di-hover. Datanya dari
+  perhitungan yang sama dengan ghost badge, jadi tidak ada biaya tambahan
+- Entrinya **tetap bisa diklik**. Perhitungan itu hanya melihat commit yang
+  sudah dimuat, jadi ia dipakai untuk menjelaskan, bukan untuk menghalangi
+
 **Branch dan remote**
 - Checkout, buat, hapus (dengan fallback force kalau belum ter-merge)
 - Merge dan rebase lewat klik kanan di sidebar
@@ -553,6 +565,10 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   disembunyikan selama tombol itu sedang menjalankan perintahnya sendiri
 
 **Umpan balik saat perintah git berjalan**
+- Hanya **satu** tempat yang menggambar kemajuan pada satu waktu: tombol yang
+  memulai perintahnya, atau — untuk clone dari halaman awal, yang belum punya
+  tombol pemilik — bilah di status bar. Satu pendengar `repo:progress` dengan
+  dua cabang, supaya keduanya tidak pernah menyala bersamaan
 
 - Tombol yang Anda tekan berubah jadi indikatornya sendiri: ikonnya jadi
   spinner, labelnya menyebutkan tahap dan persen yang dilaporkan git
@@ -605,6 +621,10 @@ menulis dua kunci ini; kunci lain ditolak.
   menyebutkan direktori mana yang dipakai.
 - `↑` / `↓` menelusuri riwayat perintah dalam sesi itu.
 - Satu perintah sekaligus; `Stop` mengirim `SIGTERM` ke yang sedang jalan.
+- Scrollback dibatasi 5.000 baris, dan posisi gulir dibaca dari peristiwa
+  `scroll`, bukan diukur ulang tiap baris — mengukur `scrollHeight` per baris
+  memaksa layout ulang seluruh panel, yang membuat 2.000 baris memakan 2,7
+  detik. Sekarang 34 ms.
 - **Ini penangkap keluaran, bukan pseudo-terminal.** `git`, `npm`, `ls`, `make`
   berjalan normal. Program layar penuh yang butuh TTY (`vim`, `top`, `less`,
   prompt password interaktif) tidak. PTY sungguhan butuh `node-pty` + `xterm.js`,
