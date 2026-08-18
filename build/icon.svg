@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="512" height="512">
+  <!-- GitBraid — empat keping bergradasi, alurnya dipotong dari kepingnya.
+       Simpulnya duduk tepat di pusat tiap keping: (60,28.9) (91.1,60) (28.9,60) (60,91.1). -->
+  <defs>
+    <linearGradient id="t1" x1="0" y1="0" x2=".6" y2="1">
+      <stop offset="0" stop-color="#98a3ff"/><stop offset="1" stop-color="#5f6ee8"/>
+    </linearGradient>
+    <linearGradient id="t2" x1="0" y1="0" x2=".6" y2="1">
+      <stop offset="0" stop-color="#3fc79b"/><stop offset="1" stop-color="#118a67"/>
+    </linearGradient>
+    <linearGradient id="t3" x1="0" y1="0" x2=".6" y2="1">
+      <stop offset="0" stop-color="#e05cb4"/><stop offset="1" stop-color="#ad2d82"/>
+    </linearGradient>
+    <linearGradient id="t4" x1="0" y1="0" x2=".6" y2="1">
+      <stop offset="0" stop-color="#5b9bf5"/><stop offset="1" stop-color="#2864c4"/>
+    </linearGradient>
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="120" height="120">
+      <rect width="120" height="120" fill="#fff"/>
+      <g fill="none" stroke="#000" stroke-width="9" stroke-linecap="round">
+        <path d="M60 29 L60 91"/>
+        <path d="M60 44 C60 57 74 60 91 60"/>
+        <path d="M29 60 C46 60 60 63 60 76"/>
+      </g>
+      <circle cx="60" cy="29" r="7.5" fill="none" stroke="#000" stroke-width="8"/>
+      <circle cx="91" cy="60" r="7.5" fill="none" stroke="#000" stroke-width="8"/>
+      <circle cx="29" cy="60" r="7.5" fill="none" stroke="#000" stroke-width="8"/>
+      <circle cx="60" cy="91" r="9.5" fill="#000"/>
+    </mask>
+  </defs>
+  <g mask="url(#cut)">
+    <g transform="rotate(45 60 60)">
+      <rect x="18" y="18" width="40" height="40" rx="8.5" fill="url(#t1)"/>
+      <rect x="62" y="18" width="40" height="40" rx="8.5" fill="url(#t2)"/>
+      <rect x="18" y="62" width="40" height="40" rx="8.5" fill="url(#t3)"/>
+      <rect x="62" y="62" width="40" height="40" rx="8.5" fill="url(#t4)"/>
+    </g>
+  </g>
+</svg>
