@@ -7,6 +7,37 @@
  */
 window.Releases = [
   {
+    version: '0.1.1',
+    date: '2026-08-18',
+    title: 'Reporting the truth, and holding less memory',
+    summary:
+      'Five fixes on the first build: two places where the app claimed something '
+      + 'that had not happened, two where it kept work it no longer needed, and a '
+      + 'guard on the one command that cannot be undone.',
+    sections: [
+      {
+        heading: 'Said what did not happen',
+        items: [
+          'A merge, pull or rebase that git completes without changing anything now says so. Merging a branch already contained in yours reported "Merged" in success green while nothing moved; the branch menu also marks an already-merged branch before you click it.',
+          'The progress bar left over from a push no longer sits in the status bar. It stayed lit after every push, and in a flex row it pushed the zoom and version controls away from the right edge.',
+        ],
+      },
+      {
+        heading: 'Kept less',
+        items: [
+          'Closing a file releases its diff. A diff of an 8,000-line file is around 110,000 DOM nodes, and they stayed in the document for the rest of the session; opening several large files in a row grew the window without bound.',
+          'The terminal panel no longer measures the panel before every line it writes. Doing so forced a full layout each time, so 2,000 lines took 2.7 seconds where appending them costs 3 ms — it is 34 ms now. Scrollback is capped at 5,000 lines, which it never was.',
+        ],
+      },
+      {
+        heading: 'Safer',
+        items: [
+          'Discarding checks what it was handed. The file list is spread into the command, so a bare string would have spread into single letters and an empty list would have left git clean with no path at all — which cleans the whole working tree. Neither was reachable from the app; both would have been unrecoverable.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.1.0',
     date: '2026-08-18',
     title: 'First working build',
