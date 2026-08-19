@@ -1558,8 +1558,12 @@ textarea {
 .fv-body.as-file .dl-add .dl-sign { visibility: hidden; }
 .fv-body.as-file .dl-add .dl-text { color: var(--text-dim); }
 .stat-conflict { font-size: 11px; color: var(--danger); }
-/* The per-file "+7 −0" counts the whole file as new for the same reason. */
-.fv-body.as-file .difffile-stat { visibility: hidden; }
+
+/* The viewer shows one file, and its own header already carries the path and
+   the counts — so the diff's per-file header said all of it a second time.
+   It earns its place only as a separator between several files, which is
+   exactly when it stops being an only child. */
+#fv-body .difffile:only-child > .difffile-head { display: none; }
 
 /* A combined diff's sign column holds two characters, not one. */
 .difftable .dl-sign { white-space: pre; min-width: 14px; width: auto; padding: 0 2px; }
@@ -2146,11 +2150,57 @@ textarea {
 /* ── penampil berkas di tengah ───────────────────────────────── */
 .fileview {
   display: grid;
+  /* The change map is a column of its own so it sits beside the scrollbar
+     rather than under it — a native scrollbar cannot be drawn on. Every child
+     is placed explicitly: a grid child that is hidden stops being a grid item,
+     and the rest would silently shuffle up. */
+  grid-template-columns: minmax(0, 1fr) auto;
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   background: var(--bg-graph);
   overflow: hidden;
 }
+.fv-head { grid-column: 1 / -1; grid-row: 1; }
+.fv-body { grid-column: 1; grid-row: 2; }
+.fv-map  { grid-column: 2; grid-row: 2; }
+
+/* ── change map ──────────────────────────────────────────────── */
+/* Always present, even with nothing to show: reserving the strip means opening
+   a file never re-flows the diff sideways. */
+.fv-map {
+  position: relative;
+  width: 11px;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  cursor: pointer;
+}
+.fv-mark {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  min-height: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 1px;
+  cursor: pointer;
+  opacity: .78;
+}
+.fv-mark:hover { opacity: 1; }
+.fv-mark.m-add { background: var(--add); }
+.fv-mark.m-del { background: var(--del); }
+/* A block that both adds and removes is not one or the other, so it is drawn
+   as both rather than picking a side. */
+.fv-mark.m-both {
+  background: linear-gradient(to bottom, var(--add) 50%, var(--del) 50%);
+}
+/* The difference you are standing on, so the strip answers "where am I". */
+.fv-mark.here {
+  left: 0;
+  right: 0;
+  opacity: 1;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.fv-mark:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 .fv-head {
   display: flex;
   align-items: center;
