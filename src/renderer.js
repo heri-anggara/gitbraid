@@ -23,6 +23,7 @@ const PREF_DEFAULTS = {
   diffFontSize: 12,
   tabSize: 4,
   lineNumbers: true,
+  gravatar: false,          // off: nothing leaves the machine
 };
 
 const prefs = { ...PREF_DEFAULTS };
@@ -230,6 +231,14 @@ const syncMenu = () =>
 const avatarCache = new Map();
 
 async function ensureAvatars(commits) {
+  /* Off by default, and deliberately so. Drawing a Gravatar means asking
+     gravatar.com for it, which tells a third party your address and the hashed
+     email of everyone whose commits you are reading — including colleagues, on
+     a private work repository. It also fails offline and delays every repo you
+     open. The lane-coloured disc says the same thing without leaving the
+     machine, so the network version is something you switch on. */
+  if (!prefs.gravatar) return;
+
   const emails = new Set(commits.map((c) => (c.email || '').trim().toLowerCase()));
   const todo = [...emails].filter((e) => e && !avatarCache.has(e));
 
@@ -248,7 +257,9 @@ async function ensureAvatars(commits) {
 
 /** Offline or unknown addresses simply leave the lane-coloured disc bare. */
 const avatarFor = (commit) =>
-  avatarCache.get((commit.email || '').trim().toLowerCase()) || null;
+  (prefs.gravatar
+    ? avatarCache.get((commit.email || '').trim().toLowerCase())
+    : null) || null;
 
 /* ═════ modal ═══════════════════════════════════════════════════ */
 
@@ -3166,6 +3177,16 @@ function prefPages() {
               help: 'How the Commit Date and Author Time columns are written.',
               get: () => prefs.dateStyle,
               set: (v) => { prefs.dateStyle = v; savePrefs(); if (state.repo) renderHistory(); } },
+            { kind: 'toggle', label: 'Author photos from Gravatar',
+              help: 'Off, the graph draws a plain lane-coloured dot and nothing leaves ' +
+                'this machine. On, GitBraid asks gravatar.com for a picture of every ' +
+                'commit author, which tells that service your address and the hashed ' +
+                'email of everyone whose commits you read.',
+              get: () => prefs.gravatar,
+              set: async (v) => {
+                prefs.gravatar = v; savePrefs();
+                if (state.repo) { await ensureAvatars(state.commits); renderHistory(); }
+              } },
             { kind: 'toggle', label: 'Ghost branch badge while hovering',
               help: 'Shows which branch contains the row you are pointing at, in the Branch / Tag column.',
               get: () => prefs.ghostBadge,
