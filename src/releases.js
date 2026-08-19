@@ -7,6 +7,24 @@
  */
 window.Releases = [
   {
+    version: '0.1.2',
+    date: '2026-08-18',
+    title: 'Nothing leaves the machine',
+    summary:
+      'GitBraid talks to the git on your computer and nothing else. One thing '
+      + 'did not follow that rule, and now it does.',
+    sections: [
+      {
+        heading: 'Author photos are something you ask for',
+        items: [
+          'Opening a repository sent one request to gravatar.com for every commit author on screen. That tells the service your address and the hashed email of everyone whose commits you are reading — colleagues included, on a private work repository. It also failed offline and delayed every repository opened.',
+          'The graph now draws the plain lane-coloured dot, which says as much without any network at all. Verified by intercepting every request the app makes: none leave the machine.',
+          'If you want the photos, Preferences → UI customization turns them on, and says plainly what switching them on means.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.1.1',
     date: '2026-08-18',
     title: 'Reporting the truth, and holding less memory',
