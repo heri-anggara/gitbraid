@@ -353,6 +353,24 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   disentuh — checkout memang tak pernah menghapusnya
 - Tag beranotasi menunjuk ke commit yang ditandainya, bukan ke objek tag-nya,
   jadi mengkliknya mendarat di baris yang benar dan urutan tanggalnya masuk akal
+- Teks di bagian chrome — sidebar, toolbar, tab, daftar commit, status bar —
+  tidak bisa diseleksi; ini aplikasi desktop, bukan halaman web. Yang tetap bisa
+  diseleksi dan disalin adalah isinya: diff, keluaran terminal, pesan commit,
+  log perintah, dan catatan rilis
+
+**Merge**
+- Merge tidak langsung jalan. Dialognya menyebutkan **arah**-nya — `Merge A into
+  B` — berapa commit yang akan masuk, berapa yang sudah ada di B sendiri, dan
+  apakah fast-forward mungkin. Salah arah adalah kesalahan merge yang paling
+  sering terjadi, dan tidak ada label tombol yang bisa memperlihatkannya
+- Tiga pilihan: **fast-forward bila memungkinkan** (bawaan, perilaku git
+  sendiri), **selalu buat merge commit** (`--no-ff`, yang dipakai git-flow), dan
+  **squash jadi satu perubahan** — yang membawa isinya masuk ke staging tanpa
+  satu pun commit cabang asalnya, untuk Anda tulis pesannya sendiri
+- Kalau cabangnya memang sudah termuat, tidak ada dialog sama sekali: statusnya
+  cuma bilang tidak ada yang perlu di-merge
+- Kalau ada perubahan yang belum di-commit, dialognya memberi tahu — git menolak
+  merge kalau berkas itu ikut terlibat
 
 **Klik kanan di panel kiri**
 - **Cabang lokal** — checkout, fast-forward ke upstream, fetch upstream ke
