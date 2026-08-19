@@ -398,8 +398,21 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Menyelesaikan **feature**: merge ke development lalu cabangnya dihapus.
   **Release / hotfix**: merge ke produksi, diberi tag, merge ke development,
   lalu dihapus. Semua merge memakai `--no-ff` seperti git-flow asli
+- Kalau cabangnya sudah pernah di-push, dialog penyelesaiannya menawarkan dua
+  centang: **push** hasil merge (dan tag-nya) ke remote, dan **hapus cabang di
+  remote**. Keduanya tercentang secara bawaan — setelah merge, seluruh commit
+  cabang itu sudah ada di development, jadi ref di server tidak menyimpan apa
+  pun yang unik lagi. Tanpa ini Anda berakhir di keadaan setengah mendarat:
+  development lokal maju sendirian, cabang feature masih menggantung di server,
+  dan tag rilis cuma ada di satu komputer
+- Push dijalankan **sebelum** apa pun dihapus dari server. Kalau push ditolak —
+  misalnya orang lain menggeser development lebih dulu — penghapusannya tidak
+  jadi berjalan, jadi cabang itu tetap ada di remote sebagai satu-satunya salinan
+  pekerjaan tersebut di sana
 - Kalau ada langkah yang gagal (misalnya konflik), pesannya menyebut langkah
-  mana yang berhenti dan repo dibiarkan apa adanya untuk Anda selesaikan
+  mana yang berhenti dan repo dibiarkan apa adanya untuk Anda selesaikan.
+  Alasannya diambil dari baris yang benar-benar menjelaskan — sebuah push yang
+  ditolak dibuka dengan `To <url>`, yang tidak memberi tahu apa-apa
 
 **Panel kiri**
 - Nama repo dan branch yang sedang di-checkout ada di paling atas panel; nama

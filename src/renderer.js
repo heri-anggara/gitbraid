@@ -2688,25 +2688,60 @@ async function startFlow(kind) {
 async function finishFlow(flow) {
   const cfg = state.flow;
   const tagged = flow.kind !== 'feature';
+  const b = state.refs.branches.find((x) => x.name === flow.branch);
+  const remote = b?.upstream
+    ? b.upstream.slice(0, b.upstream.indexOf('/'))
+    : (state.refs.remotes[0]?.name.split('/')[0] || 'origin');
+  const hasRemote = state.refs.remotes.length > 0;
+  // Only worth offering when the branch was actually published; a feature that
+  // never left this machine has nothing on the server to tidy up.
+  const published = state.remoteRefNames.has(`${remote}/${flow.branch}`);
+  const landing = tagged ? `${cfg.master} and ${cfg.develop}` : cfg.develop;
+
+  const fields = tagged
+    ? [
+        { name: 'tag', label: 'Tag', value: `${cfg.versiontag || ''}${flow.name}`,
+          placeholder: 'leave empty to skip tagging' },
+        { name: 'message', label: 'Tag message', placeholder: flow.name },
+      ]
+    : [];
+  if (hasRemote) {
+    fields.push({
+      name: 'push', type: 'checkbox', value: true,
+      label: `Push ${landing}${tagged ? ' and the tag' : ''} to ${remote}`,
+    });
+    if (published) {
+      fields.push({
+        name: 'deleteRemote', type: 'checkbox', value: true,
+        label: `Delete ${remote}/${flow.branch}`,
+      });
+    }
+  }
+
   const r = await modal({
     title: `Finish ${flow.branch}`,
-    description: tagged
-      ? `Merges into ${cfg.master}, tags it, merges into ${cfg.develop}, then deletes the branch.`
-      : `Merges into ${cfg.develop}, then deletes the branch.`,
-    fields: tagged
-      ? [
-          { name: 'tag', label: 'Tag', value: `${cfg.versiontag || ''}${flow.name}`,
-            placeholder: 'leave empty to skip tagging' },
-          { name: 'message', label: 'Tag message', placeholder: flow.name },
-        ]
-      : [],
+    description: (tagged
+      ? `Merges into ${cfg.master}, tags it, merges into ${cfg.develop}, `
+      : `Merges into ${cfg.develop}, `) +
+      'then deletes the branch here.' +
+      (published ? ` It is also on ${remote}.` : ''),
+    fields,
     confirmLabel: 'Finish',
+    /* Deleting the published branch without pushing the merge would take those
+       commits off the server altogether — they would exist only on this
+       machine. Allowed, because it is sometimes what you mean, but said out loud. */
+    onChange: (v, api) => api.note(
+      v.deleteRemote && !v.push
+        ? `Without pushing ${cfg.develop}, deleting ${remote}/${flow.branch} leaves `
+          + `that work nowhere on ${remote}.`
+        : ''),
   });
   if (!r) return;
   let summary = null;
   const ok = await gitAction('btn-flow', `Finishing ${flow.kind}`,
     async () => (summary = await call('flow:finish', repoPath(), {
       kind: flow.kind, branch: flow.branch, cfg, tag: r.tag, message: r.message,
+      remote, push: r.push === true, deleteRemote: r.deleteRemote === true,
     })),
     async () => { await refresh({ keepSelection: false }); setStatus(`${flow.branch}: ${summary}`, 'ok'); });
   // A conflict leaves the merge open on purpose — the history must show that.
