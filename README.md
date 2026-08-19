@@ -279,7 +279,8 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Yang cocok disorot dan yang tidak cocok diredupkan (bukan disembunyikan,
   supaya garis graph di sebelahnya tidak putus)
 - Penghitung `3 of 12`, `Enter` / `Shift+Enter` atau tombol ↑ ↓ untuk lompat
-  antar hasil, `Esc` menutup
+  antar hasil. Tombol bersihkan hanya muncul kalau ada yang diketik, dan tombol
+  ↑ ↓ mati kalau hasilnya kurang dari dua
 
 **Repository management**
 - Tombol folder di ujung kiri strip tab, atau `Ctrl+Shift+O`, membuka halaman
@@ -372,6 +373,17 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Mau menentukan sendiri? `git config gitbraid.editor "code -w"` — pilihan ini
   selalu diutamakan
 - Status bar menyebut editor mana yang membuka berkasnya
+
+**Kepala panel kiri**
+- Satu kotak berisi dua baris: repo di atas, cabang yang sedang di-checkout di
+  bawah. Ikon menggantikan label kapital REPOSITORY dan BRANCH yang dulu memakan
+  satu baris masing-masing — kotaknya jadi 64px dari sebelumnya sekitar 93px
+- Hanya baris repo yang bisa diklik, dan hanya baris itu yang berperilaku seperti
+  tombol: ada kursor penunjuk, hover, dan panah di kanannya. Baris cabang adalah
+  keterangan, bukan kontrol; dulu ia punya batas dan efek hover yang menjanjikan
+  sesuatu yang tidak pernah ada
+- Saat HEAD terlepas dari cabang mana pun, baris itu berbunyi `detached HEAD`
+  dalam warna peringatan
 
 **Klik di panel kiri**
 - **Sekali klik** pada cabang, tag, atau cabang remote hanya memindahkan riwayat
