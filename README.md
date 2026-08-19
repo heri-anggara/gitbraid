@@ -523,6 +523,17 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   atau **Rebase** beserta akibat masing-masing. Bentuk riwayat Anda tidak
   diputuskan diam-diam
 
+**Tidak ada yang keluar dari mesin Anda**
+- GitBraid hanya bicara dengan `git` di komputer Anda. Satu-satunya hal yang
+  pernah menghubungi pihak ketiga adalah foto penulis commit dari Gravatar, dan
+  itu kini **mati secara bawaan**: meminta gambarnya berarti memberi tahu
+  gravatar.com alamat IP Anda dan hash email semua orang yang commit-nya Anda
+  baca — termasuk rekan kerja, di repo kantor sekalipun
+- Titik berwarna lane menyampaikan hal yang sama tanpa jaringan. Kalau memang
+  menginginkan fotonya, nyalakan di Preferences → UI customization
+- Terverifikasi dengan menyadap seluruh permintaan jaringan aplikasi: **nol**
+  permintaan keluar saat bawaan
+
 **Saat git tidak melakukan apa-apa**
 - Merge cabang yang sudah tergabung, pull yang tidak ketinggalan apa pun, dan
   rebase yang sudah di puncak semuanya **berhasil** menurut git dan tidak
