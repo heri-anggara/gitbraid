@@ -623,11 +623,20 @@
 
     <!-- detail -->
     <section class="detail" id="detail">
+      <!-- Yang tersisa saat panel di-collapse: satu bilah tipis berisi panah,
+           supaya selalu jelas bagaimana mengembalikannya. -->
+      <button class="detail-rail" id="detail-rail" title="Show the details panel">
+        <svg viewBox="0 0 14 14" aria-hidden="true"><path d="M8.6 3.4 5 7l3.6 3.6"
+             fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+             stroke-linejoin="round"/></svg>
+      </button>
+
       <!-- working directory panel -->
       <div class="panel" id="panel-wip" hidden>
         <div class="wip-head">
           <h2>Uncommitted changes</h2>
           <span class="wip-total" id="wip-total"></span>
+          <button class="detail-collapse" id="detail-collapse-wip" title="Collapse the details panel"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M5.4 3.4 9 7l-3.6 3.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         </div>
 
         <div class="file-filter">
@@ -722,6 +731,7 @@
         <div class="c-top">
           <span class="c-top-label">commit</span>
           <button class="hashbtn" id="c-hash" title="Copy the full SHA"></button>
+          <button class="detail-collapse" id="detail-collapse-commit" title="Collapse the details panel"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M5.4 3.4 9 7l-3.6 3.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         </div>
 
         <!-- Pesan commit, bisa disunting di tempat. -->

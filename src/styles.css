@@ -482,6 +482,16 @@ textarea {
 .app.no-detail .detail,
 .app.no-detail .drag-handle[data-resize="detail"] { display: none; }
 
+/* Collapsed is a third state, between showing and hidden: the panel folds to a
+   rail so the way back is always on screen. The divider goes with it — there is
+   nothing left to resize. */
+.app.detail-collapsed .main {
+  grid-template-columns: var(--sidebar-w, 230px) 4px 1fr 0 var(--rail-w);
+}
+.app.no-sidebar.detail-collapsed .main { grid-template-columns: 0 0 1fr 0 var(--rail-w); }
+.app.detail-collapsed .drag-handle[data-resize="detail"] { display: none; }
+.app.detail-collapsed .detail > .panel { display: none; }
+
 .drag-handle { cursor: col-resize; background: var(--line-soft); }
 .drag-handle:hover { background: var(--accent); }
 
@@ -2591,6 +2601,45 @@ mark {
   border-bottom: 1px solid var(--line);
 }
 .wip-head h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
+
+/* ── collapsing the details panel ────────────────────────────── */
+:root { --rail-w: 26px; }
+
+.detail-collapse {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  align-self: center;
+}
+.detail-collapse svg { width: 13px; height: 13px; }
+.detail-collapse:hover { background: var(--surface-3); color: var(--text); }
+.detail-collapse:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+/* The whole rail is the button, so anywhere on it brings the panel back. */
+.detail-rail {
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 13px;
+  border: 0;
+  background: var(--surface);
+  color: var(--text-faint);
+  cursor: pointer;
+  grid-row: 1;
+  grid-column: 1;
+}
+.detail-rail svg { width: 14px; height: 14px; }
+.detail-rail:hover { background: var(--surface-2); color: var(--text); }
+.app.detail-collapsed .detail-rail { display: flex; }
 .wip-total {
   margin-left: auto;
   font-family: var(--mono);
