@@ -1575,6 +1575,54 @@ handle('repo:lastMessage', async (repo) =>
 
 handle('repo:checkout', async (repo, ref) => git(repo, ['checkout', ref]));
 
+/* Switching branch with uncommitted work is the one routine action that can
+   quietly cost you something, so the renderer asks first and passes the answer
+   here. The whole sequence lives in one place because the interesting part is
+   what happens when a step half-fails.
+
+   - keep    plain checkout. Git carries the changes across, or refuses.
+   - stash   set the work aside, switch, put it back.
+   - discard throw away modifications to tracked files. Untracked files are
+             left alone: nothing in git can bring those back. */
+const CHECKOUT_MODES = new Set(['keep', 'stash', 'discard']);
+
+const stashTop = (repo) =>
+  git(repo, ['rev-parse', '--verify', '-q', 'refs/stash']).catch(() => '');
+
+handle('repo:checkoutWith', async (repo, ref, mode) => {
+  if (!CHECKOUT_MODES.has(mode)) throw new Error(`Unknown checkout mode: ${mode}`);
+
+  if (mode !== 'stash') {
+    const args = mode === 'discard' ? ['checkout', '--force', ref] : ['checkout', ref];
+    await git(repo, args);
+    return { stash: 'none' };
+  }
+
+  const before = await stashTop(repo);
+  await git(repo, ['stash', 'push', '--include-untracked', '-m', `GitBraid: switching to ${ref}`]);
+  // `stash push` with nothing to save is a success that stashes nothing, so the
+  // ref itself is the only trustworthy evidence that anything was set aside.
+  const stashed = (await stashTop(repo)) !== before;
+
+  try {
+    await git(repo, ['checkout', ref]);
+  } catch (e) {
+    // A refused switch must cost nothing: put the work back where it was.
+    if (stashed) await git(repo, ['stash', 'pop']).catch(() => {});
+    throw e;
+  }
+
+  if (!stashed) return { stash: 'none' };
+  try {
+    await git(repo, ['stash', 'pop']);
+    return { stash: 'reapplied' };
+  } catch (e) {
+    // The stash is still there — it only pops on success — so say so rather
+    // than pretending the switch was clean.
+    return { stash: 'conflict', message: e.message };
+  }
+});
+
 handle('repo:createBranch', async (repo, name, startPoint, checkout) => {
   if (checkout) return git(repo, ['checkout', '-b', name, ...(startPoint ? [startPoint] : [])]);
   return git(repo, ['branch', name, ...(startPoint ? [startPoint] : [])]);

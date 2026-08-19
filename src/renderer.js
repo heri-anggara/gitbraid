@@ -2047,10 +2047,92 @@ async function doCommit() {
   setStatus(amend ? 'Amended the last commit' : 'Committed', 'ok');
 }
 
+/* Untracked files survive any checkout untouched, so counting them here would
+   turn the warning into noise on repositories that always carry build output. */
+function trackedChanges() {
+  const s = state.status;
+  return s ? s.staged.length + s.unstaged.length + s.conflicted.length : 0;
+}
+
+/* Returns the chosen mode, or null if the switch was called off. */
+async function askAboutLocalChanges(ref) {
+  const n = trackedChanges();
+  if (!n) return 'keep';
+  const here = state.status.branch || 'the current branch';
+  const r = await modal({
+    title: `Switch to ${ref}?`,
+    description:
+      `${n} uncommitted change${n === 1 ? '' : 's'} on ${here} ` +
+      `${n === 1 ? 'is' : 'are'} still in the working tree.`,
+    fields: [{
+      name: 'mode', type: 'choice', value: 'stash',
+      options: [
+        { value: 'stash', label: 'Stash and reapply',
+          help: `Sets the work aside, switches, and puts it back on ${ref}. `
+            + 'If it no longer applies you get conflicts to resolve, and the stash is kept.' },
+        { value: 'keep', label: 'Bring the changes along',
+          help: 'Carries the work across untouched. Git refuses the switch outright '
+            + 'if a file on the other branch would be overwritten.' },
+        { value: 'discard', label: 'Discard the changes',
+          help: 'Throws away every change to tracked files. Files git does not '
+            + 'track are left alone.' },
+      ],
+    }],
+    confirmLabel: 'Switch branch',
+    onChange: (v, api) => api.note(v.mode === 'discard'
+      ? 'Discarded changes cannot be recovered — they were never committed.' : ''),
+  });
+  return r ? r.mode : null;
+}
+
 async function checkout(ref) {
+  const mode = await askAboutLocalChanges(ref);
+  if (mode === null) return;
+
+  // gitAction hands nothing to its follow-up, so the outcome rides a closure.
+  let res = null;
   await gitAction(null, `Checking out ${ref}`,
-    () => call('repo:checkout', repoPath(), ref),
-    async () => { await refresh({ keepSelection: false }); setStatus(`Checked out ${ref}`, 'ok'); });
+    async () => (res = await call('repo:checkoutWith', repoPath(), ref, mode)),
+    async () => {
+      await refresh({ keepSelection: false });
+      if (res?.stash === 'conflict') {
+        setStatus(`Checked out ${ref} — the stashed work conflicts; resolve it, `
+          + 'then drop the stash', 'error');
+      } else if (res?.stash === 'reapplied') {
+        setStatus(`Checked out ${ref} — your changes came with it`, 'ok');
+      } else {
+        setStatus(`Checked out ${ref}`, 'ok');
+      }
+    });
+}
+
+/* One click on a ref moves the history to its tip instead of checking it out.
+   Every tip is in an --all log, but only once enough of it is loaded, so this
+   widens the window rather than giving up. */
+async function revealRef(ref, kind) {
+  const list = kind === 'tag' ? state.refs.tags
+    : kind === 'remote' ? state.refs.remotes
+      : state.refs.branches;
+  const oid = list.find((r) => r.name === ref)?.oid;
+  if (!oid) return;
+
+  const loaded = () => state.commits.some((c) => c.hash === oid);
+  // 50 pages is far past any history a person scrolls; it only stops a runaway.
+  for (let page = 0; !loaded() && page < 50; page += 1) {
+    if (state.commits.length < state.limit) {   // the whole history is here already
+      setStatus(`${ref} is not in this view`, 'error');
+      return;
+    }
+    state.limit += prefs.commitLimit;
+    setStatus(`Looking for ${ref} — ${state.limit} commits loaded…`);
+    await refresh();
+  }
+  if (!loaded()) {
+    setStatus(`${ref} is further back than GitBraid will load`, 'error');
+    return;
+  }
+  await selectCommit(oid);
+  setStatus(`${ref} is at ${oid.slice(0, 7)}`, 'ok');
 }
 
 async function newBranch(startPoint) {
@@ -4096,10 +4178,20 @@ $('sidebar').addEventListener('click', (e) => {
   const li = e.target.closest('li[data-ref]');
   if (!li) return;
   const { ref, kind } = li.dataset;
+  // One click looks, two clicks act. Checking out on a single click meant
+  // browsing the sidebar changed the repository under you.
+  if (kind === 'branch' || kind === 'tag' || kind === 'remote') revealRef(ref, kind);
+});
+
+$('sidebar').addEventListener('dblclick', (e) => {
+  const li = e.target.closest('li[data-ref]');
+  if (!li) return;
+  const { ref, kind } = li.dataset;
   if (kind === 'branch' || kind === 'tag') checkout(ref);
   else if (kind === 'remote') {
-    const local = ref.split('/').slice(1).join('/');
-    checkout(local);
+    // Checking out a remote branch means working on the local one that follows
+    // it; git creates that branch on the spot if it does not exist yet.
+    checkout(ref.split('/').slice(1).join('/'));
   }
 });
 
