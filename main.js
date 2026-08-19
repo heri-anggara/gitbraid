@@ -1193,11 +1193,15 @@ async function step(repo, what, args) {
   try {
     return await git(repo, args);
   } catch (err) {
-    throw new Error(`${what} failed: ${(err.message || String(err)).split('\n')[0]}`);
+    /* The first line is rarely the reason — a refused push opens with "To
+       <url>", which explains nothing. reasonLine picks the line that does. */
+    const why = reasonLine(err.message || String(err));
+    throw new Error(`${what} failed: ${why}`);
   }
 }
 
-handle('flow:finish', async (repo, { kind, branch, cfg, tag, message }) => {
+handle('flow:finish', async (repo, { kind, branch, cfg, tag, message,
+                                     remote, push, deleteRemote }) => {
   const done = [];
   if (kind === 'feature') {
     await step(repo, `Checking out ${cfg.develop}`, ['checkout', cfg.develop]);
@@ -1219,6 +1223,27 @@ handle('flow:finish', async (repo, { kind, branch, cfg, tag, message }) => {
   }
   await step(repo, `Deleting ${branch}`, ['branch', '-d', branch]);
   done.push('branch deleted');
+
+  /* Publishing comes before removing anything from the server. If the push is
+     refused — someone else moved the branch on — this throws, and the delete
+     below never runs: the feature stays on the remote as the only copy of that
+     work there, which is exactly what you want when the merge has not landed. */
+  if (push && remote) {
+    const branches = kind === 'feature' ? [cfg.develop] : [cfg.master, cfg.develop];
+    await step(repo, `Pushing ${branches.join(' and ')}`, ['push', remote, ...branches]);
+    done.push(`pushed ${branches.join(' and ')}`);
+    if (tag) {
+      // A release tag that exists only on one machine is not a release.
+      await step(repo, `Pushing ${tag}`, ['push', remote, tag]);
+      done.push(`pushed ${tag}`);
+    }
+  }
+
+  if (deleteRemote && remote) {
+    await step(repo, `Deleting ${remote}/${branch}`, ['push', remote, '--delete', branch]);
+    done.push(`${remote}/${branch} deleted`);
+  }
+
   return done.join(', ');
 });
 
