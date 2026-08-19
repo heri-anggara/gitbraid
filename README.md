@@ -331,7 +331,9 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   lebar otomatis yang mengikuti jumlah lane
 - **Peta perubahan** di tepi kanan, sejajar dengan scrollbar dan bukan
   menumpanginya: satu penanda per blok, hijau untuk tambahan, merah untuk
-  hapusan, dan dua warna kalau blok itu melakukan keduanya. Tinggi penandanya
+  hapusan, dan terbelah kiri-kanan kalau blok itu melakukan keduanya. Warnanya
+  sepasang token tersendiri, bukan warna teks diff: warna teks disetel supaya
+  terbaca sebagai tulisan, dan sebagai blok padat ia jatuh kusam. Tinggi penandanya
   sebanding dengan besar bloknya, dan blok yang sedang Anda lihat diberi bingkai.
   Jalurnya memakai latar diff itu sendiri tanpa garis pembatas, jadi terbaca
   sebagai tepi diff — bukan gutter yang ditempelkan
