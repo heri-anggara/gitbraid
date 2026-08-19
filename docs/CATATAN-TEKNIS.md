@@ -365,6 +365,18 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Sebuah kotak transparan menandai bagian berkas yang sedang terlihat di layar,
   jadi jalur itu menjawab "di mana saya" sekaligus "di mana perubahannya". Ia
   duduk di bawah penanda, supaya tidak pernah menutupi satu pun perubahan
+- **Kalau seluruh diff sudah muat di layar, jalurnya dibiarkan kosong.** Peta
+  yang tugasnya menunjukkan perubahan yang *tidak* terlihat tidak punya apa pun
+  untuk ditunjuk saat semuanya terlihat — dan karena tinggi penanda sebanding
+  dengan isi, pada diff pendek ia justru jadi paling mencolok: diperiksa pada
+  diff `+16 −1`, dua penanda memakan **47,7%** jalur padahal tidak ada satu
+  baris pun yang tersembunyi. Ujinya sama persis dengan yang sudah dipakai kotak
+  posisi layar, yang selama ini jadi satu-satunya bagian jalur yang tahu diri
+- Tinggi satu penanda dibatasi **seperempat** jalur. Pada diff normal penanda
+  hanya 1–3% sehingga batas itu tidak pernah terpakai; ia ada untuk diff yang
+  hanya bisa digulir sedikit, di mana satu blok bisa mengisi hampir seluruh
+  berkas. Terukur pada kasus seperti itu: 85% tanpa batas, 25% dengan batas —
+  selisih antara sebuah balok dan sebuah penanda
 - Mengklik penanda melompat ke blok itu dan menggerakkan penghitung `2/12`
   bersamanya — jadi penanda ketujuh dari atas benar-benar perbedaan ketujuh,
   sama dengan yang dilompati `Alt+↓`. Mengklik jalur kosongnya menggulir ke
