@@ -196,12 +196,26 @@ function storedZoom() {
 
 /* ═════ panels ══════════════════════════════════════════════════ */
 
-const panels = { sidebar: true, detail: true };
+const panels = { sidebar: true, detail: true, detailCollapsed: false };
 
 function applyPanels() {
   $('app').classList.toggle('no-sidebar', !panels.sidebar);
   $('app').classList.toggle('no-detail', !panels.detail);
+  // Collapsed only means anything while the panel is shown at all; the View
+  // menu's hide wins, and the collapsed state waits for it to come back.
+  $('app').classList.toggle('detail-collapsed', panels.detail && panels.detailCollapsed);
 }
+
+function collapseDetail(yes) {
+  panels.detailCollapsed = yes;
+  applyPanels();
+  try { localStorage.setItem('gitbraid-panels', JSON.stringify(panels)); } catch { /* private mode */ }
+}
+
+for (const id of ['detail-collapse-wip', 'detail-collapse-commit']) {
+  $(id).addEventListener('click', () => collapseDetail(true));
+}
+$('detail-rail').addEventListener('click', () => collapseDetail(false));
 
 function togglePanel(which) {
   panels[which] = !panels[which];
