@@ -2533,6 +2533,26 @@ mark {
 .commit-row > span:first-child { border-left: 0; }
 
 /* Painted as an image so the row's own background can still show through. */
+/* The face beside a name in the Author column. The row is already a flex line
+   with a gap, so it needs no margin of its own — only a size it will not give up
+   when the column is dragged narrow. */
+.c-face {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 50%;
+}
+.c-face-ini {
+  display: grid;
+  place-items: center;
+  background: hsl(var(--hue, 240) 52% 46%);
+  color: #fff;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  line-height: 1;
+}
+
 .c-msg { background-image: linear-gradient(var(--tint), var(--tint)); }
 .c-graph { padding: 0; }
 

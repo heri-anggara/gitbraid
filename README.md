@@ -491,6 +491,13 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 **Riwayat**
 - Commit graph multi-lane dengan deteksi merge dan pewarnaan per lane
 - Garis bertekuk siku membulat, dot berisi avatar Gravatar penulis
+- **Di mana wajah penulis muncul** bisa dipilih di Preferences: pada dot graph,
+  di kolom Author, di keduanya, atau tidak sama sekali. Di kolom Author, commit
+  yang tidak punya Gravatar tetap mendapat cakram inisial berwarna — hurufnya
+  dari nama, warnanya dari alamat email, jadi orang yang sama selalu berwarna
+  sama, dan seluruhnya dihitung di komputer Anda tanpa menyentuh jaringan. Dot
+  graph hanya berdiameter 16px dengan ruang 13px di dalamnya: cukup untuk gambar,
+  tidak cukup untuk huruf, jadi di sana hanya Gravatar yang bisa muncul
 - Kolom **Branch / Tag** tersendiri di kiri: pill per branch lokal, bertanda
   centang kalau sedang di-checkout, ikon monitor untuk lokal, ikon awan kalau
   branch yang sama juga ada di remote, dan ikon label untuk tag

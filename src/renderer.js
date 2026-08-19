@@ -24,6 +24,7 @@ const PREF_DEFAULTS = {
   tabSize: 4,
   lineNumbers: true,
   gravatar: false,          // off: nothing leaves the machine
+  avatarPlace: 'graph',     // graph | author | both | none
 };
 
 const prefs = { ...PREF_DEFAULTS };
@@ -273,10 +274,33 @@ async function ensureAvatars(commits) {
 }
 
 /** Offline or unknown addresses simply leave the lane-coloured disc bare. */
-const avatarFor = (commit) =>
+/* A fetched Gravatar picture, or nothing. Separate from where it is allowed to
+   appear, because the two questions are genuinely different: one is whether the
+   network was asked, the other is where the answer is drawn. */
+const gravatarFor = (commit) =>
   (prefs.gravatar
     ? avatarCache.get((commit.email || '').trim().toLowerCase())
     : null) || null;
+
+const showsAvatar = (where) =>
+  prefs.avatarPlace === where || prefs.avatarPlace === 'both';
+
+/* The graph's dot is sixteen pixels across with thirteen inside it, which is
+   room for a picture and no room for lettering — so a dot carries a Gravatar or
+   stays a plain lane-coloured disc. The Author column, having a whole row's
+   height, can fall back to initials. */
+const avatarFor = (commit) => (showsAvatar('graph') ? gravatarFor(commit) : null);
+
+/** The small round face beside a name in the Author column. */
+function authorChip(c) {
+  if (!showsAvatar('author')) return '';
+  const url = gravatarFor(c);
+  if (url) return `<img class="c-face" src="${esc(url)}" alt="" loading="lazy">`;
+  // No network involved: the letters are the author's, the colour is the
+  // address's, so the same person is the same colour every time.
+  return `<span class="c-face c-face-ini" style="--hue:${avatarHue(c.email)}">` +
+    `${esc(initials(c.author))}</span>`;
+}
 
 /* ═════ modal ═══════════════════════════════════════════════════ */
 
@@ -1526,7 +1550,7 @@ function renderRows() {
           msg: `<span class="c-msg"><span class="c-msg-text">${highlight(c.subject, q)}</span>` +
             (c.body ? `<span class="c-msg-body">${highlight(c.body.split('\n')[0], q)}</span>` : '') +
             '</span>',
-          author: `<span class="c-author">${highlight(c.author, q)}</span>`,
+          author: `<span class="c-author">${authorChip(c)}${highlight(c.author, q)}</span>`,
           adate: `<span class="c-adate">${stamp(c.authorDate)}</span>`,
           cdate: `<span class="c-date">${stamp(c.commitDate)}</span>`,
           sha: `<span class="c-sha">${c.hash.slice(0, 7)}</span>`,
@@ -3623,6 +3647,15 @@ function prefPages() {
               help: 'How the Commit Date and Author Time columns are written.',
               get: () => prefs.dateStyle,
               set: (v) => { prefs.dateStyle = v; savePrefs(); if (state.repo) renderHistory(); } },
+            { kind: 'select', label: 'Author picture',
+              options: [['graph', 'On the graph dot'], ['author', 'In the Author column'],
+                        ['both', 'Both places'], ['none', 'Nowhere']],
+              help: 'Where an author is shown as a face. In the Author column a commit '
+                + 'without a Gravatar still gets a coloured disc of initials, drawn here '
+                + 'with no network involved; the graph dot is too small for lettering, so '
+                + 'there it only ever carries a Gravatar picture.',
+              get: () => prefs.avatarPlace,
+              set: (v) => { prefs.avatarPlace = v; savePrefs(); if (state.repo) renderHistory(); } },
             { kind: 'toggle', label: 'Author photos from Gravatar',
               help: 'Off, the graph draws a plain lane-coloured dot and nothing leaves ' +
                 'this machine. On, GitBraid asks gravatar.com for a picture of every ' +
