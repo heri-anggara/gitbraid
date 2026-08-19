@@ -321,6 +321,14 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   terakhir, dengan penghitung `2/3`. Satu "blok" adalah satu rentetan baris yang
   tersentuh, jadi `3` berarti tiga suntingan, bukan tiga baris. Pintasan:
   `Alt+↑` `Alt+↓` `Alt+Home` `Alt+End`
+- Panel detail commit bisa **dilipat ke samping** lewat panah di kepalanya,
+  menyisakan bilah 26px yang seluruhnya jadi tombol untuk membukanya kembali.
+  Berbeda dari View ▸ Show Commit Details Panel yang menyembunyikannya sama
+  sekali; keduanya diingat setelah aplikasi ditutup
+- Kolom **Graph** bisa disembunyikan dan ditarik lebarnya seperti kolom lain.
+  Kalau ditarik lebih sempit dari yang dibutuhkan lane, gambarnya terpotong di
+  tepi kolom, bukan meluber ke kolom pesan. *Reset columns* mengembalikannya ke
+  lebar otomatis yang mengikuti jumlah lane
 - **Peta perubahan** di tepi kanan, sejajar dengan scrollbar dan bukan
   menumpanginya: satu penanda per blok, hijau untuk tambahan, merah untuk
   hapusan, dan dua warna kalau blok itu melakukan keduanya. Tinggi penandanya
@@ -523,12 +531,16 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Layar awal ikut menyesuaikan lebar jendela, tidak terkunci di satu ukuran
 
 **Perubahan**
-- Daftar berkas punya dua tampilan, **List** dan **Tree**, pilihannya diingat:
-  - **List** menampilkan *nama berkasnya saja*, tanpa path. Path lengkapnya ada
-    di tooltip. Perlu diingat: dua berkas bernama sama di folder berbeda —
-    misal `route.ts` di `api/orders/[id]` dan di `api/products/[id]` — akan
-    terlihat identik di mode ini; Tree yang membedakannya
-  - **Tree** mengelompokkan berkas ke dalam foldernya. Rantai folder yang tiap
+- Daftar berkas punya **tiga tampilan**, dipilih lewat satu tombol ikon yang
+  membuka menu. Pilihannya satu dan dipakai bersama oleh panel *Uncommitted
+  changes* dan panel detail commit — bentuk yang sama berarti hal yang sama di
+  kedua tempat, jadi menyimpan dua jawaban hanya membuatnya berselisih:
+  - **Show as Path List** — satu baris per berkas dengan path lengkapnya
+  - **Show as File and Dir List** — *nama berkasnya* yang dibaca duluan, foldernya
+    mengiringi dengan warna redup. Perlu diingat: dua berkas bernama sama di
+    folder berbeda — misal `route.ts` di `api/orders/[id]` dan di
+    `api/products/[id]` — akan terlihat mirip di mode ini; Tree yang membedakannya
+  - **Show as Filesystem Tree** mengelompokkan berkas ke dalam foldernya. Rantai folder yang tiap
     tingkatnya hanya berisi satu folder lagi **dipadatkan jadi satu baris**,
     seperti di editor: `src ▸ app ▸ api ▸ orders ▸ [id] ▸ route.ts` yang tadinya
     lima tingkat jadi `src ▸ app/api ▸ orders/[id] ▸ route.ts`. Folder yang
@@ -537,9 +549,8 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   - Pemadatan ini juga berlaku di daftar berkas panel commit. Di sidebar
     hampir tidak terasa karena di sana yang tunggal biasanya berupa cabang
     (daun), bukan folder
-- Mengetik di kotak **Filter files** selalu mendatarkan daftar, dan tombol Tree
-  ikut dimatikan sementara: pohon folder yang isinya sudah tersaring habis hanya
-  menyisakan folder kosong yang menyesatkan
+- Mengetik di kotak **Filter files** selalu mendatarkan daftar: pohon folder yang
+  isinya sudah tersaring habis hanya menyisakan folder kosong yang menyesatkan
 - Stage / unstage per file atau semuanya
 - **Stage, unstage, dan discard per hunk** langsung dari diff viewer
 - Diff dengan nomor baris ganda (lama/baru) dan penghitung +/−

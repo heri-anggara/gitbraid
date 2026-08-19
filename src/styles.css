@@ -2602,6 +2602,23 @@ mark {
 }
 .wip-head h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 
+/* ── how files are listed ────────────────────────────────────── */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 26px;
+}
+.btn-icon svg { width: 14px; height: 14px; }
+
+/* A menu whose entries are pictures of what they do: the icon stands where the
+   tick would, and the row that is on is lit rather than ticked. */
+.ctx-icon { display: inline-flex; align-items: center; justify-content: center; }
+.ctx-icon svg { width: 14px; height: 14px; }
+#ctxmenu li.on { color: var(--accent-text); }
+#ctxmenu li.on .ctx-icon { color: var(--accent-text); }
+
 /* ── collapsing the details panel ────────────────────────────── */
 :root { --rail-w: 26px; }
 
