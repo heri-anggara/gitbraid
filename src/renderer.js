@@ -676,7 +676,7 @@ function restoreTabUi() {
   $('commit-body').value = state.commitBody;
   $('chk-amend').checked = state.amend;
   $('find-input').value = state.find.query;
-  $('find').hidden = !state.find.query;
+  renderFindCount();
 }
 
 /** Dress the window for whatever the active tab holds — a repository, or the
@@ -1369,6 +1369,10 @@ function renderFindCount() {
       ? `${f.index + 1} of ${f.hits.length}`
       : 'no matches';
   $('find-count').classList.toggle('none', Boolean(f.query.trim()) && !f.hits.length);
+  /* The field never leaves the screen now, so its buttons have to say when
+     there is nothing for them to do. */
+  $('find-close').hidden = !f.query;
+  for (const id of ['find-prev', 'find-next']) $(id).disabled = f.hits.length < 2;
 }
 
 /** Move the selection to a commit and bring it into view. */
@@ -1411,17 +1415,21 @@ async function gotoMatch(index) {
   await renderDetail();
 }
 
+/* The field is always there, so Ctrl+F puts the caret in it rather than
+   conjuring it. Selecting what is already typed keeps the shortcut's old
+   feel: press it, type, and the previous search is replaced. */
 function openFind() {
   if (!state.repo) return;
-  $('find').hidden = false;
   $('find-input').focus();
   $('find-input').select();
 }
 
+/* Esc empties the search instead of hiding the field — with nothing to hide,
+   the useful thing left to undo is the filter itself. */
 function closeFind() {
-  $('find').hidden = true;
   $('find-input').value = '';
   runFind('');
+  $('find-input').blur();
 }
 
 /* Rows drawn beyond each edge of the window. They are what lets scrolling skip

@@ -2318,20 +2318,25 @@ textarea {
 /* ── find in history ────────────────────────────────────────── */
 /* Docked rather than floating: an overlay would sit on top of the very row it
    just found whenever the match is near the top of the list. */
+/* A field, not a bar that appears: the same shape as Filter files in the
+   details panel, so both searches in the window look and behave alike. */
 .find {
   grid-row: 1;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  padding: 5px 12px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
+  gap: 7px;
+  margin: 7px 10px;
+  padding: 0 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
 }
+.find:focus-within { border-color: var(--accent); }
 .find-i { color: var(--text-faint); flex: none; }
 .find-input {
-  width: min(320px, 34vw);
-  padding: 3px 4px;
+  flex: 1;
+  min-width: 0;
+  padding: 5px 0;
   background: none;
   border: 0;
   outline: none;
