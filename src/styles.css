@@ -956,51 +956,59 @@ textarea {
   background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
-.side-pick {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-areas: "label label" "value chev";
-  gap: 0 6px;
-  width: 100%;
-  padding: 5px 8px 6px;
+/* ── which repository, which branch ──────────────────────────── */
+/* One box holding two rows. The old pair of boxes spent a line each on the
+   words REPOSITORY and BRANCH, and gave the branch a border and a hover that
+   promised a control it never was. An icon says the same thing in the margin. */
+.side-ident {
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  overflow: hidden;
+}
+.si-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
   text-align: left;
-  cursor: pointer;
-  transition: background .12s, border-color .12s;
 }
-.side-pick + .side-pick { margin-top: 5px; }
-.side-pick:hover { background: var(--surface-3); border-color: var(--line-strong); }
-.side-pick.is-static { cursor: default; }
-.side-pick.is-static:hover { background: var(--surface-2); border-color: var(--line); }
-
-.sp-label {
-  grid-area: label;
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-.sp-value {
-  grid-area: value;
+.si-i { width: 14px; height: 14px; flex: none; color: var(--text-faint); }
+.si-name {
+  flex: 1;
   min-width: 0;
-  font-weight: 600;
-  letter-spacing: -.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.sp-chev { grid-area: chev; align-self: center; font-size: 9px; color: var(--text-faint); }
+
+/* Only this row does anything, so only this row looks like it might. */
+.si-repo {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  transition: background .12s;
+}
+.si-repo:hover { background: var(--surface-3); }
+.si-repo:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
+.si-chev { width: 12px; height: 12px; flex: none; color: var(--text-faint); }
+.si-repo:hover .si-chev { color: var(--text-dim); }
 
 /* The branch you are on is the one fact this panel exists to answer. */
-#side-branch .sp-value {
+.si-branch {
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.si-branch .si-name {
   font-family: var(--mono);
   font-size: 12px;
-  color: var(--accent);
+  color: var(--accent-text);
 }
-#side-branch.detached .sp-value { color: var(--pending); }
+#side-branch.detached .si-name { color: var(--pending-text); }
+#side-branch.detached .si-i { color: var(--pending-text); }
 .side-head {
   display: flex;
   align-items: center;
