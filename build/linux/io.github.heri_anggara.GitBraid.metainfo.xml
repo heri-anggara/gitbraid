@@ -64,6 +64,14 @@
       <caption>Commit history drawn as coloured lanes</caption>
     </screenshot>
     <screenshot>
+      <image>https://raw.githubusercontent.com/heri-anggara/gitbraid/main/screenshots/commits.png</image>
+      <caption>Every column of the commit list, with the details panel folded away</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/heri-anggara/gitbraid/main/screenshots/commits-light.png</image>
+      <caption>The same list in the light theme</caption>
+    </screenshot>
+    <screenshot>
       <image>https://raw.githubusercontent.com/heri-anggara/gitbraid/main/screenshots/diff.png</image>
       <caption>Side-by-side diff with syntax colouring</caption>
     </screenshot>
