@@ -1643,7 +1643,33 @@ handle('repo:deleteBranch', async (repo, name, force) =>
   git(repo, ['branch', force ? '-D' : '-d', name])
 );
 
-handle('repo:merge', async (repo, ref) => git(repo, ['merge', '--no-edit', ref]));
+/* What the reader is about to do, in the terms they would check it in: which
+   way round it goes, how much is coming, and whether the history will stay a
+   straight line. Merging the wrong way round is the easy mistake, and no button
+   label can show it. */
+handle('repo:mergeInfo', async (repo, ref) => {
+  const head = (await git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+  const counts = await git(repo, ['rev-list', '--left-right', '--count', `HEAD...${ref}`]);
+  const [outgoing, incoming] = counts.trim().split(/\s+/).map(Number);
+  /* A fast-forward is possible exactly when HEAD is already an ancestor of the
+     other ref — that is, when nothing here is missing from there. The counts
+     above already say so, which beats asking `merge-base --is-ancestor`: that
+     one answers by exit status, and this helper does not carry exit codes. */
+  return { head, incoming, outgoing, fastForward: outgoing === 0 };
+});
+
+const MERGE_MODES = new Set(['ff', 'no-ff', 'squash']);
+
+handle('repo:merge', async (repo, ref, mode = 'ff') => {
+  if (!MERGE_MODES.has(mode)) throw new Error(`Unknown merge mode: ${mode}`);
+  const args = ['merge', '--no-edit'];
+  if (mode === 'no-ff') args.push('--no-ff');
+  // --squash brings the changes in and stages them; it deliberately does not
+  // commit, so the reader writes the message themselves.
+  if (mode === 'squash') args.push('--squash');
+  args.push(ref);
+  return git(repo, args);
+});
 
 handle('repo:rebase', async (repo, ref) => git(repo, ['rebase', ref]));
 

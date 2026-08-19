@@ -21,7 +21,7 @@ const CHANNELS = new Set([
   'repo:renameBranch', 'repo:setUpstream', 'repo:fastForward', 'repo:fetchInto',
   'repo:pushBranch', 'repo:deleteRemoteBranch', 'repo:deleteTag', 'repo:compare',
   'repo:description', 'repo:setDescription',
-  'repo:merge', 'repo:rebase', 'repo:reset', 'repo:revert',
+  'repo:merge', 'repo:mergeInfo', 'repo:rebase', 'repo:reset', 'repo:revert',
   'repo:cherryPick', 'repo:tag',
   'repo:fetch', 'repo:pull', 'repo:push',
   'repo:stashList', 'repo:stashSave', 'repo:stashApply', 'repo:stashDrop',

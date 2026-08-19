@@ -136,6 +136,38 @@ html, body {
 
 button, input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
 
+/* ── what can be selected ───────────────────────────────────── */
+/* This is a desktop application, not a web page: the chrome is furniture you
+   click, not prose you highlight. Leaving it selectable meant a double-click on
+   a branch — which now checks it out — also left the name smeared in blue, and
+   a stray drag across the sidebar painted half the tree. So nothing is
+   selectable by default, and the places that hold text worth copying say so. */
+body { user-select: none; }
+
+/* Content, as opposed to controls. Each of these is something a reader would
+   reasonably want to take away: a diff, command output, a commit message, the
+   log of what GitBraid ran, release notes. */
+#fv-body,
+#term-out,
+#logs-list,
+#nt-body,
+#about-specs,
+#about-notes,
+#c-msgbox,
+#c-hash,
+#c-author,
+#c-date,
+#c-parents,
+#c-stats,
+input,
+textarea {
+  user-select: text;
+}
+
+/* A button inside selectable content is still a button. */
+#fv-body button,
+#c-msgbox button { user-select: none; }
+
 /* The UA rule for [hidden] loses to any author `display:`, and plenty of the
    classes below set one. Restate it here so `el.hidden = true` actually hides. */
 [hidden] { display: none !important; }

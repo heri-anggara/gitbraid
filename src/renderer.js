@@ -2238,17 +2238,71 @@ async function newBranch(startPoint) {
 
 /* Shared by the sidebar's context menu and the Repository menu. */
 
+/* Merging the wrong way round is the mistake that actually happens, and no
+   button label shows which way it goes. So the confirmation is not "are you
+   sure" — it is the direction, the size, and the shape of the result. */
+async function askAboutMerge(ref, info) {
+  const n = info.incoming;
+  const dirty = trackedChanges();
+  const r = await modal({
+    title: `Merge ${ref} into ${info.head}?`,
+    description:
+      `${n} commit${n === 1 ? '' : 's'} from ${ref} ${n === 1 ? 'is' : 'are'} not in ` +
+      `${info.head} yet. ` +
+      (info.fastForward
+        ? `${info.head} has nothing of its own, so it can simply move forward.`
+        : `${info.head} has ${info.outgoing} commit${info.outgoing === 1 ? '' : 's'} ` +
+          'of its own, so the two lines have to be joined.'),
+    fields: [{
+      name: 'mode', type: 'choice', value: 'ff',
+      options: [
+        { value: 'ff', label: 'Fast-forward when possible',
+          help: info.fastForward
+            ? `Moves ${info.head} straight to ${ref}. No merge commit, and the ` +
+              'history stays a straight line.'
+            : 'A fast-forward is not possible here, so this makes a merge commit.' },
+        { value: 'no-ff', label: 'Always create a merge commit',
+          help: 'Records the merge as a commit of its own even when it could have '
+            + 'moved forward, so the branch stays visible in the graph.' },
+        { value: 'squash', label: 'Squash into one change',
+          help: `Brings the work in without any of ${ref}'s commits and leaves it `
+            + 'staged, for you to commit in one piece.' },
+      ],
+    }],
+    confirmLabel: 'Merge',
+    onChange: (v, api) => api.note(dirty
+      ? `${dirty} uncommitted change${dirty === 1 ? '' : 's'} in the working tree. `
+        + 'Git refuses the merge if it needs one of those files.'
+      : ''),
+  });
+  return r ? r.mode : null;
+}
+
 async function mergeBranch(ref) {
+  const info = await call('repo:mergeInfo', repoPath(), ref);
+  if (info === null) return;
+  /* git succeeds and changes nothing when the branch is already contained.
+     Saying "Merged" there would claim something that did not happen — and
+     asking about it first would be a dialog with nothing to decide. */
+  if (!info.incoming) {
+    setStatus(`${ref} is already in ${info.head} — nothing to merge`);
+    return;
+  }
+
+  const mode = await askAboutMerge(ref, info);
+  if (mode === null) return;
+
   let out = '';
   const ok = await gitAction(null, `Merging ${ref}`,
-    async () => (out = await call('repo:merge', repoPath(), ref)),
+    async () => (out = await call('repo:merge', repoPath(), ref, mode)),
     async () => {
       await refresh({ keepSelection: false });
-      /* git succeeds and changes nothing when the branch is already contained.
-         Saying "Merged" there would claim something that did not happen. */
       setStatus(nothingHappened(out)
-        ? `${ref} is already in this branch — nothing to merge`
-        : `Merged ${ref}`, nothingHappened(out) ? '' : 'ok');
+        ? `${ref} is already in ${info.head} — nothing to merge`
+        : mode === 'squash'
+          ? `Squashed ${ref} into the staged changes — write a message and commit`
+          : `Merged ${ref} into ${info.head}`,
+      nothingHappened(out) ? '' : 'ok');
     });
   // A conflict stops the merge half-done; the history has to show that state.
   if (!ok) await refresh({ keepSelection: false });
