@@ -27,6 +27,12 @@
   --pending:     #e9a13b;
   --add:         #3fbf9f;
   --del:         #e2705a;
+  /* The change map paints solid chips, not text. The pair above is tuned to
+     stay readable as writing, which as a fill reads muddy, so the map gets
+     saturated cousins of the same two hues — raising these cannot cost the
+     diff any legibility. */
+  --map-add:     #31dba4;
+  --map-del:     #ff6f52;
   --danger:      #e2705a;
 
   --add-bg:      rgba(63, 191, 159, .10);
@@ -101,6 +107,8 @@
   --pending:     #c97a12;
   --add:         #14875f;
   --del:         #c33f33;
+  --map-add:     #0fa971;
+  --map-del:     #e0492f;
   --danger:      #c33f33;
 
   --add-bg:      rgba(20, 135, 95, .10);
@@ -481,6 +489,16 @@ textarea {
 .app.no-sidebar .drag-handle[data-resize="sidebar"],
 .app.no-detail .detail,
 .app.no-detail .drag-handle[data-resize="detail"] { display: none; }
+
+/* Collapsed is a third state, between showing and hidden: the panel folds to a
+   rail so the way back is always on screen. The divider goes with it — there is
+   nothing left to resize. */
+.app.detail-collapsed .main {
+  grid-template-columns: var(--sidebar-w, 230px) 4px 1fr 0 var(--rail-w);
+}
+.app.no-sidebar.detail-collapsed .main { grid-template-columns: 0 0 1fr 0 var(--rail-w); }
+.app.detail-collapsed .drag-handle[data-resize="detail"] { display: none; }
+.app.detail-collapsed .detail > .panel { display: none; }
 
 .drag-handle { cursor: col-resize; background: var(--line-soft); }
 .drag-handle:hover { background: var(--accent); }
@@ -938,51 +956,59 @@ textarea {
   background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
-.side-pick {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-areas: "label label" "value chev";
-  gap: 0 6px;
-  width: 100%;
-  padding: 5px 8px 6px;
+/* ── which repository, which branch ──────────────────────────── */
+/* One box holding two rows. The old pair of boxes spent a line each on the
+   words REPOSITORY and BRANCH, and gave the branch a border and a hover that
+   promised a control it never was. An icon says the same thing in the margin. */
+.side-ident {
   background: var(--surface-2);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  overflow: hidden;
+}
+.si-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
   text-align: left;
-  cursor: pointer;
-  transition: background .12s, border-color .12s;
 }
-.side-pick + .side-pick { margin-top: 5px; }
-.side-pick:hover { background: var(--surface-3); border-color: var(--line-strong); }
-.side-pick.is-static { cursor: default; }
-.side-pick.is-static:hover { background: var(--surface-2); border-color: var(--line); }
-
-.sp-label {
-  grid-area: label;
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-.sp-value {
-  grid-area: value;
+.si-i { width: 14px; height: 14px; flex: none; color: var(--text-faint); }
+.si-name {
+  flex: 1;
   min-width: 0;
-  font-weight: 600;
-  letter-spacing: -.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.sp-chev { grid-area: chev; align-self: center; font-size: 9px; color: var(--text-faint); }
+
+/* Only this row does anything, so only this row looks like it might. */
+.si-repo {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  transition: background .12s;
+}
+.si-repo:hover { background: var(--surface-3); }
+.si-repo:focus-visible { outline: 1px solid var(--accent); outline-offset: -2px; }
+.si-chev { width: 12px; height: 12px; flex: none; color: var(--text-faint); }
+.si-repo:hover .si-chev { color: var(--text-dim); }
 
 /* The branch you are on is the one fact this panel exists to answer. */
-#side-branch .sp-value {
+.si-branch {
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.si-branch .si-name {
   font-family: var(--mono);
   font-size: 12px;
-  color: var(--accent);
+  color: var(--accent-text);
 }
-#side-branch.detached .sp-value { color: var(--pending); }
+#side-branch.detached .si-name { color: var(--pending-text); }
+#side-branch.detached .si-i { color: var(--pending-text); }
 .side-head {
   display: flex;
   align-items: center;
@@ -1558,8 +1584,12 @@ textarea {
 .fv-body.as-file .dl-add .dl-sign { visibility: hidden; }
 .fv-body.as-file .dl-add .dl-text { color: var(--text-dim); }
 .stat-conflict { font-size: 11px; color: var(--danger); }
-/* The per-file "+7 −0" counts the whole file as new for the same reason. */
-.fv-body.as-file .difffile-stat { visibility: hidden; }
+
+/* The viewer shows one file, and its own header already carries the path and
+   the counts — so the diff's per-file header said all of it a second time.
+   It earns its place only as a separator between several files, which is
+   exactly when it stops being an only child. */
+#fv-body .difffile:only-child > .difffile-head { display: none; }
 
 /* A combined diff's sign column holds two characters, not one. */
 .difftable .dl-sign { white-space: pre; min-width: 14px; width: auto; padding: 0 2px; }
@@ -2146,10 +2176,107 @@ textarea {
 /* ── penampil berkas di tengah ───────────────────────────────── */
 .fileview {
   display: grid;
+  /* The change map is a column of its own so it sits beside the scrollbar
+     rather than under it — a native scrollbar cannot be drawn on. Every child
+     is placed explicitly: a grid child that is hidden stops being a grid item,
+     and the rest would silently shuffle up. */
+  grid-template-columns: minmax(0, 1fr) auto;
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   background: var(--bg-graph);
   overflow: hidden;
+}
+.fv-head { grid-column: 1 / -1; grid-row: 1; }
+.fv-body { grid-column: 1; grid-row: 2; }
+.fv-map  { grid-column: 2; grid-row: 2; }
+
+/* ── updates ─────────────────────────────────────────────────── */
+/* A dot on the version, and nothing else: an update is worth noticing, not
+   worth a bar across the window. */
+.sb-brand.has-update { color: var(--accent-text); }
+.sb-brand.has-update::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-left: 1px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.up-notes { display: grid; gap: 6px; }
+.up-title { font-weight: 650; }
+.up-body {
+  max-height: 260px;
+  margin: 0;
+  padding: 9px 10px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--text-dim);
+  user-select: text;
+}
+
+/* ── change map ──────────────────────────────────────────────── */
+/* Always present, even with nothing to show: reserving the strip means opening
+   a file never re-flows the diff sideways. It carries the diff's own background
+   and no border, so it reads as the edge of the diff rather than a gutter
+   bolted onto it. */
+.fv-map {
+  position: relative;
+  width: 18px;
+  background: var(--bg);
+  cursor: pointer;
+}
+.fv-marks { position: absolute; inset: 0; }
+
+/* The part of the file on screen, so the strip answers "where am I" as well as
+   "where are the changes". */
+.fv-view {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  min-height: 12px;
+  border-radius: 4px;
+  background: var(--row-sel);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  pointer-events: none;
+}
+
+.fv-mark {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  min-height: 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: left .1s ease, right .1s ease;
+}
+.fv-mark:hover { left: 1px; right: 1px; }
+.fv-mark.m-add { background: var(--map-add); }
+.fv-mark.m-del { background: var(--map-del); }
+/* A block that both adds and removes is not one or the other, so it is drawn
+   as both rather than picking a side. Split left to right: a five-pixel mark
+   halved top to bottom is just a two-tone smudge. */
+.fv-mark.m-both {
+  background: linear-gradient(to right, var(--map-add) 50%, var(--map-del) 50%);
+}
+/* The difference you are standing on. */
+.fv-mark.here {
+  left: 1px;
+  right: 1px;
+  box-shadow: 0 0 0 1px var(--bg), 0 0 0 2px var(--accent);
+}
+.fv-mark:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fv-mark { transition: none; }
 }
 .fv-head {
   display: flex;
@@ -2230,20 +2357,25 @@ textarea {
 /* ── find in history ────────────────────────────────────────── */
 /* Docked rather than floating: an overlay would sit on top of the very row it
    just found whenever the match is near the top of the list. */
+/* A field, not a bar that appears: the same shape as Filter files in the
+   details panel, so both searches in the window look and behave alike. */
 .find {
   grid-row: 1;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  padding: 5px 12px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
+  gap: 7px;
+  margin: 7px 10px;
+  padding: 0 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
 }
+.find:focus-within { border-color: var(--accent); }
 .find-i { color: var(--text-faint); flex: none; }
 .find-input {
-  width: min(320px, 34vw);
-  padding: 3px 4px;
+  flex: 1;
+  min-width: 0;
+  padding: 5px 0;
   background: none;
   border: 0;
   outline: none;
@@ -2406,6 +2538,11 @@ mark {
   position: absolute;
   top: var(--head-h);
   left: var(--graph-x, 0px);
+  /* Clipped to its column. Drawing outside the grid is what lets one SVG span
+     every row, but it also means nothing else would stop it painting across the
+     message column when the column is dragged narrower than the lanes need. */
+  width: var(--graph-col-w, var(--graph-w, 90px));
+  overflow: hidden;
   pointer-events: none;
   z-index: 0;
 }
@@ -2440,6 +2577,26 @@ mark {
 .commit-row > span:first-child { border-left: 0; }
 
 /* Painted as an image so the row's own background can still show through. */
+/* The face beside a name in the Author column. The row is already a flex line
+   with a gap, so it needs no margin of its own — only a size it will not give up
+   when the column is dragged narrow. */
+.c-face {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 50%;
+}
+.c-face-ini {
+  display: grid;
+  place-items: center;
+  background: hsl(var(--hue, 240) 52% 46%);
+  color: #fff;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  line-height: 1;
+}
+
 .c-msg { background-image: linear-gradient(var(--tint), var(--tint)); }
 .c-graph { padding: 0; }
 
@@ -2536,6 +2693,62 @@ mark {
   border-bottom: 1px solid var(--line);
 }
 .wip-head h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
+
+/* ── how files are listed ────────────────────────────────────── */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 26px;
+}
+.btn-icon svg { width: 14px; height: 14px; }
+
+/* A menu whose entries are pictures of what they do: the icon stands where the
+   tick would, and the row that is on is lit rather than ticked. */
+.ctx-icon { display: inline-flex; align-items: center; justify-content: center; }
+.ctx-icon svg { width: 14px; height: 14px; }
+#ctxmenu li.on { color: var(--accent-text); }
+#ctxmenu li.on .ctx-icon { color: var(--accent-text); }
+
+/* ── collapsing the details panel ────────────────────────────── */
+:root { --rail-w: 26px; }
+
+.detail-collapse {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  align-self: center;
+}
+.detail-collapse svg { width: 13px; height: 13px; }
+.detail-collapse:hover { background: var(--surface-3); color: var(--text); }
+.detail-collapse:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+/* The whole rail is the button, so anywhere on it brings the panel back. */
+.detail-rail {
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 13px;
+  border: 0;
+  background: var(--surface);
+  color: var(--text-faint);
+  cursor: pointer;
+  grid-row: 1;
+  grid-column: 1;
+}
+.detail-rail svg { width: 14px; height: 14px; }
+.detail-rail:hover { background: var(--surface-2); color: var(--text); }
+.app.detail-collapsed .detail-rail { display: flex; }
 .wip-total {
   margin-left: auto;
   font-family: var(--mono);
@@ -2619,6 +2832,30 @@ mark {
 .fg-ib.danger:hover { border-color: var(--danger); color: var(--danger); }
 
 .f-dir { color: var(--text-faint); }
+
+/* Name first, folder beside it. The container has to leave RTL behind — the
+   whole-path row uses it so long paths lose their front rather than their end,
+   but here that would swap the two halves round. */
+.f-path.f-split {
+  direction: ltr;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+/* The name is the point, so it is never the part that gets cut. */
+.f-name { flex: none; }
+.f-dir-after {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Trimmed from the front, so what survives is the folder nearest the file —
+     the half that tells two same-named files apart. */
+  direction: rtl;
+  text-align: left;
+  color: var(--text-faint);
+}
 .f-act {
   display: grid;
   place-items: center;
@@ -2950,7 +3187,13 @@ mark {
 .modal-card h3 { margin: 0 0 .25em; font-size: 1.15em; }
 .modal-desc { margin: 0 0 1.1em; color: var(--text-dim); font-size: .92em; }
 .modal-field { margin-bottom: .75em; }
-.modal-field label {
+/* Small capitals suit a field's caption — TAG, URL — and nothing else in a
+   dialog. The rule used to reach every label, which put a checkbox's sentence
+   and a choice's whole explanation in capitals too; worse, it shouted the
+   branch names inside them, and a ref's case is part of its identity, so
+   "Feature/X" and "feature/x" came out looking like the same branch.
+   `label[for]` is exactly the caption and nothing else. */
+.modal-field label[for] {
   display: block;
   margin-bottom: .3em;
   font-size: .85em;

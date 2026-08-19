@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.gravatar.com https://secure.gravatar.com; font-src 'self';">
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://www.gravatar.com https://secure.gravatar.com https://avatars.githubusercontent.com; font-src 'self';">
 <title>GitBraid</title>
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -413,14 +413,35 @@
     <aside class="sidebar" id="sidebar">
 
       <div class="side-top">
-        <button class="side-pick" id="side-repo" title="Switch repository, or open another one">
-          <span class="sp-label">Repository</span>
-          <span class="sp-value" id="side-repo-name"></span>
-          <span class="sp-chev" aria-hidden="true">▾</span>
-        </button>
-        <div class="side-pick is-static" id="side-branch" title="The branch you have checked out">
-          <span class="sp-label">Branch</span>
-          <span class="sp-value" id="side-branch-name"></span>
+        <!-- Satu kotak, dua baris. Yang atas tombol pembuka menu repo; yang
+             bawah keterangan, bukan kontrol. Ikon menggantikan label kapital
+             REPOSITORY / BRANCH yang dulu memakan dua baris sendiri. -->
+        <div class="side-ident">
+          <button class="si-row si-repo" id="side-repo"
+                  title="Switch repository, or open another one">
+            <svg class="si-i" viewBox="0 0 14 14" aria-hidden="true">
+              <path d="M3 1.8h6.4a1.4 1.4 0 0 1 1.4 1.4v9H4.4A1.4 1.4 0 0 1 3 10.8Z"
+                    fill="none" stroke="currentColor" stroke-width="1.2"
+                    stroke-linejoin="round"/>
+              <path d="M3 10.2h7.8" fill="none" stroke="currentColor" stroke-width="1.2"/>
+            </svg>
+            <span class="si-name" id="side-repo-name"></span>
+            <svg class="si-chev" viewBox="0 0 14 14" aria-hidden="true">
+              <path d="M3.6 5.4 7 8.8l3.4-3.4" fill="none" stroke="currentColor"
+                    stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <div class="si-row si-branch" id="side-branch"
+               title="The branch you have checked out">
+            <svg class="si-i" viewBox="0 0 14 14" aria-hidden="true">
+              <circle cx="4" cy="3.4" r="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/>
+              <circle cx="4" cy="10.6" r="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/>
+              <circle cx="10.4" cy="3.4" r="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/>
+              <path d="M4 5v4M10.4 5v1.2c0 1.4-1.1 2.4-2.5 2.4H5.6" fill="none"
+                    stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+            </svg>
+            <span class="si-name" id="side-branch-name"></span>
+          </div>
         </div>
       </div>
 
@@ -460,8 +481,9 @@
 
     <!-- history -->
     <section class="history">
-      <!-- find bar, floating over the commit list -->
-      <div class="find" id="find" hidden>
+      <!-- Selalu terlihat, sejajar dengan kotak Filter files di panel kanan.
+           Ctrl+F memindahkan kursor ke sini, bukan memunculkannya. -->
+      <div class="find" id="find">
         <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" class="find-i">
           <circle cx="7" cy="7" r="4.4" fill="none" stroke="currentColor" stroke-width="1.6"/>
           <path d="m10.4 10.4 3.1 3.1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
@@ -471,7 +493,7 @@
         <span id="find-count" class="find-count"></span>
         <button id="find-prev" class="find-btn" title="Previous match (Shift+Enter)">↑</button>
         <button id="find-next" class="find-btn" title="Next match (Enter)">↓</button>
-        <button id="find-close" class="find-btn" title="Close (Esc)">×</button>
+        <button id="find-close" class="find-btn" title="Clear the search (Esc)" hidden>×</button>
       </div>
 
       <div class="history-scroll" id="history-scroll">
@@ -614,17 +636,34 @@
         </span>
       </header>
       <div class="fv-body" id="fv-body"></div>
+      <!-- Peta perubahan: satu penanda per blok, sejajar dengan hitungan
+           0/40 dan navigasi Alt+↑/↓. Diisi oleh renderChangeMap(). -->
+      <div class="fv-map" id="fv-map">
+        <!-- Bagian berkas yang sedang terlihat di layar. Di bawah penanda,
+             supaya sebuah perubahan tidak pernah tertutup olehnya. -->
+        <div class="fv-view" id="fv-view" hidden></div>
+        <div class="fv-marks" id="fv-marks"></div>
+      </div>
     </section>
 
     <div class="drag-handle" data-resize="detail"></div>
 
     <!-- detail -->
     <section class="detail" id="detail">
+      <!-- Yang tersisa saat panel di-collapse: satu bilah tipis berisi panah,
+           supaya selalu jelas bagaimana mengembalikannya. -->
+      <button class="detail-rail" id="detail-rail" title="Show the details panel">
+        <svg viewBox="0 0 14 14" aria-hidden="true"><path d="M8.6 3.4 5 7l3.6 3.6"
+             fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"
+             stroke-linejoin="round"/></svg>
+      </button>
+
       <!-- working directory panel -->
       <div class="panel" id="panel-wip" hidden>
         <div class="wip-head">
           <h2>Uncommitted changes</h2>
           <span class="wip-total" id="wip-total"></span>
+          <button class="detail-collapse" id="detail-collapse-wip" title="Collapse the details panel"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M5.4 3.4 9 7l-3.6 3.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         </div>
 
         <div class="file-filter">
@@ -642,12 +681,9 @@
         </div>
 
         <div class="wip-viewbar">
-          <span class="c-viewtoggle">
-            <button class="btn btn-sm" id="w-view-list"
-                    title="One row per file, named only — the folder is on hover">List</button>
-            <button class="btn btn-sm" id="w-view-tree"
-                    title="Group the files into their folders">Tree</button>
-          </span>
+          <!-- Ikonnya menunjukkan bentuk daftar yang sedang dipakai;
+               diisi oleh paintViewAs(). -->
+          <button class="btn btn-sm btn-icon" id="w-viewas"></button>
         </div>
 
         <!-- Conflicts come first: nothing else in this panel can be finished
@@ -719,6 +755,7 @@
         <div class="c-top">
           <span class="c-top-label">commit</span>
           <button class="hashbtn" id="c-hash" title="Copy the full SHA"></button>
+          <button class="detail-collapse" id="detail-collapse-commit" title="Collapse the details panel"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M5.4 3.4 9 7l-3.6 3.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         </div>
 
         <!-- Pesan commit, bisa disunting di tempat. -->
@@ -762,8 +799,7 @@
           <span class="c-stats" id="c-stats"></span>
           <span class="c-viewtoggle">
             <button class="btn btn-sm" id="c-sort" title="Sort by name, or keep git's own order">A–Z</button>
-            <button class="btn btn-sm" id="c-view-path" title="One row per file, showing the whole path">Path</button>
-            <button class="btn btn-sm" id="c-view-tree" title="Group files into their folders">Tree</button>
+            <button class="btn btn-sm btn-icon" id="c-viewas"></button>
           </span>
         </div>
         <ul class="filelist" id="list-commit-files"></ul>

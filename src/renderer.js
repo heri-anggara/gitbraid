@@ -23,12 +23,20 @@ const PREF_DEFAULTS = {
   diffFontSize: 12,
   tabSize: 4,
   lineNumbers: true,
-  gravatar: false,          // off: nothing leaves the machine
+  authorPhotos: false,      // off: nothing leaves the machine
+  updateCheck: true,        // ask GitHub, once a day, whether a newer release exists
+  avatarPlace: 'graph',     // graph | author | both | none
 };
 
 const prefs = { ...PREF_DEFAULTS };
 try {
-  Object.assign(prefs, JSON.parse(localStorage.getItem('gitbraid-prefs') || '{}'));
+  const saved = JSON.parse(localStorage.getItem('gitbraid-prefs') || '{}');
+  // Was `gravatar` while that was the only place a photo could come from.
+  if (saved.gravatar !== undefined && saved.authorPhotos === undefined) {
+    saved.authorPhotos = saved.gravatar;
+  }
+  delete saved.gravatar;
+  Object.assign(prefs, saved);
 } catch { /* private mode */ }
 
 function savePrefs() {
@@ -196,12 +204,26 @@ function storedZoom() {
 
 /* ═════ panels ══════════════════════════════════════════════════ */
 
-const panels = { sidebar: true, detail: true };
+const panels = { sidebar: true, detail: true, detailCollapsed: false };
 
 function applyPanels() {
   $('app').classList.toggle('no-sidebar', !panels.sidebar);
   $('app').classList.toggle('no-detail', !panels.detail);
+  // Collapsed only means anything while the panel is shown at all; the View
+  // menu's hide wins, and the collapsed state waits for it to come back.
+  $('app').classList.toggle('detail-collapsed', panels.detail && panels.detailCollapsed);
 }
+
+function collapseDetail(yes) {
+  panels.detailCollapsed = yes;
+  applyPanels();
+  try { localStorage.setItem('gitbraid-panels', JSON.stringify(panels)); } catch { /* private mode */ }
+}
+
+for (const id of ['detail-collapse-wip', 'detail-collapse-commit']) {
+  $(id).addEventListener('click', () => collapseDetail(true));
+}
+$('detail-rail').addEventListener('click', () => collapseDetail(false));
 
 function togglePanel(which) {
   panels[which] = !panels[which];
@@ -233,36 +255,95 @@ const syncMenu = () =>
    synchronously while building the SVG. */
 const avatarCache = new Map();
 
+/* GitHub writes the account's own number into the addresses it hands out —
+   "73584729+someone@users.noreply.github.com" — and that number is the whole
+   address of the picture. No API, no token, no lookup by name. Addresses from
+   before 2017 carry only the username and are left alone: resolving those means
+   a redirect through github.com, a second host in the policy, for a form that
+   is years out of use. */
+const GITHUB_NOREPLY = /^(\d+)\+[^@]+@users\.noreply\.github\.com$/;
+
+const githubAvatar = (email) => {
+  const m = GITHUB_NOREPLY.exec(email);
+  return m ? `https://avatars.githubusercontent.com/u/${m[1]}?s=32` : null;
+};
+
 async function ensureAvatars(commits) {
-  /* Off by default, and deliberately so. Drawing a Gravatar means asking
-     gravatar.com for it, which tells a third party your address and the hashed
-     email of everyone whose commits you are reading — including colleagues, on
-     a private work repository. It also fails offline and delays every repo you
-     open. The lane-coloured disc says the same thing without leaving the
-     machine, so the network version is something you switch on. */
-  if (!prefs.gravatar) return;
+  /* Off by default, and deliberately so. A photo means asking gravatar.com or
+     github.com for it, which tells a third party the hashed email — or the
+     account number — of everyone whose commits you are reading, colleagues
+     included, on a private work repository. It also fails offline and delays
+     every repository opened. The disc of initials says as much without leaving
+     the machine, so the network version is something you switch on. */
+  if (!prefs.authorPhotos) return;
 
   const emails = new Set(commits.map((c) => (c.email || '').trim().toLowerCase()));
   const todo = [...emails].filter((e) => e && !avatarCache.has(e));
 
   await Promise.all(todo.map(async (email) => {
+    /* GitHub answers 200 for any number — a deleted account gets a grey mark
+       rather than nothing — so asking whether the picture exists would always
+       come back yes. The question is not worth a round trip. */
+    const gh = githubAvatar(email);
+    if (gh) { avatarCache.set(email, gh); return; }
+
     try {
       const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(email));
       const hex = [...new Uint8Array(digest)]
         .map((b) => b.toString(16).padStart(2, '0'))
         .join('');
-      avatarCache.set(email, `https://www.gravatar.com/avatar/${hex}?s=32&d=identicon`);
+      /* d=404 asks Gravatar to answer "no picture" rather than invent a pattern
+         from the hash. The invented ones arrive as images like any other, so a
+         reader had no way to tell a colleague's face from a shape derived from
+         their address — every author looked photographed. Settled once per
+         address here so drawing stays synchronous and the graph and the Author
+         column can never disagree. */
+      const url = `https://www.gravatar.com/avatar/${hex}?s=32&d=404`;
+      avatarCache.set(email, (await hasImage(url)) ? url : null);
     } catch {
       avatarCache.set(email, null); // no SubtleCrypto: fall back to a plain dot
     }
   }));
 }
 
+/* Asked as an image, not as a request: the page's policy is default-src 'none'
+   and allows gravatar only under img-src, so fetch() would be blocked. The
+   browser caches the answer, so the picture that follows costs nothing more. */
+const hasImage = (url) => new Promise((resolve) => {
+  const probe = new Image();
+  probe.onload = () => resolve(probe.naturalWidth > 0);
+  probe.onerror = () => resolve(false);
+  probe.src = url;
+});
+
 /** Offline or unknown addresses simply leave the lane-coloured disc bare. */
-const avatarFor = (commit) =>
-  (prefs.gravatar
+/* A photo that was actually found, or nothing. Separate from where it is
+   allowed to appear, because the two questions are genuinely different: one is
+   whether the network was asked, the other is where the answer is drawn. */
+const photoFor = (commit) =>
+  (prefs.authorPhotos
     ? avatarCache.get((commit.email || '').trim().toLowerCase())
     : null) || null;
+
+const showsAvatar = (where) =>
+  prefs.avatarPlace === where || prefs.avatarPlace === 'both';
+
+/* The graph's dot is sixteen pixels across with thirteen inside it, which is
+   room for a picture and no room for lettering — so a dot carries a Gravatar or
+   stays a plain lane-coloured disc. The Author column, having a whole row's
+   height, can fall back to initials. */
+const avatarFor = (commit) => (showsAvatar('graph') ? photoFor(commit) : null);
+
+/** The small round face beside a name in the Author column. */
+function authorChip(c) {
+  if (!showsAvatar('author')) return '';
+  const url = photoFor(c);
+  if (url) return `<img class="c-face" src="${esc(url)}" alt="" loading="lazy">`;
+  // No network involved: the letters are the author's, the colour is the
+  // address's, so the same person is the same colour every time.
+  return `<span class="c-face c-face-ini" style="--hue:${avatarHue(c.email)}">` +
+    `${esc(initials(c.author))}</span>`;
+}
 
 /* ═════ modal ═══════════════════════════════════════════════════ */
 
@@ -498,16 +579,26 @@ function contextMenu(event, items) {
   event.preventDefault();
   if (dismissMenu) dismissMenu();
   const menu = $('ctxmenu');
+  /* If one entry carries a tick or an icon, every entry pays for that column.
+     Indenting only the checkable one left the rest hanging to its left, which
+     read as a mistake rather than as a distinction. */
+  const marked = items.some((it) => it !== '-' && (it.checked !== undefined || it.icon));
   menu.innerHTML = items
     .map((it, i) => {
       if (it === '-') return '<li class="sep"></li>';
       // An entry that cannot run right now still shows, so the menu explains
       // what exists rather than quietly rearranging itself.
       const cls = [it.danger ? 'danger' : '', it.disabled ? 'off' : '',
-                   it.checked !== undefined ? 'checkable' : ''].filter(Boolean).join(' ');
-      // A blank tick keeps unchecked labels on the same left edge as checked ones.
-      const tick = it.checked === undefined ? ''
-        : `<span class="ctx-tick">${it.checked ? '✓' : ''}</span>`;
+                   marked ? 'checkable' : '',
+                   it.icon && it.checked ? 'on' : ''].filter(Boolean).join(' ');
+      /* An icon takes the tick's place: a menu whose entries are pictures of
+         what they do does not also need a tick to say which one is on — the
+         chosen row is lit instead. A blank tick keeps unchecked labels on the
+         same left edge as checked ones. */
+      const tick = it.icon
+        ? `<span class="ctx-tick ctx-icon">${it.icon}</span>`
+        : marked ? `<span class="ctx-tick">${it.checked ? '✓' : ''}</span>`
+        : '';
       // A keyboard shortcut sits to the right, so the label column stays even.
       const accel = it.accel ? `<span class="ctx-accel">${esc(it.accel)}</span>` : '';
       return `<li${it.disabled ? '' : ` data-i="${i}"`}` +
@@ -628,7 +719,7 @@ function restoreTabUi() {
   $('commit-body').value = state.commitBody;
   $('chk-amend').checked = state.amend;
   $('find-input').value = state.find.query;
-  $('find').hidden = !state.find.query;
+  renderFindCount();
 }
 
 /** Dress the window for whatever the active tab holds — a repository, or the
@@ -1000,7 +1091,11 @@ function renderSidebar() {
    may widen, narrow, or switch off. */
 const COLUMNS = [
   { key: 'refs',   label: 'Branch / Tag',       cls: 'c-refs',   width: 158, min: 70,  optional: true },
-  { key: 'graph',  label: 'Graph',              cls: 'c-graph',  fixed: 'var(--graph-w, 90px)' },
+  /* The graph sizes itself to the lanes it has to draw until the reader drags
+     it, and from then on keeps the width they chose — on a repository with
+     forty branches the automatic width can take half the window. */
+  { key: 'graph',  label: 'Graph',              cls: 'c-graph',  fixed: 'var(--graph-w, 90px)',
+    min: 24, optional: true, resizable: true },
   { key: 'msg',    label: 'Commit Message',     cls: 'c-msg',    fixed: 'minmax(140px, 1fr)' },
   { key: 'author', label: 'Author',             cls: 'c-author', width: 130, min: 60,  optional: true },
   { key: 'adate',  label: 'Author Time',        cls: 'c-adate',  width: 172, min: 110, optional: true,
@@ -1030,7 +1125,12 @@ const visibleColumns = () => COLUMNS.filter((c) => !cols.hidden.has(c.key));
 
 /** Back to the widths and the visibility a fresh install starts with. */
 function resetColumns() {
-  for (const c of COLUMNS) if (c.width) cols.widths[c.key] = c.width;
+  for (const c of COLUMNS) {
+    // A column with no declared width sizes itself; forgetting the dragged
+    // value is what puts the graph back to following its lanes.
+    if (c.width) cols.widths[c.key] = c.width;
+    else delete cols.widths[c.key];
+  }
   cols.hidden = new Set(COLUMNS.filter((c) => c.offByDefault).map((c) => c.key));
   saveColumns();
   applyColumns();
@@ -1039,16 +1139,26 @@ function resetColumns() {
 }
 
 /** One track list, written once and shared by the header and every row. */
+/* A dragged width always wins; without one the column falls back to whatever it
+   declared — the graph's measured lane width, or the message column's 1fr. */
+const trackFor = (c) => (cols.widths[c.key] ? `${cols.widths[c.key]}px` : c.fixed);
+
 function applyColumns() {
   const list = visibleColumns();
-  const tracks = list.map((c) => c.fixed || `${cols.widths[c.key]}px`).join(' ');
-  document.documentElement.style.setProperty('--hist-cols', tracks);
+  document.documentElement.style.setProperty('--hist-cols', list.map(trackFor).join(' '));
+
+  /* The graph layer is positioned absolutely, outside the grid, so nothing
+     stops it painting over the message column once the reader drags its column
+     narrower than the lanes need. It is given the column's own width to clip to. */
+  const graphCol = list.find((c) => c.key === 'graph');
+  document.documentElement.style.setProperty('--graph-col-w', graphCol ? trackFor(graphCol) : '0px');
+  $('graph-layer').hidden = !graphCol;
 
   /* The narrowest the history may get before it scrolls sideways. It used to be
      a constant built from the old fixed widths; with columns that move and
      disappear it has to be recomputed alongside them. */
   const fixed = list.reduce((sum, c) => sum + (c.width ? cols.widths[c.key] : 0), 0);
-  const graph = list.some((c) => c.key === 'graph') ? 'var(--graph-w, 90px)' : '0px';
+  const graph = graphCol ? trackFor(graphCol) : '0px';
   document.documentElement.style.setProperty('--hist-min', `calc(${graph} + ${fixed + 140}px)`);
 
   /* The graph is drawn on its own layer, outside the grid, so it has to be told
@@ -1071,7 +1181,7 @@ function renderHistoryHead() {
     .map((c, i) => {
       // The handle belongs to the column it resizes, and the last one has
       // nothing to its right to trade width with.
-      const grip = c.width && i < list.length - 1
+      const grip = (c.width || c.resizable) && i < list.length - 1
         ? `<span class="col-grip" data-grip="${c.key}"></span>`
         : '';
       return `<span class="hh ${c.cls}">${esc(c.label)}${grip}</span>`;
@@ -1092,7 +1202,9 @@ $('history-head').addEventListener('mousedown', (e) => {
   const key = grip.dataset.grip;
   const col = COLUMNS.find((c) => c.key === key);
   const startX = e.clientX;
-  const startW = cols.widths[key];
+  // A column that has never been dragged has no stored width — the graph starts
+  // out sized to its lanes — so the drag begins from what is on screen.
+  const startW = cols.widths[key] ?? grip.parentElement.getBoundingClientRect().width;
   document.body.classList.add('col-resizing');
 
   const onMove = (m) => {
@@ -1300,6 +1412,10 @@ function renderFindCount() {
       ? `${f.index + 1} of ${f.hits.length}`
       : 'no matches';
   $('find-count').classList.toggle('none', Boolean(f.query.trim()) && !f.hits.length);
+  /* The field never leaves the screen now, so its buttons have to say when
+     there is nothing for them to do. */
+  $('find-close').hidden = !f.query;
+  for (const id of ['find-prev', 'find-next']) $(id).disabled = f.hits.length < 2;
 }
 
 /** Move the selection to a commit and bring it into view. */
@@ -1342,17 +1458,21 @@ async function gotoMatch(index) {
   await renderDetail();
 }
 
+/* The field is always there, so Ctrl+F puts the caret in it rather than
+   conjuring it. Selecting what is already typed keeps the shortcut's old
+   feel: press it, type, and the previous search is replaced. */
 function openFind() {
   if (!state.repo) return;
-  $('find').hidden = false;
   $('find-input').focus();
   $('find-input').select();
 }
 
+/* Esc empties the search instead of hiding the field — with nothing to hide,
+   the useful thing left to undo is the filter itself. */
 function closeFind() {
-  $('find').hidden = true;
   $('find-input').value = '';
   runFind('');
+  $('find-input').blur();
 }
 
 /* Rows drawn beyond each edge of the window. They are what lets scrolling skip
@@ -1423,8 +1543,10 @@ function renderRows() {
   const last = Math.min(total, need.last + OVERSCAN);
   state.rowsShown = { first, last };
 
-  $('graph-layer').innerHTML =
-    window.Graph.render(layout, state.rowIndex, { avatarFor, first, last });
+  // Nothing to draw when the column is off, and the string is the expensive part.
+  $('graph-layer').innerHTML = cols.hidden.has('graph')
+    ? ''
+    : window.Graph.render(layout, state.rowIndex, { avatarFor, first, last });
 
   const sel = state.selection;
   const list = $('commit-list');
@@ -1483,7 +1605,7 @@ function renderRows() {
           msg: `<span class="c-msg"><span class="c-msg-text">${highlight(c.subject, q)}</span>` +
             (c.body ? `<span class="c-msg-body">${highlight(c.body.split('\n')[0], q)}</span>` : '') +
             '</span>',
-          author: `<span class="c-author">${highlight(c.author, q)}</span>`,
+          author: `<span class="c-author">${authorChip(c)}${highlight(c.author, q)}</span>`,
           adate: `<span class="c-adate">${stamp(c.authorDate)}</span>`,
           cdate: `<span class="c-date">${stamp(c.commitDate)}</span>`,
           sha: `<span class="c-sha">${c.hash.slice(0, 7)}</span>`,
@@ -1527,7 +1649,7 @@ const F_ICON = {
     'stroke-linejoin="round"/></svg>',
 };
 
-function fileRow(f, kind, depth = 0, nameOnly = false) {
+function fileRow(f, kind, depth = 0, mode = 'path') {
   const selected =
     state.file &&
     state.file.path === f.path &&
@@ -1546,17 +1668,24 @@ function fileRow(f, kind, depth = 0, nameOnly = false) {
       ? act('stage', 'Stage this file') + act('discard', 'Throw away these changes', true)
       : '';
 
-  /* The folder is context and the file name is the point, so they are weighted
-     differently rather than run together as one grey string. `nameOnly` drops
-     the folder altogether — the whole path is still on hover, and Tree view is
-     there for when the location is what you are looking for. */
-  const shown = nameOnly
-    ? baseName(f.path)
-    : (f.label ?? f.path).replace(/\/$/, '');
-  const cut = shown.lastIndexOf('/');
-  const name = cut < 0
-    ? esc(shown)
-    : `<span class="f-dir">${esc(shown.slice(0, cut + 1))}</span>${esc(shown.slice(cut + 1))}`;
+  /* The folder is context and the file name is the point, so the two are
+     weighted differently rather than run together as one grey string. Where
+     they sit is what separates the two flat shapes: reading a path, the folder
+     leads; reading a list of files, the name leads and the folder answers
+     "which one?" beside it, without a hover. Tree hands in a leaf label and
+     needs neither. */
+  let name;
+  if (mode === 'list') {
+    const cut = f.path.lastIndexOf('/');
+    name = `<span class="f-name">${esc(cut < 0 ? f.path : f.path.slice(cut + 1))}</span>` +
+      (cut < 0 ? '' : `<span class="f-dir-after">${esc(f.path.slice(0, cut))}</span>`);
+  } else {
+    const shown = (f.label ?? f.path).replace(/\/$/, '');
+    const cut = shown.lastIndexOf('/');
+    name = cut < 0
+      ? esc(shown)
+      : `<span class="f-dir">${esc(shown.slice(0, cut + 1))}</span>${esc(shown.slice(cut + 1))}`;
+  }
 
   return (
     `<li class="${depth || f.label ? 'tree-leaf ' : ''}${selected ? 'selected' : ''}" ` +
@@ -1564,23 +1693,13 @@ function fileRow(f, kind, depth = 0, nameOnly = false) {
     `data-untracked="${f.status === '?' ? '1' : '0'}" style="--d:${depth}">` +
     `<span class="f-status s-${esc(f.status)}" title="${esc(STATUS_WORD[f.status] || f.status)}">` +
     `${esc(f.status)}</span>` +
-    `<span class="f-path" title="${esc(f.path)}">${name}</span>${actions}</li>`
+    `<span class="f-path${mode === 'list' ? ' f-split' : ''}" ` +
+    `title="${esc(f.path)}">${name}</span>${actions}</li>`
   );
 }
 
 /* How the uncommitted lists are drawn. Kept apart from the commit panel's own
    setting: one is a list you act on, the other is a record you read. */
-const wipView = { mode: 'list' };
-try {
-  const saved = JSON.parse(localStorage.getItem('gitbraid-wipview') || '{}');
-  if (saved.mode === 'tree' || saved.mode === 'list') wipView.mode = saved.mode;
-} catch { /* private mode */ }
-
-const saveWipView = () => {
-  try { localStorage.setItem('gitbraid-wipview', JSON.stringify(wipView)); }
-  catch { /* private mode */ }
-};
-
 let wipFilter = '';
 
 /** Filtering flattens: a tree of folders whose files are all hidden tells you
@@ -1589,10 +1708,10 @@ function wipRows(list, kind) {
   const q = wipFilter;
   const shown = q ? list.filter((f) => f.path.toLowerCase().includes(q)) : list;
   if (!shown.length) return { html: '', count: 0 };
-  const html = wipView.mode === 'tree' && !q
+  const html = fileView.mode === 'tree' && !q
     ? renderTree(buildTree(shown.map((f) => ({ ...f, name: f.path }))), `wip-${kind}`,
         (f, label, depth) => fileRow({ ...f, label }, kind, depth))
-    : shown.map((f) => fileRow(f, kind, 0, true)).join('');
+    : shown.map((f) => fileRow(f, kind, 0, flatShape())).join('');
   return { html, count: shown.length };
 }
 
@@ -1616,10 +1735,7 @@ function renderWip() {
   $('list-unstaged').innerHTML = unstaged.html ||
     `<li class="empty-row">${wipFilter ? 'No changed file matches' : 'Working tree is clean'}</li>`;
 
-  $('w-view-list').classList.toggle('on', wipView.mode === 'list');
-  $('w-view-tree').classList.toggle('on', wipView.mode === 'tree');
-  // Tree is meaningless while a filter is narrowing the list to a handful.
-  $('w-view-tree').disabled = Boolean(wipFilter);
+  paintViewAs('w-viewas');
 
   $('count-staged').textContent = s.staged.length;
   $('count-unstaged').textContent = working.length;
@@ -1671,6 +1787,59 @@ const saveFileView = () => {
   try { localStorage.setItem('gitbraid-fileview', JSON.stringify(fileView)); } catch { /* ignore */ }
 };
 
+/* How a list of files is laid out. One setting, shared by the working-tree
+   panel and the commit panel: the same three shapes mean the same thing in
+   both, so keeping two answers only made them disagree. */
+const VIEW_MODES = [
+  { mode: 'path', label: 'Show as Path List',
+    hint: 'One row per file, showing the whole path',
+    icon: '<svg viewBox="0 0 14 14"><path d="M2 3.5h10M2 7h10M2 10.5h10" fill="none" '
+      + 'stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>' },
+  { mode: 'list', label: 'Show as File and Dir List',
+    hint: 'The file name reads first, its folder alongside in grey',
+    icon: '<svg viewBox="0 0 14 14"><path d="M2 3.5h3.5M7.5 3.5h4.5M2 7h3.5M7.5 7h4.5'
+      + 'M2 10.5h3.5M7.5 10.5h4.5" fill="none" stroke="currentColor" stroke-width="1.4" '
+      + 'stroke-linecap="round"/></svg>' },
+  { mode: 'tree', label: 'Show as Filesystem Tree',
+    hint: 'Group the files into the folders they live in',
+    icon: '<svg viewBox="0 0 14 14"><path d="M2.5 2.5v8.5h3M2.5 6.5h3" fill="none" '
+      + 'stroke="currentColor" stroke-width="1.3" stroke-linecap="round" '
+      + 'stroke-linejoin="round"/><path d="M7 2.5h5M7 6.5h5M7 11h5" fill="none" '
+      + 'stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>' },
+];
+
+const viewMode = () => VIEW_MODES.find((v) => v.mode === fileView.mode) || VIEW_MODES[0];
+
+/* Which of the two flat shapes a row should take. Tree can reach a flat list —
+   filtering always flattens — and there it reads as a path, not as a name with
+   nothing beside it. */
+const flatShape = () => (fileView.mode === 'list' ? 'list' : 'path');
+
+/** Keeps a panel's button showing the shape the lists are actually in. */
+function paintViewAs(id) {
+  const v = viewMode();
+  $(id).innerHTML = v.icon;
+  $(id).title = `${v.label} — click to change how files are listed`;
+}
+
+function viewAsMenu(button) {
+  const box = button.getBoundingClientRect();
+  contextMenu(
+    // contextMenu opens where the pointer is; a button's menu belongs under the
+    // button, so it is handed the corner instead.
+    { preventDefault() {}, clientX: box.left, clientY: box.bottom + 4 },
+    VIEW_MODES.map((v) => ({
+      label: v.label, icon: v.icon, hint: v.hint, checked: fileView.mode === v.mode,
+      run: () => {
+        fileView.mode = v.mode;
+        saveFileView();
+        renderCommitFiles();
+        if (state.status) renderWip();
+      },
+    }))
+  );
+}
+
 const STATUS_LABEL = { M: 'modified', A: 'added', D: 'deleted', R: 'renamed', C: 'copied' };
 
 let commitFiles = [];
@@ -1691,12 +1860,12 @@ function renderCommitFiles() {
     $('list-commit-files').innerHTML =
       renderTree(buildTree(files.map((f) => ({ ...f, name: f.path }))), 'cfile', leaf);
   } else {
-    $('list-commit-files').innerHTML = files.map((f) => fileRow(f, 'commit')).join('');
+    $('list-commit-files').innerHTML =
+      files.map((f) => fileRow(f, 'commit', 0, flatShape())).join('');
   }
 
   $('c-sort').classList.toggle('on', fileView.byName);
-  $('c-view-path').classList.toggle('on', fileView.mode === 'path');
-  $('c-view-tree').classList.toggle('on', fileView.mode === 'tree');
+  paintViewAs('c-viewas');
 }
 
 async function renderCommitPanel(hash) {
@@ -1824,12 +1993,8 @@ $('c-edit-body').addEventListener('keydown', (e) => {
 $('c-sort').addEventListener('click', () => {
   fileView.byName = !fileView.byName; saveFileView(); renderCommitFiles();
 });
-$('c-view-path').addEventListener('click', () => {
-  fileView.mode = 'path'; saveFileView(); renderCommitFiles();
-});
-$('c-view-tree').addEventListener('click', () => {
-  fileView.mode = 'tree'; saveFileView(); renderCommitFiles();
-});
+$('c-viewas').addEventListener('click', (e) => viewAsMenu(e.currentTarget));
+$('w-viewas').addEventListener('click', (e) => viewAsMenu(e.currentTarget));
 
 $('c-parents').addEventListener('click', (e) => {
   const b = e.target.closest('.c-parent');
@@ -1906,22 +2071,82 @@ function syncViewerToggles() {
 /* ── jumping between changed blocks ──
    A "difference" is a run of touched rows: consecutive additions and removals
    count as one, which is what makes 1/5 mean five edits rather than five lines. */
-const nav = { blocks: [], at: -1 };
+const nav = { blocks: [], marks: [], at: -1 };
 
 function indexBlocks() {
   nav.blocks = [];
+  // One entry per block, aligned with nav.blocks: where it ends, and what it
+  // did. The map needs the extent and the colour; the counter only needs the
+  // count, which is why the two were never separated before.
+  nav.marks = [];
   nav.at = -1;
-  let current = null;
+  let mark = null;
   for (const tr of $('fv-body').querySelectorAll('.difftable tr')) {
-    const changed = tr.classList.contains('dl-add') || tr.classList.contains('dl-del') ||
-      Boolean(tr.querySelector('td.dl-add, td.dl-del'));
-    if (changed) {
-      if (!current) { current = tr; nav.blocks.push(tr); }
+    const added = tr.classList.contains('dl-add') || Boolean(tr.querySelector('td.dl-add'));
+    const removed = tr.classList.contains('dl-del') || Boolean(tr.querySelector('td.dl-del'));
+    if (added || removed) {
+      if (!mark) {
+        mark = { last: tr, add: 0, del: 0 };
+        nav.blocks.push(tr);
+        nav.marks.push(mark);
+      }
+      mark.last = tr;
+      if (added) mark.add += 1;
+      if (removed) mark.del += 1;
     } else {
-      current = null;
+      mark = null;
     }
   }
   renderNav();
+  renderChangeMap();
+}
+
+/* The strip beside the scrollbar. It is drawn from the same blocks the counter
+   counts, so the seventh mark down is difference seven, and clicking it goes
+   there rather than somewhere approximately near it. */
+function renderChangeMap() {
+  const map = $('fv-marks');
+  const body = $('fv-body');
+  const total = body.scrollHeight;
+  if (!nav.marks.length || total <= 0) { map.innerHTML = ''; paintViewport(); return; }
+
+  /* Rows are measured against the body's own scroll origin rather than
+     offsetTop, which answers relative to whichever ancestor happens to be
+     positioned — inside a table that is not the one we mean. */
+  const origin = body.getBoundingClientRect().top - body.scrollTop;
+  map.innerHTML = nav.marks.map((m, i) => {
+    const top = nav.blocks[i].getBoundingClientRect().top - origin;
+    const bottom = m.last.getBoundingClientRect().bottom - origin;
+    const kind = m.add && m.del ? 'both' : m.del ? 'del' : 'add';
+    const lines = m.add + m.del;
+    return `<button type="button" class="fv-mark m-${kind}" data-block="${i}" ` +
+      `style="top:${(top / total * 100).toFixed(3)}%;` +
+      `height:${Math.max((bottom - top) / total * 100, 0.25).toFixed(3)}%" ` +
+      `title="Difference ${i + 1} of ${nav.marks.length} — ` +
+      `${lines} line${lines === 1 ? '' : 's'}"></button>`;
+  }).join('');
+  paintCurrentMark();
+  paintViewport();
+}
+
+/* Which slice of the file is on screen. Two style writes, so it can run on
+   every scroll frame without competing with the diff for the frame. */
+function paintViewport() {
+  const body = $('fv-body');
+  const view = $('fv-view');
+  const total = body.scrollHeight;
+  const seen = body.clientHeight;
+  // Nothing to point at when the whole file already fits.
+  if (!nav.marks.length || total <= seen + 1) { view.hidden = true; return; }
+  view.hidden = false;
+  view.style.top = `${(body.scrollTop / total * 100).toFixed(3)}%`;
+  view.style.height = `${(seen / total * 100).toFixed(3)}%`;
+}
+
+function paintCurrentMark() {
+  const map = $('fv-marks');
+  map.querySelector('.fv-mark.here')?.classList.remove('here');
+  if (nav.at >= 0) map.querySelector(`.fv-mark[data-block="${nav.at}"]`)?.classList.add('here');
 }
 
 function renderNav() {
@@ -1939,7 +2164,36 @@ function gotoBlock(index) {
   row.classList.add('dl-here');
   row.scrollIntoView({ block: 'center' });
   renderNav();
+  paintCurrentMark();
 }
+
+let viewQueued = false;
+$('fv-body').addEventListener('scroll', () => {
+  if (viewQueued) return;
+  viewQueued = true;
+  requestAnimationFrame(() => { viewQueued = false; paintViewport(); });
+}, { passive: true });
+
+$('fv-map').addEventListener('click', (e) => {
+  const mark = e.target.closest('.fv-mark');
+  if (mark) { gotoBlock(Number(mark.dataset.block)); return; }
+  // Bare strip: treat the click as a position in the file, the way a scrollbar
+  // trough does, so the map is useful even where nothing changed.
+  const body = $('fv-body');
+  const box = $('fv-map').getBoundingClientRect();
+  const at = (e.clientY - box.top) / box.height;
+  body.scrollTop = at * body.scrollHeight - body.clientHeight / 2;
+});
+
+/* Every mark is a fraction of a height that changes whenever the pane does —
+   dragging the divider, toggling wrap, resizing the window. One redraw per
+   frame at most, and only while a file is open. */
+let mapQueued = false;
+new ResizeObserver(() => {
+  if (mapQueued || !nav.marks.length) return;
+  mapQueued = true;
+  requestAnimationFrame(() => { mapQueued = false; renderChangeMap(); });
+}).observe($('fv-body'));
 
 $('fv-first').addEventListener('click', () => gotoBlock(0));
 $('fv-prev').addEventListener('click', () => gotoBlock(nav.at <= 0 ? 0 : nav.at - 1));
@@ -1961,8 +2215,11 @@ function closeFile() {
      session along with the parsed hunks. Closing a file should cost nothing to
      keep, the way parking a tab already frees its diff. */
   $('fv-body').innerHTML = '';
+  $('fv-marks').innerHTML = '';
+  $('fv-view').hidden = true;
   state.diffFiles = [];
   nav.blocks = [];
+  nav.marks = [];
   nav.at = -1;
   renderDetail();
 }
@@ -2693,10 +2950,26 @@ async function finishFlow(flow) {
     ? b.upstream.slice(0, b.upstream.indexOf('/'))
     : (state.refs.remotes[0]?.name.split('/')[0] || 'origin');
   const hasRemote = state.refs.remotes.length > 0;
-  // Only worth offering when the branch was actually published; a feature that
-  // never left this machine has nothing on the server to tidy up.
-  const published = state.remoteRefNames.has(`${remote}/${flow.branch}`);
   const landing = tagged ? `${cfg.master} and ${cfg.develop}` : cfg.develop;
+
+  /* Only worth offering when the branch was actually published; a feature that
+     never left this machine has nothing on the server to tidy up.
+
+     Tracking refs answer this instantly but can be stale — pushed from another
+     machine, or pruned — so when they say no, the server is asked. When they
+     say yes there is nothing to gain: the finish tolerates a branch that has
+     since been deleted. Offline, the question has no answer at all, which the
+     dialog says rather than pretending the branch is not there. */
+  let published = state.remoteRefNames.has(`${remote}/${flow.branch}`);
+  let unreachable = false;
+  if (hasRemote && !published) {
+    setStatus(`Asking ${remote} about ${flow.branch}…`);
+    const res = await window.gitbraid.invoke('repo:remoteHasBranch', repoPath(), remote, flow.branch);
+    const answer = res.ok ? res.data : null;
+    published = answer === true;
+    unreachable = answer === null;
+    setStatus(unreachable ? `${remote} did not answer` : '');
+  }
 
   const fields = tagged
     ? [
@@ -2724,7 +2997,11 @@ async function finishFlow(flow) {
       ? `Merges into ${cfg.master}, tags it, merges into ${cfg.develop}, `
       : `Merges into ${cfg.develop}, `) +
       'then deletes the branch here.' +
-      (published ? ` It is also on ${remote}.` : ''),
+      (published ? ` It is also on ${remote}.` : '') +
+      (unreachable
+        ? ` ${remote} could not be reached, so whether the branch is also there `
+          + 'is unknown — remove it there yourself if it is.'
+        : ''),
     fields,
     confirmLabel: 'Finish',
     /* Deleting the published branch without pushing the merge would take those
@@ -3445,14 +3722,35 @@ function prefPages() {
               help: 'How the Commit Date and Author Time columns are written.',
               get: () => prefs.dateStyle,
               set: (v) => { prefs.dateStyle = v; savePrefs(); if (state.repo) renderHistory(); } },
-            { kind: 'toggle', label: 'Author photos from Gravatar',
-              help: 'Off, the graph draws a plain lane-coloured dot and nothing leaves ' +
-                'this machine. On, GitBraid asks gravatar.com for a picture of every ' +
-                'commit author, which tells that service your address and the hashed ' +
-                'email of everyone whose commits you read.',
-              get: () => prefs.gravatar,
+            { kind: 'select', label: 'Author picture',
+              options: [['graph', 'On the graph dot'], ['author', 'In the Author column'],
+                        ['both', 'Both places'], ['none', 'Nowhere']],
+              help: 'Where an author is shown as a face. In the Author column a commit '
+                + 'without a Gravatar still gets a coloured disc of initials, drawn here '
+                + 'with no network involved; the graph dot is too small for lettering, so '
+                + 'there it only ever carries a Gravatar picture.',
+              get: () => prefs.avatarPlace,
+              set: (v) => { prefs.avatarPlace = v; savePrefs(); if (state.repo) renderHistory(); } },
+            { kind: 'toggle', label: 'Check for a newer GitBraid on opening',
+              help: 'Once a day at most, GitBraid asks GitHub whether a newer release '
+                + 'exists and marks the version in the status bar if one does. What that '
+                + 'tells GitHub is your address and that GitBraid is running — no '
+                + 'repository name, no file, nothing of your work. Off, the check only '
+                + 'happens when you ask for it from the version button.',
+              get: () => prefs.updateCheck,
+              set: (v) => { prefs.updateCheck = v; savePrefs(); } },
+            { kind: 'toggle', label: 'Author photos from the internet',
+              help: 'Git itself stores no pictures — a commit holds a name and an email '
+                + 'address, nothing more. Off, nothing leaves this machine. On, an address '
+                + 'GitHub issued (73584729+name@users.noreply.github.com) is read for the '
+                + 'account number it carries and the photo fetched from GitHub; any other '
+                + 'address is asked after at gravatar.com, which tells that service the '
+                + 'hashed email of everyone whose commits you read, colleagues included. '
+                + 'An address with no photo anywhere keeps its disc of initials: GitBraid '
+                + 'never shows a pattern invented from an address as though it were a face.',
+              get: () => prefs.authorPhotos,
               set: async (v) => {
-                prefs.gravatar = v; savePrefs();
+                prefs.authorPhotos = v; savePrefs();
                 if (state.repo) { await ensureAvatars(state.commits); renderHistory(); }
               } },
             { kind: 'toggle', label: 'Ghost branch badge while hovering',
@@ -3985,10 +4283,108 @@ $('sb-brand').addEventListener('click', async (e) => {
       hint: home ? '' : 'Set "homepage" in package.json to link this',
       run: () => call('shell:openExternal', home) },
     '-',
+    { label: update ? `Update to ${update.latest}…` : 'Check for updates',
+      hint: update ? `You have ${update.current}` : '',
+      run: () => (update ? offerUpdate() : checkForUpdates()) },
+    '-',
     { label: 'Release notes', run: openNotes },
     { label: 'About GitBraid', run: openAbout },
   ]);
 });
+
+/* ═════ updates ═════════════════════════════════════════════════ */
+
+/* What the last check found, when it found something newer. Held so the status
+   bar can show it without asking GitHub again. */
+let update = null;
+const A_DAY = 24 * 60 * 60 * 1000;
+
+const lastChecked = () => Number(localStorage.getItem('gitbraid-update-checked') || 0);
+const markChecked = () => {
+  try { localStorage.setItem('gitbraid-update-checked', String(Date.now())); }
+  catch { /* private mode */ }
+};
+
+/* `quiet` is the automatic check on opening: being offline, or GitHub being
+   busy, is not something to interrupt anyone about. Pressed by hand, the same
+   failures are worth saying out loud. */
+async function checkForUpdates({ quiet = false } = {}) {
+  markChecked();
+  const res = await window.gitbraid.invoke('update:check');
+  if (!res.ok) {
+    if (!quiet) setStatus(firstLine(res.error), 'error');
+    return null;
+  }
+  update = res.data.newer ? res.data : null;
+  paintUpdateFlag();
+  if (!quiet && !update) setStatus(`GitBraid ${res.data.current} is the latest release`, 'ok');
+  return res.data;
+}
+
+function paintUpdateFlag() {
+  $('sb-brand').classList.toggle('has-update', Boolean(update));
+  $('sb-brand').title = update
+    ? `GitBraid ${update.latest} is available — you have ${update.current}`
+    : 'GitBraid — project page, release notes, about';
+}
+
+/* The whole of it in one dialog: which version, what changed, and one button.
+   Progress replaces the note line, because a download of a hundred megabytes
+   with no sign of movement reads as a hang. */
+async function offerUpdate() {
+  if (!update) return;
+  const kind = update.kind;
+  const size = (update.assets.find((a) => (kind === 'appimage'
+    ? /\.AppImage$/i.test(a.name) : /\.deb$/i.test(a.name))) || {}).size || 0;
+
+  const done = kind === 'appimage'
+    ? 'GitBraid will replace itself and restart.'
+    : kind === 'deb'
+      ? 'GitBraid will hand the package to your system installer, which asks for '
+        + 'your password — installing system packages needs rights this app does '
+        + 'not have and should not ask for.'
+      : 'This build cannot update itself; the release page has the files.';
+
+  const r = await modal({
+    title: `GitBraid ${update.latest} is available`,
+    description: `You have ${update.current}. ${done}`,
+    html: '<div class="modal-field up-notes">' +
+      `<div class="up-title">${esc(update.title || `Version ${update.latest}`)}</div>` +
+      `<pre class="up-body">${esc(clipNotes(update.notes))}</pre></div>`,
+    confirmLabel: kind === 'other' ? 'Open the release page' : 'Download and install',
+  });
+  if (!r) return;
+
+  if (kind === 'other') { call('shell:openExternal', update.page); return; }
+
+  const stop = window.gitbraid.on('update:progress', ({ read, total }) => {
+    const pct = total ? Math.round((read / total) * 100) : 0;
+    setStatus(`Downloading ${update.latest} — ${pct}% of ${mb(total || size)}`);
+  });
+  try {
+    const file = await call('update:download', update);
+    if (!file) return;
+    setStatus(`Installing ${update.latest}…`);
+    const out = await call('update:install', file);
+    if (!out) return;
+    setStatus(out.restarted
+      ? `Restarting into ${update.latest}…`
+      : `${file.name} handed to your system installer`, 'ok');
+  } finally {
+    stop();
+  }
+}
+
+const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;
+
+/* Release notes are markdown written for a web page; this is a dialog. Long
+   ones are cut rather than turning the dialog into a document. */
+function clipNotes(text) {
+  const body = String(text || '').replace(/\r/g, '').trim();
+  if (!body) return 'No notes were written for this release.';
+  const lines = body.split('\n').slice(0, 24);
+  return lines.join('\n') + (body.split('\n').length > 24 ? '\n…' : '');
+}
 
 /* ═════ about ═══════════════════════════════════════════════════ */
 
@@ -4213,6 +4609,9 @@ $('side-repo').addEventListener('click', async (e) => {
       disabled: !remote,
       hint: remote ? remote.url : 'This repository has no remote yet',
       run: () => copyText(remote.url, `${remote.name} URL copied`) },
+    { label: remote ? `Change ${remote.name} URL…` : 'Add a remote…',
+      hint: remote ? remote.url : 'Point this repository at a remote',
+      run: () => changeRemoteUrl(remote) },
     '-',
     { label: 'Show in file manager', accel: 'Alt+O',
       run: () => call('shell:openPath', path) },
@@ -4236,6 +4635,40 @@ const copyText = (text, said) => {
 };
 
 /** Hands the repository folder — not a file — to whichever editor is installed. */
+/* Moving a remote touches no commit: the URL is a note in .git/config saying
+   where to push and fetch, so changing it cannot lose or rewrite anything.
+   Worth saying in the dialog, because it looks like the kind of thing that
+   could. */
+async function changeRemoteUrl(remote) {
+  const name = remote?.name || 'origin';
+  const r = await modal({
+    title: remote ? `Change the ${name} URL` : `Add a remote called ${name}`,
+    description: remote
+      ? 'Only where this repository pushes and fetches. Commits, branches and '
+        + 'tags are untouched — nothing is rewritten.'
+      : 'This repository has no remote yet. Giving it one records where to push '
+        + 'and fetch; it changes nothing that is already committed.',
+    fields: [{ name: 'url', label: 'URL', required: true, value: remote?.url || '',
+      placeholder: 'git@github.com:you/project.git' }],
+    confirmLabel: remote ? 'Change URL' : 'Add remote',
+    onChange: (v, api) => {
+      const url = (v.url || '').trim();
+      // Said, not blocked: a path on this machine is a perfectly good remote,
+      // and so is a host GitBraid has never heard of.
+      api.note(!url || /^(https?:\/\/|git@|ssh:\/\/|git:\/\/|file:\/\/|\/|\.)/.test(url)
+        ? ''
+        : 'That does not look like a URL or a path. Git will accept it anyway, '
+          + 'and complain on the next fetch.');
+    },
+  });
+  if (!r) return;
+
+  const now = await call('repo:setRemoteUrl', repoPath(), name, r.url);
+  if (now === null) return;
+  await refresh();
+  setStatus(`${name} now points at ${now}`, 'ok');
+}
+
 async function openRepoInEditor() {
   const where = await call('shell:openInEditor', state.repo.path, state.repo.path);
   if (where !== null) setStatus(`Opened ${state.repo.name} in ${where}`, 'ok');
@@ -4760,13 +5193,6 @@ $('file-filter').addEventListener('input', (e) => {
   }
 });
 
-$('w-view-list').addEventListener('click', () => {
-  wipView.mode = 'list'; saveWipView(); renderWip();
-});
-$('w-view-tree').addEventListener('click', () => {
-  wipView.mode = 'tree'; saveWipView(); renderWip();
-});
-
 $('btn-filter-clear').addEventListener('click', () => {
   $('file-filter').value = '';
   $('file-filter').dispatchEvent(new Event('input'));
@@ -4975,6 +5401,12 @@ window.addEventListener('drop', async (e) => {
   renderZoomLevel();
   if (term.open) showTerm();
   call('app:about').then((i) => { if (i) $('sb-version').textContent = i.version; });
+
+  /* Once a day at most, and never in the way: a quiet check that marks the
+     version in the status bar and says nothing if there is nothing to say. */
+  if (prefs.updateCheck && Date.now() - lastChecked() > A_DAY) {
+    setTimeout(() => checkForUpdates({ quiet: true }), 4000);
+  }
   loadPanels();
   loadGroups();
   await applyZoom(storedZoom(), false);

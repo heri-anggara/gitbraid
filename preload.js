@@ -19,7 +19,8 @@ const CHANNELS = new Set([
   'repo:commit', 'repo:lastMessage',
   'repo:checkout', 'repo:checkoutWith', 'repo:createBranch', 'repo:deleteBranch',
   'repo:renameBranch', 'repo:setUpstream', 'repo:fastForward', 'repo:fetchInto',
-  'repo:pushBranch', 'repo:deleteRemoteBranch', 'repo:deleteTag', 'repo:compare',
+  'repo:pushBranch', 'repo:deleteRemoteBranch', 'repo:deleteTag', 'repo:compare', 'repo:setRemoteUrl', 'repo:remoteHasBranch',
+  'update:check', 'update:download', 'update:install',
   'repo:description', 'repo:setDescription',
   'repo:merge', 'repo:mergeInfo', 'repo:rebase', 'repo:reset', 'repo:revert',
   'repo:cherryPick', 'repo:tag',
@@ -33,7 +34,8 @@ const CHANNELS = new Set([
 
 /* Main-to-renderer pushes. Kept separate from CHANNELS: nothing here may be
    invoked, and nothing there may be subscribed to. */
-const EVENTS = new Set(['repo:progress', 'menu:action', 'term:out', 'term:exit']);
+const EVENTS = new Set(['repo:progress', 'menu:action', 'term:out', 'term:exit',
+  'update:progress']);
 
 contextBridge.exposeInMainWorld('gitbraid', {
   invoke(channel, ...args) {

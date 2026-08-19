@@ -88,6 +88,23 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.3.0" date="2026-08-19">
+      <description>
+        <p>
+          GitBraid can now fetch and install its own updates, checking each
+          download against the checksum published with the release and refusing
+          anything it cannot verify.
+        </p>
+        <p>
+          Author pictures come from GitHub when the commit address is one GitHub
+          issued, and an address with no picture anywhere keeps a disc of
+          initials rather than a pattern invented from it. Commit search has a
+          field of its own, the diff shows a map of where its changes are, and
+          finishing a git-flow branch asks the remote whether the branch is
+          really there instead of trusting a stale tracking ref.
+        </p>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-08-19">
       <description>
         <p>

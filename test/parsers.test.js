@@ -326,6 +326,104 @@ const pathHelpers = (() => {
   return ctx.__out;
 })();
 
+/* ── preferences that changed name ─────────────────────────────── */
+/* Renaming a stored setting is the kind of change nobody notices until someone
+   upgrades and quietly loses what they had switched on. */
+const loadPrefs = (stored) => {
+  const code = rendererSrc.match(
+    /const PREF_DEFAULTS = \{[\s\S]*?\n\};\n\nconst prefs = \{ \.\.\.PREF_DEFAULTS \};\ntry \{[\s\S]*?\n\} catch \{ \/\* private mode \*\/ \}/)[0];
+  const ctx = { JSON, Object, localStorage: { getItem: () => JSON.stringify(stored) } };
+  vm.createContext(ctx);
+  vm.runInContext(`${code}\nglobalThis.__out = prefs;`, ctx);
+  return ctx.__out;
+};
+
+check('a reader who had Gravatar on keeps author photos on',
+  loadPrefs({ gravatar: true }).authorPhotos === true);
+check('a reader who had it off keeps it off',
+  loadPrefs({ gravatar: false }).authorPhotos === false);
+check('a fresh install has author photos off',
+  loadPrefs({}).authorPhotos === false);
+check('the newer key wins when both are stored',
+  loadPrefs({ gravatar: false, authorPhotos: true }).authorPhotos === true);
+check('the old key is not carried forward',
+  loadPrefs({ gravatar: true }).gravatar === undefined);
+check('settings either side of it survive the rename', (() => {
+  const p = loadPrefs({ gravatar: true, commitLimit: 1200, dateStyle: 'relative' });
+  return p.commitLimit === 1200 && p.dateStyle === 'relative';
+})());
+
+/* ── updates ───────────────────────────────────────────────────── */
+
+const updateBits = lift(
+  mainSrc,
+  /\/\* "0\.10\.0" is newer[\s\S]*?^}/m,
+  ['isNewer'], 'linux');
+
+check('0.10.0 is newer than 0.9.0', updateBits.isNewer('0.10.0', '0.9.0'));
+check('0.2.1 is newer than 0.2.0', updateBits.isNewer('0.2.1', '0.2.0'));
+check('1.0.0 is newer than 0.99.99', updateBits.isNewer('1.0.0', '0.99.99'));
+check('a leading v is ignored', updateBits.isNewer('v0.3.0', '0.2.0'));
+check('the same version is not newer', !updateBits.isNewer('0.2.0', '0.2.0'));
+check('an older version is not newer', !updateBits.isNewer('0.1.2', '0.2.0'));
+check('0.2 counts as 0.2.0', !updateBits.isNewer('0.2', '0.2.0'));
+
+const checksumBits = lift(
+  mainSrc,
+  /\/\* The yml is small and regular[\s\S]*?^}/m,
+  ['matchChecksum'], 'linux');
+
+const SAMPLE_YML = [
+  'version: 0.2.0',
+  'files:',
+  '  - url: GitBraid-0.2.0.AppImage',
+  '    sha512: AAAAbbbbCCCC==',
+  '    size: 107420679',
+  '  - url: gitbraid_0.2.0_amd64.deb',
+  '    sha512: DDDDeeeeFFFF==',
+  '    size: 74393848',
+  'path: GitBraid-0.2.0.AppImage',
+].join('\n');
+
+check('the AppImage checksum is read from latest-linux.yml',
+  checksumBits.matchChecksum(SAMPLE_YML, 'GitBraid-0.2.0.AppImage') === 'AAAAbbbbCCCC==');
+check('the deb checksum is read from the same file',
+  checksumBits.matchChecksum(SAMPLE_YML, 'gitbraid_0.2.0_amd64.deb') === 'DDDDeeeeFFFF==');
+check('a file the yml does not mention has no checksum',
+  checksumBits.matchChecksum(SAMPLE_YML, 'GitBraid-9.9.9.AppImage') === '');
+
+/* The one that matters: the checksum this reads out of a real latest-linux.yml
+   has to be the checksum of the real artifact beside it, or an update would be
+   refused every time. */
+(() => {
+  const yml = path.join(__dirname, '..', 'dist', 'latest-linux.yml');
+  if (!fs.existsSync(yml)) return;                 // nothing built yet
+  const text = fs.readFileSync(yml, 'utf8');
+  const names = [...text.matchAll(/url: (\S+)/g)].map((m) => m[1]);
+  /* electron-builder writes this file last, so an artifact newer than it means
+     a build is in flight and dist holds one from each. Comparing then fails on
+     nothing the code did — and a suite that goes red for reasons outside itself
+     is worse than one check fewer. */
+  const stamp = fs.statSync(yml).mtimeMs;
+  const midBuild = names.some((n) => {
+    const f = path.join(__dirname, '..', 'dist', n);
+    return fs.existsSync(f) && fs.statSync(f).mtimeMs > stamp + 1000;
+  });
+  if (midBuild) {
+    console.log('  skip dist checksums — a build is part-way through');
+    return;
+  }
+  for (const name of names) {
+    const file = path.join(__dirname, '..', 'dist', name);
+    if (!fs.existsSync(file)) continue;
+    const want = checksumBits.matchChecksum(text, name);
+    const got = require('crypto').createHash('sha512')
+      .update(fs.readFileSync(file)).digest('base64');
+    check(`${name} matches the checksum published for it`, want === got,
+      `read ${want.slice(0, 16)}… computed ${got.slice(0, 16)}…`);
+  }
+})();
+
 check('repository name read from a POSIX path',
   pathHelpers.baseName('/home/me/code/app') === 'app');
 check('repository name read from a Windows path',
