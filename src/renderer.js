@@ -2114,11 +2114,25 @@ function indexBlocks() {
 /* The strip beside the scrollbar. It is drawn from the same blocks the counter
    counts, so the seventh mark down is difference seven, and clicking it goes
    there rather than somewhere approximately near it. */
+/* A block can never take more than this much of the strip. On a normal diff a
+   mark is one to three per cent, so it never applies; it exists for a diff that
+   scrolls by only a line or two, where a single block is a third of the file
+   and its mark would draw as a bar rather than a mark. */
+const MAX_MARK_PCT = 25;
+
 function renderChangeMap() {
   const map = $('fv-marks');
   const body = $('fv-body');
   const total = body.scrollHeight;
-  if (!nav.marks.length || total <= 0) { map.innerHTML = ''; paintViewport(); return; }
+  /* Nothing to point at when the whole diff is already on screen — the same
+     test the viewport box makes, which until now was the only half of this
+     strip that knew to keep quiet. Marks drawn then were not merely useless:
+     on a short diff they filled half the strip while nothing was hidden. */
+  if (!nav.marks.length || total <= 0 || total <= body.clientHeight + 1) {
+    map.innerHTML = '';
+    paintViewport();
+    return;
+  }
 
   /* Rows are measured against the body's own scroll origin rather than
      offsetTop, which answers relative to whichever ancestor happens to be
@@ -2131,7 +2145,7 @@ function renderChangeMap() {
     const lines = m.add + m.del;
     return `<button type="button" class="fv-mark m-${kind}" data-block="${i}" ` +
       `style="top:${(top / total * 100).toFixed(3)}%;` +
-      `height:${Math.max((bottom - top) / total * 100, 0.25).toFixed(3)}%" ` +
+      `height:${Math.min(Math.max((bottom - top) / total * 100, 0.25), MAX_MARK_PCT).toFixed(3)}%" ` +
       `title="Difference ${i + 1} of ${nav.marks.length} — ` +
       `${lines} line${lines === 1 ? '' : 's'}"></button>`;
   }).join('');
