@@ -370,8 +370,11 @@ function fieldHtml(f) {
       `</label></div>`
     );
   }
+  /* Branch names, URLs and paths are identifiers, not prose; underlining them
+     in red says they are wrong when they are not. The commit message keeps its
+     spell check, being the one box here whose words other people read. */
   const input =
-    `<input type="text" id="mf-${f.name}" data-field="${f.name}" ` +
+    `<input type="text" id="mf-${f.name}" data-field="${f.name}" spellcheck="false" ` +
     `value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}">`;
   // A folder is picked, not typed — but stays editable for anyone who'd rather paste.
   const body =
@@ -1880,8 +1883,15 @@ async function renderCommitPanel(hash) {
 
   $('c-author').textContent = c.author;
   $('c-date').textContent = `authored ${absoluteTime(c.commitDate)}`;
+  /* The one large avatar in the window, so it shows whatever is best: the
+     photograph when one was found, initials otherwise. It does not follow the
+     placement setting — that exists to thin out a list of thousands of rows,
+     and this is a single face that is already on screen. */
   const av = $('c-avatar');
-  av.textContent = initials(c.author);
+  const photo = photoFor(c);
+  if (photo) av.innerHTML = `<img src="${esc(photo)}" alt="">`;
+  else av.textContent = initials(c.author);
+  av.classList.toggle('has-photo', Boolean(photo));
   av.style.setProperty('--hue', avatarHue(c.email));
   av.classList.remove('unset');
 
