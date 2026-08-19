@@ -19,7 +19,7 @@ const CHANNELS = new Set([
   'repo:commit', 'repo:lastMessage',
   'repo:checkout', 'repo:checkoutWith', 'repo:createBranch', 'repo:deleteBranch',
   'repo:renameBranch', 'repo:setUpstream', 'repo:fastForward', 'repo:fetchInto',
-  'repo:pushBranch', 'repo:deleteRemoteBranch', 'repo:deleteTag', 'repo:compare',
+  'repo:pushBranch', 'repo:deleteRemoteBranch', 'repo:deleteTag', 'repo:compare', 'repo:setRemoteUrl',
   'repo:description', 'repo:setDescription',
   'repo:merge', 'repo:mergeInfo', 'repo:rebase', 'repo:reset', 'repo:revert',
   'repo:cherryPick', 'repo:tag',

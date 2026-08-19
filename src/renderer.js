@@ -4456,6 +4456,9 @@ $('side-repo').addEventListener('click', async (e) => {
       disabled: !remote,
       hint: remote ? remote.url : 'This repository has no remote yet',
       run: () => copyText(remote.url, `${remote.name} URL copied`) },
+    { label: remote ? `Change ${remote.name} URL…` : 'Add a remote…',
+      hint: remote ? remote.url : 'Point this repository at a remote',
+      run: () => changeRemoteUrl(remote) },
     '-',
     { label: 'Show in file manager', accel: 'Alt+O',
       run: () => call('shell:openPath', path) },
@@ -4479,6 +4482,40 @@ const copyText = (text, said) => {
 };
 
 /** Hands the repository folder — not a file — to whichever editor is installed. */
+/* Moving a remote touches no commit: the URL is a note in .git/config saying
+   where to push and fetch, so changing it cannot lose or rewrite anything.
+   Worth saying in the dialog, because it looks like the kind of thing that
+   could. */
+async function changeRemoteUrl(remote) {
+  const name = remote?.name || 'origin';
+  const r = await modal({
+    title: remote ? `Change the ${name} URL` : `Add a remote called ${name}`,
+    description: remote
+      ? 'Only where this repository pushes and fetches. Commits, branches and '
+        + 'tags are untouched — nothing is rewritten.'
+      : 'This repository has no remote yet. Giving it one records where to push '
+        + 'and fetch; it changes nothing that is already committed.',
+    fields: [{ name: 'url', label: 'URL', required: true, value: remote?.url || '',
+      placeholder: 'git@github.com:you/project.git' }],
+    confirmLabel: remote ? 'Change URL' : 'Add remote',
+    onChange: (v, api) => {
+      const url = (v.url || '').trim();
+      // Said, not blocked: a path on this machine is a perfectly good remote,
+      // and so is a host GitBraid has never heard of.
+      api.note(!url || /^(https?:\/\/|git@|ssh:\/\/|git:\/\/|file:\/\/|\/|\.)/.test(url)
+        ? ''
+        : 'That does not look like a URL or a path. Git will accept it anyway, '
+          + 'and complain on the next fetch.');
+    },
+  });
+  if (!r) return;
+
+  const now = await call('repo:setRemoteUrl', repoPath(), name, r.url);
+  if (now === null) return;
+  await refresh();
+  setStatus(`${name} now points at ${now}`, 'ok');
+}
+
 async function openRepoInEditor() {
   const where = await call('shell:openInEditor', state.repo.path, state.repo.path);
   if (where !== null) setStatus(`Opened ${state.repo.name} in ${where}`, 'ok');
