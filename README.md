@@ -454,6 +454,21 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Menyelesaikan **feature**: merge ke development lalu cabangnya dihapus.
   **Release / hotfix**: merge ke produksi, diberi tag, merge ke development,
   lalu dihapus. Semua merge memakai `--no-ff` seperti git-flow asli
+- Apakah cabangnya ada di remote **ditanyakan ke remote**, bukan dibaca dari ref
+  pelacak lokal. Ref pelacak hanya sesegar fetch terakhir: cabang yang di-push
+  dari komputer lain, atau yang ref-nya sudah dipangkas, membuatnya menjawab
+  "tidak ada" padahal ada. Ditanyakan hanya kalau jawaban lokalnya "tidak" —
+  kalau lokal bilang ada, tidak ada yang perlu dipastikan lagi
+- Ada **tiga** kemungkinan jawaban, dan yang ketiga penting: ada, tidak ada, dan
+  *tidak bisa ditanyakan*. Saat offline dialognya berkata apa adanya bahwa
+  jawabannya tidak diketahui, bukan berpura-pura cabangnya tidak ada. Pertanyaan
+  itu dibatasi 8 detik dan memakai `ssh -oBatchMode=yes`, karena ia berjalan
+  sementara dialog menunggu terbuka dan remote yang meminta kata sandi akan
+  menggantung di situ tanpa penjelasan apa pun di layar
+- Kalau orang lain sudah menghapus cabang itu lebih dulu, hasilnya berbunyi
+  *"was already gone"* dan finish tetap dianggap berhasil — itu memang hasil yang
+  diminta, dan menggagalkannya akan membuat finish yang sudah merge, tag, dan
+  push tampak seperti gagal
 - Kalau cabangnya sudah pernah di-push, dialog penyelesaiannya menawarkan dua
   centang: **push** hasil merge (dan tag-nya) ke remote, dan **hapus cabang di
   remote**. Keduanya tercentang secara bawaan — setelah merge, seluruh commit

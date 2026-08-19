@@ -399,7 +399,21 @@ check('a file the yml does not mention has no checksum',
   const yml = path.join(__dirname, '..', 'dist', 'latest-linux.yml');
   if (!fs.existsSync(yml)) return;                 // nothing built yet
   const text = fs.readFileSync(yml, 'utf8');
-  for (const name of ['GitBraid-0.2.0.AppImage', 'gitbraid_0.2.0_amd64.deb']) {
+  const names = [...text.matchAll(/url: (\S+)/g)].map((m) => m[1]);
+  /* electron-builder writes this file last, so an artifact newer than it means
+     a build is in flight and dist holds one from each. Comparing then fails on
+     nothing the code did — and a suite that goes red for reasons outside itself
+     is worse than one check fewer. */
+  const stamp = fs.statSync(yml).mtimeMs;
+  const midBuild = names.some((n) => {
+    const f = path.join(__dirname, '..', 'dist', n);
+    return fs.existsSync(f) && fs.statSync(f).mtimeMs > stamp + 1000;
+  });
+  if (midBuild) {
+    console.log('  skip dist checksums — a build is part-way through');
+    return;
+  }
+  for (const name of names) {
     const file = path.join(__dirname, '..', 'dist', name);
     if (!fs.existsSync(file)) continue;
     const want = checksumBits.matchChecksum(text, name);
