@@ -590,6 +590,175 @@ function ownVersion() {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* updates                                                             */
+/* ------------------------------------------------------------------ */
+
+const https = require('https');
+const crypto = require('crypto');
+
+/** owner/repo, read from the project URL already in package.json. */
+function githubSlug() {
+  const m = /^https?:\/\/github\.com\/([^/]+)\/([^/.]+)/.exec(ownHomepage());
+  return m ? `${m[1]}/${m[2]}` : '';
+}
+
+/* Node's own https, deliberately: an updater is exactly the kind of thing one
+   reaches for a library to do, and reaching would end this project's habit of
+   shipping no runtime dependencies at all. */
+function getUrl(url, { onProgress = null, hops = 5 } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, {
+      headers: {
+        // GitHub refuses anonymous API calls without one.
+        'User-Agent': `GitBraid/${ownVersion()}`,
+        Accept: 'application/vnd.github+json, application/octet-stream, */*',
+      },
+    }, (res) => {
+      const { statusCode, headers } = res;
+      if (statusCode >= 300 && statusCode < 400 && headers.location) {
+        res.resume();
+        if (!hops) return reject(new Error('Too many redirects.'));
+        return resolve(getUrl(new URL(headers.location, url).href, { onProgress, hops: hops - 1 }));
+      }
+      if (statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`${url.replace(/\?.*/, '')} answered ${statusCode}.`));
+      }
+      const total = Number(headers['content-length']) || 0;
+      const chunks = [];
+      let read = 0;
+      res.on('data', (c) => {
+        chunks.push(c);
+        read += c.length;
+        if (onProgress) onProgress(read, total);
+      });
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.setTimeout(30000, () => req.destroy(new Error('The update server did not answer.')));
+  });
+}
+
+/* "0.10.0" is newer than "0.9.0"; comparing the two as text says otherwise. */
+function isNewer(candidate, current) {
+  const parts = (v) => String(v).replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
+  const a = parts(candidate);
+  const b = parts(current);
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
+  }
+  return false;
+}
+
+/* What this copy of GitBraid is, which decides what an update can do to it: an
+   AppImage is one file and can be replaced in place, a .deb is a system package
+   and cannot be installed without rights this process does not have. */
+function installKind() {
+  if (process.env.APPIMAGE) return 'appimage';
+  if (process.platform === 'linux' && process.execPath.startsWith('/opt/')) return 'deb';
+  return 'other';
+}
+
+handle('update:check', async () => {
+  const slug = githubSlug();
+  if (!slug) throw new Error('No GitHub project is named in package.json.');
+  const raw = await getUrl(`https://api.github.com/repos/${slug}/releases/latest`);
+  const rel = JSON.parse(raw.toString('utf8'));
+  const latest = String(rel.tag_name || '').replace(/^v/, '');
+  return {
+    current: ownVersion(),
+    latest,
+    newer: Boolean(latest) && isNewer(latest, ownVersion()),
+    title: rel.name || '',
+    notes: rel.body || '',
+    page: rel.html_url || '',
+    kind: installKind(),
+    assets: (rel.assets || []).map((a) => ({
+      name: a.name, url: a.browser_download_url, size: a.size,
+    })),
+  };
+});
+
+/** The file this copy of GitBraid would install, out of what a release holds. */
+const assetFor = (assets, kind) => assets.find((a) => (kind === 'appimage'
+  ? /\.AppImage$/i.test(a.name)
+  : /\.deb$/i.test(a.name)));
+
+handle('update:download', async (info) => {
+  const kind = installKind();
+  if (kind === 'other') throw new Error('This build cannot update itself.');
+  const asset = assetFor(info.assets || [], kind);
+  if (!asset) throw new Error(`That release has no ${kind === 'appimage' ? 'AppImage' : '.deb'}.`);
+
+  /* electron-builder writes latest-linux.yml beside the artifacts, holding a
+     SHA-512 for each. Without it there is nothing to check a download against,
+     and this one replaces a program you run — so it is refused rather than
+     taken on trust. */
+  const meta = (info.assets || []).find((a) => a.name === 'latest-linux.yml');
+  if (!meta) {
+    throw new Error('That release has no latest-linux.yml, so the download cannot be '
+      + 'checked. Attach it to the release, or update by hand from the release page.');
+  }
+  const yml = (await getUrl(meta.url)).toString('utf8');
+  const want = matchChecksum(yml, asset.name);
+  if (!want) throw new Error(`latest-linux.yml carries no checksum for ${asset.name}.`);
+
+  const file = await getUrl(asset.url, {
+    onProgress: (read, total) => sendUpdateProgress(read, total),
+  });
+  const got = crypto.createHash('sha512').update(file).digest('base64');
+  if (got !== want) {
+    throw new Error('The download does not match its published checksum. Nothing was '
+      + 'installed.');
+  }
+
+  const target = path.join(os.tmpdir(), asset.name);
+  fs.writeFileSync(target, file, { mode: kind === 'appimage' ? 0o755 : 0o644 });
+  return { path: target, name: asset.name, kind };
+});
+
+/* The yml is small and regular; a parser for the two lines that matter beats a
+   dependency for reading the whole format. */
+function matchChecksum(yml, name) {
+  const lines = yml.split('\n');
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].includes(`url: ${name}`)) {
+      const m = /sha512:\s*(\S+)/.exec(lines[i + 1] || '');
+      if (m) return m[1];
+    }
+  }
+  return '';
+}
+
+function sendUpdateProgress(read, total) {
+  for (const w of BrowserWindow.getAllWindows()) {
+    w.webContents.send('update:progress', { read, total });
+  }
+}
+
+handle('update:install', async ({ path: file, kind }) => {
+  if (kind === 'appimage') {
+    const here = process.env.APPIMAGE;
+    if (!here) throw new Error('This is not an AppImage.');
+    // Replaced by rename so the swap is atomic: a half-written program is worse
+    // than an old one.
+    fs.copyFileSync(file, `${here}.new`);
+    fs.chmodSync(`${here}.new`, 0o755);
+    fs.renameSync(`${here}.new`, here);
+    app.relaunch();
+    app.quit();
+    return { restarted: true };
+  }
+  /* A .deb needs rights this process does not have and should not ask for, so
+     it goes to whatever the desktop uses to install packages, which asks for
+     the password itself. */
+  const err = await shell.openPath(file);
+  if (err) throw new Error(err);
+  return { restarted: false, handedOff: true };
+});
+
 handle('app:about', async () => {
   let gitVersion = '';
   try { gitVersion = (await git(app.getPath('home'), ['--version'])).trim().replace(/^git version /, ''); }

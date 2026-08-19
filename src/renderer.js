@@ -24,6 +24,7 @@ const PREF_DEFAULTS = {
   tabSize: 4,
   lineNumbers: true,
   authorPhotos: false,      // off: nothing leaves the machine
+  updateCheck: true,        // ask GitHub, once a day, whether a newer release exists
   avatarPlace: 'graph',     // graph | author | both | none
 };
 
@@ -3710,6 +3711,14 @@ function prefPages() {
                 + 'there it only ever carries a Gravatar picture.',
               get: () => prefs.avatarPlace,
               set: (v) => { prefs.avatarPlace = v; savePrefs(); if (state.repo) renderHistory(); } },
+            { kind: 'toggle', label: 'Check for a newer GitBraid on opening',
+              help: 'Once a day at most, GitBraid asks GitHub whether a newer release '
+                + 'exists and marks the version in the status bar if one does. What that '
+                + 'tells GitHub is your address and that GitBraid is running — no '
+                + 'repository name, no file, nothing of your work. Off, the check only '
+                + 'happens when you ask for it from the version button.',
+              get: () => prefs.updateCheck,
+              set: (v) => { prefs.updateCheck = v; savePrefs(); } },
             { kind: 'toggle', label: 'Author photos from the internet',
               help: 'Git itself stores no pictures — a commit holds a name and an email '
                 + 'address, nothing more. Off, nothing leaves this machine. On, an address '
@@ -4254,10 +4263,108 @@ $('sb-brand').addEventListener('click', async (e) => {
       hint: home ? '' : 'Set "homepage" in package.json to link this',
       run: () => call('shell:openExternal', home) },
     '-',
+    { label: update ? `Update to ${update.latest}…` : 'Check for updates',
+      hint: update ? `You have ${update.current}` : '',
+      run: () => (update ? offerUpdate() : checkForUpdates()) },
+    '-',
     { label: 'Release notes', run: openNotes },
     { label: 'About GitBraid', run: openAbout },
   ]);
 });
+
+/* ═════ updates ═════════════════════════════════════════════════ */
+
+/* What the last check found, when it found something newer. Held so the status
+   bar can show it without asking GitHub again. */
+let update = null;
+const A_DAY = 24 * 60 * 60 * 1000;
+
+const lastChecked = () => Number(localStorage.getItem('gitbraid-update-checked') || 0);
+const markChecked = () => {
+  try { localStorage.setItem('gitbraid-update-checked', String(Date.now())); }
+  catch { /* private mode */ }
+};
+
+/* `quiet` is the automatic check on opening: being offline, or GitHub being
+   busy, is not something to interrupt anyone about. Pressed by hand, the same
+   failures are worth saying out loud. */
+async function checkForUpdates({ quiet = false } = {}) {
+  markChecked();
+  const res = await window.gitbraid.invoke('update:check');
+  if (!res.ok) {
+    if (!quiet) setStatus(firstLine(res.error), 'error');
+    return null;
+  }
+  update = res.data.newer ? res.data : null;
+  paintUpdateFlag();
+  if (!quiet && !update) setStatus(`GitBraid ${res.data.current} is the latest release`, 'ok');
+  return res.data;
+}
+
+function paintUpdateFlag() {
+  $('sb-brand').classList.toggle('has-update', Boolean(update));
+  $('sb-brand').title = update
+    ? `GitBraid ${update.latest} is available — you have ${update.current}`
+    : 'GitBraid — project page, release notes, about';
+}
+
+/* The whole of it in one dialog: which version, what changed, and one button.
+   Progress replaces the note line, because a download of a hundred megabytes
+   with no sign of movement reads as a hang. */
+async function offerUpdate() {
+  if (!update) return;
+  const kind = update.kind;
+  const size = (update.assets.find((a) => (kind === 'appimage'
+    ? /\.AppImage$/i.test(a.name) : /\.deb$/i.test(a.name))) || {}).size || 0;
+
+  const done = kind === 'appimage'
+    ? 'GitBraid will replace itself and restart.'
+    : kind === 'deb'
+      ? 'GitBraid will hand the package to your system installer, which asks for '
+        + 'your password — installing system packages needs rights this app does '
+        + 'not have and should not ask for.'
+      : 'This build cannot update itself; the release page has the files.';
+
+  const r = await modal({
+    title: `GitBraid ${update.latest} is available`,
+    description: `You have ${update.current}. ${done}`,
+    html: '<div class="modal-field up-notes">' +
+      `<div class="up-title">${esc(update.title || `Version ${update.latest}`)}</div>` +
+      `<pre class="up-body">${esc(clipNotes(update.notes))}</pre></div>`,
+    confirmLabel: kind === 'other' ? 'Open the release page' : 'Download and install',
+  });
+  if (!r) return;
+
+  if (kind === 'other') { call('shell:openExternal', update.page); return; }
+
+  const stop = window.gitbraid.on('update:progress', ({ read, total }) => {
+    const pct = total ? Math.round((read / total) * 100) : 0;
+    setStatus(`Downloading ${update.latest} — ${pct}% of ${mb(total || size)}`);
+  });
+  try {
+    const file = await call('update:download', update);
+    if (!file) return;
+    setStatus(`Installing ${update.latest}…`);
+    const out = await call('update:install', file);
+    if (!out) return;
+    setStatus(out.restarted
+      ? `Restarting into ${update.latest}…`
+      : `${file.name} handed to your system installer`, 'ok');
+  } finally {
+    stop();
+  }
+}
+
+const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;
+
+/* Release notes are markdown written for a web page; this is a dialog. Long
+   ones are cut rather than turning the dialog into a document. */
+function clipNotes(text) {
+  const body = String(text || '').replace(/\r/g, '').trim();
+  if (!body) return 'No notes were written for this release.';
+  const lines = body.split('\n').slice(0, 24);
+  return lines.join('\n') + (body.split('\n').length > 24 ? '\n…' : '');
+}
 
 /* ═════ about ═══════════════════════════════════════════════════ */
 
@@ -5274,6 +5381,12 @@ window.addEventListener('drop', async (e) => {
   renderZoomLevel();
   if (term.open) showTerm();
   call('app:about').then((i) => { if (i) $('sb-version').textContent = i.version; });
+
+  /* Once a day at most, and never in the way: a quiet check that marks the
+     version in the status bar and says nothing if there is nothing to say. */
+  if (prefs.updateCheck && Date.now() - lastChecked() > A_DAY) {
+    setTimeout(() => checkForUpdates({ quiet: true }), 4000);
+  }
   loadPanels();
   loadGroups();
   await applyZoom(storedZoom(), false);

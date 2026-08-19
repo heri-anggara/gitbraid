@@ -869,8 +869,33 @@ Content Security Policy yang ketat. Semua yang masuk ke DOM lewat innerHTML
 sudah di-escape, termasuk tanda kutip — nama branch dan path file boleh
 mengandungnya, dan keduanya dipakai di dalam atribut.
 
-**Satu-satunya koneksi keluar adalah foto penulis**, dan itu pun mati secara
-bawaan. CSP mengizinkan `img-src` ke `www.gravatar.com` dan
+**Pembaruan dalam aplikasi.** Tombol versi di status bar mendapat titik kalau ada
+rilis lebih baru; mengkliknya menampilkan catatan rilisnya dan satu tombol.
+Pemeriksaannya sekali sehari saat aplikasi dibuka, ada saklarnya di Preferences,
+dan yang diketahui GitHub hanya alamat IP Anda serta fakta bahwa GitBraid
+berjalan — tidak ada nama repo, berkas, atau apa pun dari kerja Anda.
+
+Apa yang bisa dilakukan bergantung pada bentuk pasangannya:
+
+| bentuk | yang terjadi |
+|---|---|
+| **AppImage** | diunduh, checksum dicocokkan, berkasnya diganti, aplikasi jalan ulang — otomatis penuh |
+| **.deb** | diunduh, checksum dicocokkan, lalu diserahkan ke pemasang sistem yang meminta kata sandi Anda. Memasang paket sistem butuh hak yang aplikasi ini tidak punya dan tidak sepatutnya minta |
+
+Unduhan **selalu** dicocokkan dengan SHA-512 dari `latest-linux.yml` yang dibuat
+electron-builder. Kalau berkas itu tidak dilampirkan ke rilis, pembaruan
+**ditolak** — bukan dipasang atas dasar percaya. Ini mengganti program yang Anda
+jalankan; itu terlalu penting untuk ditebak. Jadi setiap rilis wajib melampirkan
+`dist/latest-linux.yml` bersama artefaknya.
+
+Seluruhnya ditulis dengan `https` bawaan Node dan `crypto` bawaan Node.
+`electron-updater` akan lebih singkat, tapi ia membawa belasan paket sebagai
+dependensi runtime — dan pada Linux ia tetap tidak bisa memasang `.deb`, hanya
+memberi tahu. Ongkos besar untuk hasil yang tidak lebih baik di jalur yang
+dipakai.
+
+**Selain pembaruan, satu-satunya koneksi keluar adalah foto penulis**, dan itu
+pun mati secara bawaan. CSP mengizinkan `img-src` ke `www.gravatar.com` dan
 `avatars.githubusercontent.com`, tidak ke tempat lain. Yang dikirim adalah
 SHA-256 alamat email, atau nomor akun GitHub — sekali per alamat lalu di-cache.
 Kalau Anda tidak mau itu, hapus ketiga host tersebut dari tag CSP di
