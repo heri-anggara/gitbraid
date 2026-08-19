@@ -460,8 +460,9 @@
 
     <!-- history -->
     <section class="history">
-      <!-- find bar, floating over the commit list -->
-      <div class="find" id="find" hidden>
+      <!-- Selalu terlihat, sejajar dengan kotak Filter files di panel kanan.
+           Ctrl+F memindahkan kursor ke sini, bukan memunculkannya. -->
+      <div class="find" id="find">
         <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" class="find-i">
           <circle cx="7" cy="7" r="4.4" fill="none" stroke="currentColor" stroke-width="1.6"/>
           <path d="m10.4 10.4 3.1 3.1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
@@ -471,7 +472,7 @@
         <span id="find-count" class="find-count"></span>
         <button id="find-prev" class="find-btn" title="Previous match (Shift+Enter)">↑</button>
         <button id="find-next" class="find-btn" title="Next match (Enter)">↓</button>
-        <button id="find-close" class="find-btn" title="Close (Esc)">×</button>
+        <button id="find-close" class="find-btn" title="Clear the search (Esc)" hidden>×</button>
       </div>
 
       <div class="history-scroll" id="history-scroll">

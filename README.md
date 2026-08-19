@@ -270,7 +270,11 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   program pertama yang kebetulan terpasang.
 
 **Cari commit**
-- `Ctrl+F` membuka baris pencarian di atas riwayat; mencari di judul, isi
+- Kolom pencarian **selalu terlihat** di atas riwayat, sebentuk dengan kotak
+  *Filter files* di panel kanan supaya kedua pencarian di jendela ini berperilaku
+  sama. `Ctrl+F` memindahkan kursor ke sana dan menyorot isinya, bukan
+  memunculkannya; `Esc` mengosongkan pencarian, bukan menyembunyikan kolomnya —
+  tidak ada lagi yang perlu disembunyikan. Mencari di judul, isi
   pesan, nama penulis, email, dan SHA
 - Yang cocok disorot dan yang tidak cocok diredupkan (bukan disembunyikan,
   supaya garis graph di sebelahnya tidak putus)
