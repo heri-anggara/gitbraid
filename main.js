@@ -1369,6 +1369,26 @@ handle('repo:setDescription', async (repo, branch, text) => {
   return true;
 });
 
+/* Where a remote points is a note in .git/config, not part of any commit, so
+   changing it rewrites nothing and cannot lose work: moving host, or swapping
+   HTTPS for SSH, leaves every commit, branch and tag exactly as it was.
+   A repository that has no such remote yet gets one, since `set-url` on a name
+   that does not exist is an error rather than the obvious thing. */
+handle('repo:setRemoteUrl', async (repo, name, url) => {
+  const remote = String(name || '').trim();
+  const target = String(url || '').trim();
+  if (!remote) throw new Error('No remote was named.');
+  if (!target) throw new Error('A remote needs a URL.');
+
+  const existing = (await git(repo, ['remote'])).split('\n').map((l) => l.trim());
+  await git(repo, existing.includes(remote)
+    ? ['remote', 'set-url', remote, target]
+    : ['remote', 'add', remote, target]);
+  // Read it back rather than reporting the argument: this is the answer git
+  // actually holds now, which is the thing worth showing.
+  return (await git(repo, ['remote', 'get-url', remote])).trim();
+});
+
 handle('repo:remotes', async (repo) => {
   const raw = await git(repo, ['remote', '-v']);
   const map = new Map();

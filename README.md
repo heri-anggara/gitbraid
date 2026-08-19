@@ -282,6 +282,20 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   antar hasil. Tombol bersihkan hanya muncul kalau ada yang diketik, dan tombol
   ↑ ↓ mati kalau hasilnya kurang dari dua
 
+**Alamat remote**
+- Menu repo (panah di kepala panel kiri) punya **Change origin URL…**; pada repo
+  yang belum punya remote, item itu berbunyi **Add a remote…** dan langsung
+  membuatkannya — `set-url` pada nama yang belum ada justru error, bukan
+  melakukan hal yang jelas dimaksud
+- Ini **tidak menyentuh riwayat sama sekali**. URL remote hanyalah catatan di
+  `.git/config` tentang ke mana harus push dan fetch; ia bukan bagian dari commit
+  mana pun. Diuji pada repo berisi 3 commit, 2 cabang, dan 1 tag: sesudah remote
+  dipindah, **seluruh SHA identik**, tag dan cabang utuh, dan push ke lokasi baru
+  mendaratkan ketiga commit
+- URL yang bentuknya aneh **diberi tahu, bukan ditolak** — sebuah path di komputer
+  Anda sendiri adalah remote yang sah, begitu juga host yang belum pernah didengar
+  GitBraid. Yang ditolak hanya URL kosong
+
 **Repository management**
 - Tombol folder di ujung kiri strip tab, atau `Ctrl+Shift+O`, membuka halaman
   penuh berisi empat kelompok: **Open repositories**, **Favorites**,
