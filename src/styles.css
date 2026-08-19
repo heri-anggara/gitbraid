@@ -142,7 +142,16 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-button, input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
+/* line-height: normal leaves the box height to the font, and fonts disagree by
+   about two pixels at this size: Cantarell wants 16 of a 16-pixel box, Noto Sans
+   wants 18. With no headroom at all, whether a "g" keeps its tail came down to
+   which font happened to be installed. An explicit line-height ends that. */
+button, input, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1.5;
+  color: inherit;
+}
 
 /* ── what can be selected ───────────────────────────────────── */
 /* This is a desktop application, not a web page: the chrome is furniture you
@@ -392,6 +401,11 @@ textarea {
   font-weight: 700;
   letter-spacing: .02em;
 }
+/* Big enough to be a face rather than a swatch, so it shows one when there is
+   one. The initials stay underneath for an address nobody has a picture for. */
+.avatar.has-photo { background: none; }
+.avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
+
 .avatar.unset {
   background: none;
   border: 1px dashed var(--line-strong);
