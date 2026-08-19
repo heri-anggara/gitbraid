@@ -266,12 +266,29 @@ async function ensureAvatars(commits) {
       const hex = [...new Uint8Array(digest)]
         .map((b) => b.toString(16).padStart(2, '0'))
         .join('');
-      avatarCache.set(email, `https://www.gravatar.com/avatar/${hex}?s=32&d=identicon`);
+      /* d=404 asks Gravatar to answer "no picture" rather than invent a pattern
+         from the hash. The invented ones arrive as images like any other, so a
+         reader had no way to tell a colleague's face from a shape derived from
+         their address — every author looked photographed. Settled once per
+         address here so drawing stays synchronous and the graph and the Author
+         column can never disagree. */
+      const url = `https://www.gravatar.com/avatar/${hex}?s=32&d=404`;
+      avatarCache.set(email, (await hasImage(url)) ? url : null);
     } catch {
       avatarCache.set(email, null); // no SubtleCrypto: fall back to a plain dot
     }
   }));
 }
+
+/* Asked as an image, not as a request: the page's policy is default-src 'none'
+   and allows gravatar only under img-src, so fetch() would be blocked. The
+   browser caches the answer, so the picture that follows costs nothing more. */
+const hasImage = (url) => new Promise((resolve) => {
+  const probe = new Image();
+  probe.onload = () => resolve(probe.naturalWidth > 0);
+  probe.onerror = () => resolve(false);
+  probe.src = url;
+});
 
 /** Offline or unknown addresses simply leave the lane-coloured disc bare. */
 /* A fetched Gravatar picture, or nothing. Separate from where it is allowed to
@@ -3669,10 +3686,13 @@ function prefPages() {
               get: () => prefs.avatarPlace,
               set: (v) => { prefs.avatarPlace = v; savePrefs(); if (state.repo) renderHistory(); } },
             { kind: 'toggle', label: 'Author photos from Gravatar',
-              help: 'Off, the graph draws a plain lane-coloured dot and nothing leaves ' +
-                'this machine. On, GitBraid asks gravatar.com for a picture of every ' +
-                'commit author, which tells that service your address and the hashed ' +
-                'email of everyone whose commits you read.',
+              help: 'Git itself stores no pictures — a commit holds a name and an email '
+                + 'address, nothing more. Off, nothing leaves this machine. On, GitBraid '
+                + 'asks gravatar.com whether that address has a picture, which tells that '
+                + 'service the hashed email of everyone whose commits you read. An address '
+                + 'with no Gravatar keeps its disc of initials; GitBraid never shows a '
+                + 'pattern invented from the address as though it were a face. GitHub is '
+                + 'never asked anything.',
               get: () => prefs.gravatar,
               set: async (v) => {
                 prefs.gravatar = v; savePrefs();

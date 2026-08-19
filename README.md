@@ -852,12 +852,32 @@ Content Security Policy yang ketat. Semua yang masuk ke DOM lewat innerHTML
 sudah di-escape, termasuk tanda kutip — nama branch dan path file boleh
 mengandungnya, dan keduanya dipakai di dalam atribut.
 
-**Satu-satunya koneksi keluar adalah Gravatar.** CSP mengizinkan `img-src` ke
-`www.gravatar.com` supaya dot di graph bisa memuat avatar penulis. Yang dikirim
-adalah SHA-256 dari alamat email tiap penulis commit, sekali per alamat lalu
-di-cache. Kalau Anda tidak mau itu, hapus kedua host gravatar dari tag CSP di
-`src/index.html`: avatar gagal dimuat tanpa error dan dot kembali jadi lingkaran
-polos berwarna lane.
+**Satu-satunya koneksi keluar adalah Gravatar**, dan itu pun mati secara bawaan.
+CSP mengizinkan `img-src` ke `www.gravatar.com` saja. Yang dikirim adalah SHA-256
+dari alamat email tiap penulis commit, sekali per alamat lalu di-cache. Kalau
+Anda tidak mau itu, hapus kedua host gravatar dari tag CSP di `src/index.html`:
+avatar gagal dimuat tanpa error dan yang tersisa adalah cakram inisial.
+
+**Yang perlu dipahami tentang avatar itu:** git tidak menyimpan gambar apa pun.
+Sebuah commit hanya berisi nama dan alamat email. GitBraid tidak pernah bertanya
+ke GitHub maupun GitLab — foto yang Anda unggah ke GitHub ada di server GitHub
+dan tidak pernah diminta dari sini. Satu-satunya yang ditanya adalah Gravatar,
+dan jawabannya hanya berarti "alamat ini terdaftar di gravatar.com".
+
+Permintaannya memakai `d=404`, bukan `d=identicon`. Bedanya nyata: dengan
+`d=identicon`, alamat yang **tidak** terdaftar tetap dijawab dengan gambar —
+sebuah pola geometris yang dikarang dari hash alamat tadi, yang tiba sebagai
+gambar biasa sehingga tidak bisa dibedakan dari wajah sungguhan. Diuji langsung
+ke gravatar.com memakai alamat di TLD `.invalid`, yang menurut RFC 2606 tidak
+akan pernah bisa didaftarkan siapa pun:
+
+| permintaan | jawaban |
+|---|---|
+| `?d=404` | tidak ada gambar |
+| `?d=identicon` | ada gambar — padahal alamatnya tidak dimiliki siapa pun |
+
+Jadi wajah yang muncul di GitBraid selalu wajah sungguhan milik seseorang, dan
+alamat tanpa Gravatar mempertahankan cakram inisialnya.
 
 Perintah git dijalankan pakai `execFile` dengan array argumen — bukan string
 shell — jadi nama file dengan spasi, tanda kutip, atau karakter aneh lainnya
