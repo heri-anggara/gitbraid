@@ -130,49 +130,90 @@
     return d;
   }
 
+  /* Edges that reach past their immediate neighbour — merges, and lanes that
+     run for a long stretch. They are the only ones that can cross the visible
+     band with neither end inside it, and there are few enough of them to scan
+     on every frame instead of walking all the rows. Cached on the layout,
+     which is rebuilt whenever the commits change. */
+  function longEdges(layoutResult, indexByHash) {
+    if (layoutResult.longEdgeCache) return layoutResult.longEdgeCache;
+    const out = [];
+    layoutResult.rows.forEach((row, i) => {
+      for (const edge of row.edges) {
+        const pi = indexByHash.get(edge.parent);
+        if (pi !== undefined && Math.abs(pi - i) > 1) out.push({ i, pi, edge });
+      }
+    });
+    layoutResult.longEdgeCache = out;
+    return out;
+  }
+
   /**
    * Build the SVG that sits behind the commit rows.
    * `options.avatarFor(commit)` may return an image URL for the dot; when it
    * returns nothing the dot stays a plain lane-coloured disc.
+   * `options.first`/`options.last` limit the drawing to the rows on screen; the
+   * SVG keeps its full height either way, so every coordinate stays absolute
+   * and scrolling needs no translation.
    */
   function render(layoutResult, indexByHash, options = {}) {
     const { rows, width } = layoutResult;
     const offset = options.offsetRows || 0;
     const avatarFor = options.avatarFor || (() => null);
     const height = (rows.length + offset) * ROW_H;
+    const first = Math.max(0, options.first ?? 0);
+    const last = Math.min(rows.length, options.last ?? rows.length);
 
     const paths = [];
     const dots = [];
 
-    rows.forEach((row, i) => {
-      const r = i + offset;
+    /* An edge occupies the rows between its own and its parent's; a stub with no
+       loaded parent occupies only its own. Drawn when that reaches the band. */
+    const reaches = (i, pi) => (pi === undefined
+      ? i >= first && i < last
+      : Math.max(i, pi) >= first && Math.min(i, pi) < last);
+
+    const drawEdge = (i, row, edge, pi) => {
       const cx = x(row.lane);
-      const cy = y(r);
-
+      const cy = y(i + offset);
+      const mx = x(edge.lane);
       const pending = row.commit.pending === true;
+      const stroke = pending ? 'var(--pending)' : laneColor(edge.lane);
+      if (pi === undefined) {
+        // Parent not loaded: stub the line off the bottom of the row.
+        paths.push(
+          `<path d="M${cx} ${cy} L${mx} ${cy + ROW_H * 0.9}" stroke="${stroke}" ` +
+          `stroke-width="${STROKE}" fill="none" stroke-dasharray="2 3" opacity=".55"/>`
+        );
+        return;
+      }
+      const dash = pending ? ' stroke-dasharray="3 3"' : '';
+      paths.push(
+        `<path d="${edgePath(cx, cy, mx, x(rows[pi].lane), y(pi + offset))}" ` +
+        `stroke="${stroke}"${dash} stroke-width="${STROKE}" fill="none" ` +
+        `stroke-linecap="round" stroke-linejoin="round"/>`
+      );
+    };
 
+    /* Edges are drawn one row wider than the band at each end: a line from the
+       row just above reaches into the band, and with skewed commit dates one
+       from just below can too. Beyond that neighbourhood a short edge cannot
+       touch the band at all, which is what lets the long-edge list stay small. */
+    const edgeFirst = Math.max(0, first - 1);
+    const edgeLast = Math.min(rows.length, last + 1);
+    for (let i = edgeFirst; i < edgeLast; i += 1) {
+      const row = rows[i];
       for (const edge of row.edges) {
         const pi = indexByHash.get(edge.parent);
-        const mx = x(edge.lane);
-        const stroke = pending ? 'var(--pending)' : laneColor(edge.lane);
-        const dash = pending ? ' stroke-dasharray="3 3"' : '';
-        if (pi === undefined) {
-          // Parent not loaded: stub the line off the bottom of the row.
-          paths.push(
-            `<path d="M${cx} ${cy} L${mx} ${cy + ROW_H * 0.9}" stroke="${stroke}" ` +
-            `stroke-width="${STROKE}" fill="none" stroke-dasharray="2 3" opacity=".55"/>`
-          );
-          continue;
-        }
-        const px = x(rows[pi].lane);
-        const py = y(pi + offset);
-        paths.push(
-          `<path d="${edgePath(cx, cy, mx, px, py)}" stroke="${stroke}"${dash} ` +
-          `stroke-width="${STROKE}" fill="none" stroke-linecap="round" ` +
-          `stroke-linejoin="round"/>`
-        );
+        if (reaches(i, pi)) drawEdge(i, row, edge, pi);
       }
+    }
 
+    for (let i = first; i < last; i += 1) {
+      const row = rows[i];
+      const cx = x(row.lane);
+      const cy = y(i + offset);
+      const pending = row.commit.pending === true;
       const color = pending ? 'var(--pending)' : laneColor(row.lane);
       const avatar = pending ? null : avatarFor(row.commit);
       // A knocked-out ring keeps lines from running visibly under the dot.
@@ -189,7 +230,16 @@
             `clip-path="circle(50%)" preserveAspectRatio="xMidYMid slice"/>`
           : '')
       );
-    });
+    }
+
+    // Whatever crosses the band from outside it. Skewed commit dates can put a
+    // parent above its child, so the span is bounded from both ends.
+    if (first > 0 || last < rows.length) {
+      for (const { i, pi, edge } of longEdges(layoutResult, indexByHash)) {
+        if (i >= edgeFirst && i < edgeLast) continue;       // already drawn above
+        if (reaches(i, pi)) drawEdge(i, rows[i], edge, pi);
+      }
+    }
 
     return (
       `<svg class="graph-svg" width="${width}" height="${height}" ` +

@@ -1193,11 +1193,15 @@ async function step(repo, what, args) {
   try {
     return await git(repo, args);
   } catch (err) {
-    throw new Error(`${what} failed: ${(err.message || String(err)).split('\n')[0]}`);
+    /* The first line is rarely the reason — a refused push opens with "To
+       <url>", which explains nothing. reasonLine picks the line that does. */
+    const why = reasonLine(err.message || String(err));
+    throw new Error(`${what} failed: ${why}`);
   }
 }
 
-handle('flow:finish', async (repo, { kind, branch, cfg, tag, message }) => {
+handle('flow:finish', async (repo, { kind, branch, cfg, tag, message,
+                                     remote, push, deleteRemote }) => {
   const done = [];
   if (kind === 'feature') {
     await step(repo, `Checking out ${cfg.develop}`, ['checkout', cfg.develop]);
@@ -1219,6 +1223,27 @@ handle('flow:finish', async (repo, { kind, branch, cfg, tag, message }) => {
   }
   await step(repo, `Deleting ${branch}`, ['branch', '-d', branch]);
   done.push('branch deleted');
+
+  /* Publishing comes before removing anything from the server. If the push is
+     refused — someone else moved the branch on — this throws, and the delete
+     below never runs: the feature stays on the remote as the only copy of that
+     work there, which is exactly what you want when the merge has not landed. */
+  if (push && remote) {
+    const branches = kind === 'feature' ? [cfg.develop] : [cfg.master, cfg.develop];
+    await step(repo, `Pushing ${branches.join(' and ')}`, ['push', remote, ...branches]);
+    done.push(`pushed ${branches.join(' and ')}`);
+    if (tag) {
+      // A release tag that exists only on one machine is not a release.
+      await step(repo, `Pushing ${tag}`, ['push', remote, tag]);
+      done.push(`pushed ${tag}`);
+    }
+  }
+
+  if (deleteRemote && remote) {
+    await step(repo, `Deleting ${remote}/${branch}`, ['push', remote, '--delete', branch]);
+    done.push(`${remote}/${branch} deleted`);
+  }
+
   return done.join(', ');
 });
 
@@ -1244,17 +1269,28 @@ handle('repo:log', async (repo, { limit = 400, all = true, skip = 0 } = {}) => {
 });
 
 handle('repo:refs', async (repo) => {
+  /* An annotated tag is an object in its own right, so %(objectname) is the tag
+     rather than the commit it marks, and %(committerdate) is empty because a tag
+     is tagged, not committed. The starred fields are those same fields after the
+     tag has been peeled; they are empty for every other kind of ref, which is
+     exactly when the plain ones are already right. */
   const fmt = ['%(refname)', '%(objectname)', '%(upstream:short)',
-    '%(upstream:track)', '%(HEAD)', '%(committerdate:unix)'].join('%1f');
+    '%(upstream:track)', '%(HEAD)', '%(committerdate:unix)',
+    '%(*objectname)', '%(*committerdate:unix)'].join('%1f');
   const raw = await git(repo, ['for-each-ref', `--format=${fmt}`]);
   const branches = [], remotes = [], tags = [];
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
-    const [refname, oid, upstream, track, head, date] = line.split(UNIT);
+    const [refname, oid, upstream, track, head, date, peeledOid, peeledDate] =
+      line.split(UNIT);
     const item = {
-      refname, oid, upstream, track,
+      refname,
+      // What the ref means to the history: the commit a reader can point at.
+      oid: peeledOid || oid,
+      upstream,
+      track,
       current: head === '*',
-      date: Number(date) * 1000,
+      date: Number(peeledDate || date) * 1000,
     };
     if (refname.startsWith('refs/heads/')) {
       branches.push({ ...item, name: refname.slice(11) });
@@ -1575,6 +1611,54 @@ handle('repo:lastMessage', async (repo) =>
 
 handle('repo:checkout', async (repo, ref) => git(repo, ['checkout', ref]));
 
+/* Switching branch with uncommitted work is the one routine action that can
+   quietly cost you something, so the renderer asks first and passes the answer
+   here. The whole sequence lives in one place because the interesting part is
+   what happens when a step half-fails.
+
+   - keep    plain checkout. Git carries the changes across, or refuses.
+   - stash   set the work aside, switch, put it back.
+   - discard throw away modifications to tracked files. Untracked files are
+             left alone: nothing in git can bring those back. */
+const CHECKOUT_MODES = new Set(['keep', 'stash', 'discard']);
+
+const stashTop = (repo) =>
+  git(repo, ['rev-parse', '--verify', '-q', 'refs/stash']).catch(() => '');
+
+handle('repo:checkoutWith', async (repo, ref, mode) => {
+  if (!CHECKOUT_MODES.has(mode)) throw new Error(`Unknown checkout mode: ${mode}`);
+
+  if (mode !== 'stash') {
+    const args = mode === 'discard' ? ['checkout', '--force', ref] : ['checkout', ref];
+    await git(repo, args);
+    return { stash: 'none' };
+  }
+
+  const before = await stashTop(repo);
+  await git(repo, ['stash', 'push', '--include-untracked', '-m', `GitBraid: switching to ${ref}`]);
+  // `stash push` with nothing to save is a success that stashes nothing, so the
+  // ref itself is the only trustworthy evidence that anything was set aside.
+  const stashed = (await stashTop(repo)) !== before;
+
+  try {
+    await git(repo, ['checkout', ref]);
+  } catch (e) {
+    // A refused switch must cost nothing: put the work back where it was.
+    if (stashed) await git(repo, ['stash', 'pop']).catch(() => {});
+    throw e;
+  }
+
+  if (!stashed) return { stash: 'none' };
+  try {
+    await git(repo, ['stash', 'pop']);
+    return { stash: 'reapplied' };
+  } catch (e) {
+    // The stash is still there — it only pops on success — so say so rather
+    // than pretending the switch was clean.
+    return { stash: 'conflict', message: e.message };
+  }
+});
+
 handle('repo:createBranch', async (repo, name, startPoint, checkout) => {
   if (checkout) return git(repo, ['checkout', '-b', name, ...(startPoint ? [startPoint] : [])]);
   return git(repo, ['branch', name, ...(startPoint ? [startPoint] : [])]);
@@ -1584,7 +1668,33 @@ handle('repo:deleteBranch', async (repo, name, force) =>
   git(repo, ['branch', force ? '-D' : '-d', name])
 );
 
-handle('repo:merge', async (repo, ref) => git(repo, ['merge', '--no-edit', ref]));
+/* What the reader is about to do, in the terms they would check it in: which
+   way round it goes, how much is coming, and whether the history will stay a
+   straight line. Merging the wrong way round is the easy mistake, and no button
+   label can show it. */
+handle('repo:mergeInfo', async (repo, ref) => {
+  const head = (await git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+  const counts = await git(repo, ['rev-list', '--left-right', '--count', `HEAD...${ref}`]);
+  const [outgoing, incoming] = counts.trim().split(/\s+/).map(Number);
+  /* A fast-forward is possible exactly when HEAD is already an ancestor of the
+     other ref — that is, when nothing here is missing from there. The counts
+     above already say so, which beats asking `merge-base --is-ancestor`: that
+     one answers by exit status, and this helper does not carry exit codes. */
+  return { head, incoming, outgoing, fastForward: outgoing === 0 };
+});
+
+const MERGE_MODES = new Set(['ff', 'no-ff', 'squash']);
+
+handle('repo:merge', async (repo, ref, mode = 'ff') => {
+  if (!MERGE_MODES.has(mode)) throw new Error(`Unknown merge mode: ${mode}`);
+  const args = ['merge', '--no-edit'];
+  if (mode === 'no-ff') args.push('--no-ff');
+  // --squash brings the changes in and stages them; it deliberately does not
+  // commit, so the reader writes the message themselves.
+  if (mode === 'squash') args.push('--squash');
+  args.push(ref);
+  return git(repo, args);
+});
 
 handle('repo:rebase', async (repo, ref) => git(repo, ['rebase', ref]));
 

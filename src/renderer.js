@@ -60,6 +60,9 @@ function newTab(repo) {
     mergeSide: 'in',     // which parent a merge commit's file list compares against
     containedBy: new Map(),   // hash -> nama cabang yang memuatnya
     find: { query: '', hits: [], hitSet: new Set(), index: 0 },
+    layout: null,        // graph lanes for every loaded commit, rebuilt with them
+    rowIndex: new Map(),      // hash -> row number, for scrolling to a commit
+    rowsShown: { first: 0, last: 0 },
     // Carried across tab switches so nothing typed is lost.
     commitMsg: '',
     commitBody: '',
@@ -662,6 +665,24 @@ async function activateTab(id) {
   }
 
   restoreTabUi();
+
+  /* The tab still holds every commit it was showing, so put that back on screen
+     before asking git anything. Re-reading ten thousand commits first made each
+     switch feel like the repository was being opened again. */
+  if (state.commits.length) {
+    renderOpState();
+    renderToolbar();
+    renderSidebar();
+    renderHistory();
+    $('history-scroll').scrollTop = state.scrollTop;
+    await renderDetail();
+    saveTabs();
+    // Catches up behind the reader; refresh() drops its result if they have
+    // moved to another tab by the time it lands.
+    refresh();
+    return;
+  }
+
   await refresh();
   $('history-scroll').scrollTop = state.scrollTop;
   saveTabs();
@@ -714,24 +735,30 @@ function renderTabs() {
 
 async function refresh({ keepSelection = true } = {}) {
   if (!state.repo) return;
-  const repo = state.repo.path;
+  // Whichever tab asked. A refresh can now outlive the switch that started it,
+  // so the answer has to go back to the tab that wanted it rather than to
+  // whatever happens to be in front when git finishes.
+  const tab = state;
+  const repo = tab.repo.path;
   const [status, commits, refs, stashes, flow, op] = await Promise.all([
     call('repo:status', repo),
-    call('repo:log', repo, { limit: state.limit, all: true }),
+    call('repo:log', repo, { limit: tab.limit, all: true }),
     call('repo:refs', repo),
     call('repo:stashList', repo),
     call('flow:config', repo),
     call('repo:state', repo),
   ]);
-  if (status) state.status = status;
-  state.op = op || null;          // a merge or rebase git stopped part-way
-  renderOpState();
-  if (commits) state.commits = commits;
-  if (refs) state.refs = refs;
-  if (stashes) state.stashes = stashes;
-  if (flow) state.flow = flow;
+  if (status) tab.status = status;
+  tab.op = op || null;            // a merge or rebase git stopped part-way
+  if (commits) tab.commits = commits;
+  if (refs) tab.refs = refs;
+  if (stashes) tab.stashes = stashes;
+  if (flow) tab.flow = flow;
+  tab.remoteRefNames = new Set(tab.refs.remotes.map((r) => r.name));
 
-  state.remoteRefNames = new Set(state.refs.remotes.map((r) => r.name));
+  if (tab !== state) return;      // the reader moved on: keep the data, draw nothing
+
+  renderOpState();
   state.containedBy = computeContainment();
   // Resolve avatar URLs up front; renderHistory reads the cache synchronously.
   await ensureAvatars(state.commits);
@@ -1276,12 +1303,28 @@ function renderFindCount() {
 }
 
 /** Move the selection to a commit and bring it into view. */
+/* Moving the selection used to redraw every row, so on a long history a click
+   cost as much as opening the repository: 4,800 rows took 239 ms, 177 ms of it
+   spent rebuilding a list whose only change was one class. Nothing else in a
+   row depends on which row is selected, so the class is all that moves. */
+function paintSelection() {
+  const sel = state.selection;
+  const list = $('commit-list');
+  list.querySelector('.commit-row.selected')?.classList.remove('selected');
+  const want = sel?.kind === 'wip'
+    ? list.querySelector('.commit-row[data-wip]')
+    : sel?.hash
+      ? list.querySelector(`.commit-row[data-hash="${sel.hash}"]`)
+      : null;
+  want?.classList.add('selected');
+}
+
 async function selectCommit(hash) {
   state.file = null;
   state.mergeSide = 'in';        // a side chosen on one merge means nothing on another
   state.selection = { kind: 'commit', hash };
-  renderHistory();
-  el(`.commit-row[data-hash="${hash}"]`)?.scrollIntoView({ block: 'center' });
+  paintSelection();
+  scrollToCommit(hash);
   await renderDetail();
 }
 
@@ -1293,9 +1336,9 @@ async function gotoMatch(index) {
   state.file = null;
   state.mergeSide = 'in';
   state.selection = { kind: 'commit', hash };
-  renderHistory();
+  paintSelection();
   renderFindCount();
-  el(`.commit-row[data-hash="${hash}"]`)?.scrollIntoView({ block: 'center' });
+  scrollToCommit(hash);
   await renderDetail();
 }
 
@@ -1312,6 +1355,35 @@ function closeFind() {
   runFind('');
 }
 
+/* Rows drawn beyond each edge of the window. They are what lets scrolling skip
+   the redraw entirely: as long as the reader stays inside this margin the
+   markup already on the page still covers the view. */
+const OVERSCAN = 24;
+
+/* Exactly the rows the reader can see — no margin. The sticky header lives
+   inside the scroller, so it eats the first --head-h pixels of scroll travel. */
+function requiredRange(total) {
+  const sc = $('history-scroll');
+  const rowH = window.Graph.ROW_H;
+  const top = Math.max(0, sc.scrollTop - $('history-head').offsetHeight);
+  const first = Math.min(Math.floor(top / rowH), Math.max(0, total - 1));
+  // clientHeight is 0 while the pane is hidden; guess high rather than draw nothing.
+  const fits = Math.ceil((sc.clientHeight || 900) / rowH) + 1;
+  return { first, last: Math.min(total, first + fits) };
+}
+
+/* Puts the row for a commit on screen without depending on the row existing —
+   at any moment most of them do not. */
+function scrollToCommit(hash) {
+  const i = state.rowIndex?.get(hash);
+  if (i === undefined) return;
+  const sc = $('history-scroll');
+  const rowH = window.Graph.ROW_H;
+  const y = $('history-head').offsetHeight + i * rowH;
+  sc.scrollTop = Math.max(0, y - (sc.clientHeight - rowH) / 2);
+  renderRows();
+}
+
 function renderHistory() {
   const dirty = hasChanges();
   const rowsData = dirty
@@ -1326,16 +1398,43 @@ function renderHistory() {
       }, ...state.commits]
     : state.commits;
 
-  const find = state.find;
   const layout = window.Graph.layout(rowsData);
-  const indexByHash = new Map(rowsData.map((c, i) => [c.hash, i]));
+  // Held on the tab so scrolling can re-slice the view without laying the
+  // graph out again — the layout only changes when the commits do.
+  state.layout = layout;
+  state.rowIndex = new Map(rowsData.map((c, i) => [c.hash, i]));
 
   document.documentElement.style.setProperty('--graph-w', layout.width + 'px');
-  $('graph-layer').innerHTML = window.Graph.render(layout, indexByHash, { avatarFor });
+  renderRows();
+  $('btn-more').hidden = state.commits.length < state.limit;
+}
+
+/* Builds the markup for the visible band only. A ten-thousand-commit history
+   put over a hundred thousand nodes in the document, and the browser paid for
+   every one of them on every scroll; this keeps it to about a screenful. */
+function renderRows() {
+  const layout = state.layout;
+  if (!layout) return;
+  const find = state.find;
+  const rowH = window.Graph.ROW_H;
+  const total = layout.rows.length;
+  const need = requiredRange(total);
+  const first = Math.max(0, need.first - OVERSCAN);
+  const last = Math.min(total, need.last + OVERSCAN);
+  state.rowsShown = { first, last };
+
+  $('graph-layer').innerHTML =
+    window.Graph.render(layout, state.rowIndex, { avatarFor, first, last });
 
   const sel = state.selection;
+  const list = $('commit-list');
+  // The rows that were skipped still have to take up their space, or the
+  // scrollbar would shrink and the graph behind would slide out of step.
+  list.style.paddingTop = `${first * rowH}px`;
+  list.style.paddingBottom = `${(total - last) * rowH}px`;
   // Walk the laid-out rows, not rowsData, so each row knows its lane colour.
-  $('commit-list').innerHTML = layout.rows
+  list.innerHTML = layout.rows
+    .slice(first, last)
     .map((row) => {
       const c = row.commit;
       if (c.pending) {
@@ -1392,8 +1491,6 @@ function renderHistory() {
       );
     })
     .join('');
-
-  $('btn-more').hidden = state.commits.length < state.limit;
 }
 
 /* ═════ detail panel ════════════════════════════════════════════ */
@@ -2031,10 +2128,92 @@ async function doCommit() {
   setStatus(amend ? 'Amended the last commit' : 'Committed', 'ok');
 }
 
+/* Untracked files survive any checkout untouched, so counting them here would
+   turn the warning into noise on repositories that always carry build output. */
+function trackedChanges() {
+  const s = state.status;
+  return s ? s.staged.length + s.unstaged.length + s.conflicted.length : 0;
+}
+
+/* Returns the chosen mode, or null if the switch was called off. */
+async function askAboutLocalChanges(ref) {
+  const n = trackedChanges();
+  if (!n) return 'keep';
+  const here = state.status.branch || 'the current branch';
+  const r = await modal({
+    title: `Switch to ${ref}?`,
+    description:
+      `${n} uncommitted change${n === 1 ? '' : 's'} on ${here} ` +
+      `${n === 1 ? 'is' : 'are'} still in the working tree.`,
+    fields: [{
+      name: 'mode', type: 'choice', value: 'stash',
+      options: [
+        { value: 'stash', label: 'Stash and reapply',
+          help: `Sets the work aside, switches, and puts it back on ${ref}. `
+            + 'If it no longer applies you get conflicts to resolve, and the stash is kept.' },
+        { value: 'keep', label: 'Bring the changes along',
+          help: 'Carries the work across untouched. Git refuses the switch outright '
+            + 'if a file on the other branch would be overwritten.' },
+        { value: 'discard', label: 'Discard the changes',
+          help: 'Throws away every change to tracked files. Files git does not '
+            + 'track are left alone.' },
+      ],
+    }],
+    confirmLabel: 'Switch branch',
+    onChange: (v, api) => api.note(v.mode === 'discard'
+      ? 'Discarded changes cannot be recovered — they were never committed.' : ''),
+  });
+  return r ? r.mode : null;
+}
+
 async function checkout(ref) {
+  const mode = await askAboutLocalChanges(ref);
+  if (mode === null) return;
+
+  // gitAction hands nothing to its follow-up, so the outcome rides a closure.
+  let res = null;
   await gitAction(null, `Checking out ${ref}`,
-    () => call('repo:checkout', repoPath(), ref),
-    async () => { await refresh({ keepSelection: false }); setStatus(`Checked out ${ref}`, 'ok'); });
+    async () => (res = await call('repo:checkoutWith', repoPath(), ref, mode)),
+    async () => {
+      await refresh({ keepSelection: false });
+      if (res?.stash === 'conflict') {
+        setStatus(`Checked out ${ref} — the stashed work conflicts; resolve it, `
+          + 'then drop the stash', 'error');
+      } else if (res?.stash === 'reapplied') {
+        setStatus(`Checked out ${ref} — your changes came with it`, 'ok');
+      } else {
+        setStatus(`Checked out ${ref}`, 'ok');
+      }
+    });
+}
+
+/* One click on a ref moves the history to its tip instead of checking it out.
+   Every tip is in an --all log, but only once enough of it is loaded, so this
+   widens the window rather than giving up. */
+async function revealRef(ref, kind) {
+  const list = kind === 'tag' ? state.refs.tags
+    : kind === 'remote' ? state.refs.remotes
+      : state.refs.branches;
+  const oid = list.find((r) => r.name === ref)?.oid;
+  if (!oid) return;
+
+  const loaded = () => state.commits.some((c) => c.hash === oid);
+  // 50 pages is far past any history a person scrolls; it only stops a runaway.
+  for (let page = 0; !loaded() && page < 50; page += 1) {
+    if (state.commits.length < state.limit) {   // the whole history is here already
+      setStatus(`${ref} is not in this view`, 'error');
+      return;
+    }
+    state.limit += prefs.commitLimit;
+    setStatus(`Looking for ${ref} — ${state.limit} commits loaded…`);
+    await refresh();
+  }
+  if (!loaded()) {
+    setStatus(`${ref} is further back than GitBraid will load`, 'error');
+    return;
+  }
+  await selectCommit(oid);
+  setStatus(`${ref} is at ${oid.slice(0, 7)}`, 'ok');
 }
 
 async function newBranch(startPoint) {
@@ -2059,17 +2238,71 @@ async function newBranch(startPoint) {
 
 /* Shared by the sidebar's context menu and the Repository menu. */
 
+/* Merging the wrong way round is the mistake that actually happens, and no
+   button label shows which way it goes. So the confirmation is not "are you
+   sure" — it is the direction, the size, and the shape of the result. */
+async function askAboutMerge(ref, info) {
+  const n = info.incoming;
+  const dirty = trackedChanges();
+  const r = await modal({
+    title: `Merge ${ref} into ${info.head}?`,
+    description:
+      `${n} commit${n === 1 ? '' : 's'} from ${ref} ${n === 1 ? 'is' : 'are'} not in ` +
+      `${info.head} yet. ` +
+      (info.fastForward
+        ? `${info.head} has nothing of its own, so it can simply move forward.`
+        : `${info.head} has ${info.outgoing} commit${info.outgoing === 1 ? '' : 's'} ` +
+          'of its own, so the two lines have to be joined.'),
+    fields: [{
+      name: 'mode', type: 'choice', value: 'ff',
+      options: [
+        { value: 'ff', label: 'Fast-forward when possible',
+          help: info.fastForward
+            ? `Moves ${info.head} straight to ${ref}. No merge commit, and the ` +
+              'history stays a straight line.'
+            : 'A fast-forward is not possible here, so this makes a merge commit.' },
+        { value: 'no-ff', label: 'Always create a merge commit',
+          help: 'Records the merge as a commit of its own even when it could have '
+            + 'moved forward, so the branch stays visible in the graph.' },
+        { value: 'squash', label: 'Squash into one change',
+          help: `Brings the work in without any of ${ref}'s commits and leaves it `
+            + 'staged, for you to commit in one piece.' },
+      ],
+    }],
+    confirmLabel: 'Merge',
+    onChange: (v, api) => api.note(dirty
+      ? `${dirty} uncommitted change${dirty === 1 ? '' : 's'} in the working tree. `
+        + 'Git refuses the merge if it needs one of those files.'
+      : ''),
+  });
+  return r ? r.mode : null;
+}
+
 async function mergeBranch(ref) {
+  const info = await call('repo:mergeInfo', repoPath(), ref);
+  if (info === null) return;
+  /* git succeeds and changes nothing when the branch is already contained.
+     Saying "Merged" there would claim something that did not happen — and
+     asking about it first would be a dialog with nothing to decide. */
+  if (!info.incoming) {
+    setStatus(`${ref} is already in ${info.head} — nothing to merge`);
+    return;
+  }
+
+  const mode = await askAboutMerge(ref, info);
+  if (mode === null) return;
+
   let out = '';
   const ok = await gitAction(null, `Merging ${ref}`,
-    async () => (out = await call('repo:merge', repoPath(), ref)),
+    async () => (out = await call('repo:merge', repoPath(), ref, mode)),
     async () => {
       await refresh({ keepSelection: false });
-      /* git succeeds and changes nothing when the branch is already contained.
-         Saying "Merged" there would claim something that did not happen. */
       setStatus(nothingHappened(out)
-        ? `${ref} is already in this branch — nothing to merge`
-        : `Merged ${ref}`, nothingHappened(out) ? '' : 'ok');
+        ? `${ref} is already in ${info.head} — nothing to merge`
+        : mode === 'squash'
+          ? `Squashed ${ref} into the staged changes — write a message and commit`
+          : `Merged ${ref} into ${info.head}`,
+      nothingHappened(out) ? '' : 'ok');
     });
   // A conflict stops the merge half-done; the history has to show that state.
   if (!ok) await refresh({ keepSelection: false });
@@ -2455,25 +2688,60 @@ async function startFlow(kind) {
 async function finishFlow(flow) {
   const cfg = state.flow;
   const tagged = flow.kind !== 'feature';
+  const b = state.refs.branches.find((x) => x.name === flow.branch);
+  const remote = b?.upstream
+    ? b.upstream.slice(0, b.upstream.indexOf('/'))
+    : (state.refs.remotes[0]?.name.split('/')[0] || 'origin');
+  const hasRemote = state.refs.remotes.length > 0;
+  // Only worth offering when the branch was actually published; a feature that
+  // never left this machine has nothing on the server to tidy up.
+  const published = state.remoteRefNames.has(`${remote}/${flow.branch}`);
+  const landing = tagged ? `${cfg.master} and ${cfg.develop}` : cfg.develop;
+
+  const fields = tagged
+    ? [
+        { name: 'tag', label: 'Tag', value: `${cfg.versiontag || ''}${flow.name}`,
+          placeholder: 'leave empty to skip tagging' },
+        { name: 'message', label: 'Tag message', placeholder: flow.name },
+      ]
+    : [];
+  if (hasRemote) {
+    fields.push({
+      name: 'push', type: 'checkbox', value: true,
+      label: `Push ${landing}${tagged ? ' and the tag' : ''} to ${remote}`,
+    });
+    if (published) {
+      fields.push({
+        name: 'deleteRemote', type: 'checkbox', value: true,
+        label: `Delete ${remote}/${flow.branch}`,
+      });
+    }
+  }
+
   const r = await modal({
     title: `Finish ${flow.branch}`,
-    description: tagged
-      ? `Merges into ${cfg.master}, tags it, merges into ${cfg.develop}, then deletes the branch.`
-      : `Merges into ${cfg.develop}, then deletes the branch.`,
-    fields: tagged
-      ? [
-          { name: 'tag', label: 'Tag', value: `${cfg.versiontag || ''}${flow.name}`,
-            placeholder: 'leave empty to skip tagging' },
-          { name: 'message', label: 'Tag message', placeholder: flow.name },
-        ]
-      : [],
+    description: (tagged
+      ? `Merges into ${cfg.master}, tags it, merges into ${cfg.develop}, `
+      : `Merges into ${cfg.develop}, `) +
+      'then deletes the branch here.' +
+      (published ? ` It is also on ${remote}.` : ''),
+    fields,
     confirmLabel: 'Finish',
+    /* Deleting the published branch without pushing the merge would take those
+       commits off the server altogether — they would exist only on this
+       machine. Allowed, because it is sometimes what you mean, but said out loud. */
+    onChange: (v, api) => api.note(
+      v.deleteRemote && !v.push
+        ? `Without pushing ${cfg.develop}, deleting ${remote}/${flow.branch} leaves `
+          + `that work nowhere on ${remote}.`
+        : ''),
   });
   if (!r) return;
   let summary = null;
   const ok = await gitAction('btn-flow', `Finishing ${flow.kind}`,
     async () => (summary = await call('flow:finish', repoPath(), {
       kind: flow.kind, branch: flow.branch, cfg, tag: r.tag, message: r.message,
+      remote, push: r.push === true, deleteRemote: r.deleteRemote === true,
     })),
     async () => { await refresh({ keepSelection: false }); setStatus(`${flow.branch}: ${summary}`, 'ok'); });
   // A conflict leaves the merge open on purpose — the history must show that.
@@ -4080,10 +4348,20 @@ $('sidebar').addEventListener('click', (e) => {
   const li = e.target.closest('li[data-ref]');
   if (!li) return;
   const { ref, kind } = li.dataset;
+  // One click looks, two clicks act. Checking out on a single click meant
+  // browsing the sidebar changed the repository under you.
+  if (kind === 'branch' || kind === 'tag' || kind === 'remote') revealRef(ref, kind);
+});
+
+$('sidebar').addEventListener('dblclick', (e) => {
+  const li = e.target.closest('li[data-ref]');
+  if (!li) return;
+  const { ref, kind } = li.dataset;
   if (kind === 'branch' || kind === 'tag') checkout(ref);
   else if (kind === 'remote') {
-    const local = ref.split('/').slice(1).join('/');
-    checkout(local);
+    // Checking out a remote branch means working on the local one that follows
+    // it; git creates that branch on the spot if it does not exist yet.
+    checkout(ref.split('/').slice(1).join('/'));
   }
 });
 
@@ -4370,7 +4648,7 @@ $('commit-list').addEventListener('click', (e) => {
   state.file = null;
   state.mergeSide = 'in';   // the side chosen on another merge does not carry over
   state.selection = row.dataset.wip ? { kind: 'wip' } : { kind: 'commit', hash: row.dataset.hash };
-  renderHistory();
+  paintSelection();
   renderDetail();
 });
 
@@ -4411,6 +4689,23 @@ async function resetTo(hash, mode) {
   const res = await call('repo:reset', repoPath(), hash, mode);
   if (res !== null) { await refresh({ keepSelection: false }); setStatus('Branch reset', 'ok'); }
 }
+
+/* Scrolling changes which rows exist, so it has to redraw — but only once per
+   frame, and only when the band has actually moved off what is on screen. */
+let rowsQueued = false;
+$('history-scroll').addEventListener('scroll', () => {
+  if (!state.layout || rowsQueued) return;
+  rowsQueued = true;
+  requestAnimationFrame(() => {
+    rowsQueued = false;
+    const shown = state.rowsShown;
+    const need = requiredRange(state.layout.rows.length);
+    // Still covered by what is on the page: the cheapest frame is the one that
+    // does nothing at all.
+    if (need.first >= shown.first && need.last <= shown.last) return;
+    renderRows();
+  });
+}, { passive: true });
 
 $('btn-more').addEventListener('click', async () => {
   state.limit += prefs.commitLimit;

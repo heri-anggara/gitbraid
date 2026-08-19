@@ -7,6 +7,63 @@
  */
 window.Releases = [
   {
+    version: '0.2.0',
+    date: '2026-08-19',
+    title: 'Big histories, and nothing moved behind your back',
+    summary:
+      'A repository with thousands of commits now scrolls like a small one, and '
+      + 'the actions that change it ask first.',
+    sections: [
+      {
+        heading: 'Only the rows you can see are drawn',
+        items: [
+          'Every loaded commit used to become a real element in the page. On a history of 8,951 commits that is 124,490 nodes in the list and 27,170 in the graph, and the browser paid for all of them on every scroll: a median frame of 67.9 ms, about 15 frames a second.',
+          'The list now holds roughly a screenful — around 600 nodes — with a margin above and below, so an ordinary scroll usually redraws nothing at all. The median frame is 7.0 ms, and it stays there whether the history is 400 rows or 8,951.',
+          'The graph draws only the band in view, but a line crossing the screen from a commit far above to its parent far below is still drawn. That was checked against a reference calculation over 65 different bands, all containing merges, with no difference.',
+          'The 400-commit limit was never a git cost. Reading all 8,951 commits takes 40 ms against 35 ms for 400 — drawing them was the expense.',
+        ],
+      },
+      {
+        heading: 'Switching tabs shows what the tab already had',
+        items: [
+          'A tab switch re-read and re-drew the whole history before showing anything, so a tab holding 9,000 commits took 3.3 seconds to come back. It now paints from what the tab is already holding and lets git catch up behind it: about 90 ms for that tab, about 20 ms for a small one.',
+          'A refresh that outlives the switch that started it now returns its answer to the tab that asked, so it can no longer land on whichever repository happens to be in front.',
+        ],
+      },
+      {
+        heading: 'Looking at a branch no longer checks it out',
+        items: [
+          'One click on a branch, tag or remote branch moves the history to its tip. If that commit is not loaded yet, GitBraid widens the history until it is.',
+          'Checking out takes a double-click. A single click used to do it, so browsing the sidebar changed the repository under you — and on a tag it dropped you into a detached HEAD without asking.',
+          'When tracked files have uncommitted changes, a dialog asks first: stash and reapply, bring the changes along, or discard them. Files git does not track are neither counted nor touched, because a checkout never removes them. A switch that git refuses puts the stash back, and a reapply that conflicts keeps the stash and says so.',
+        ],
+      },
+      {
+        heading: 'Merging says which way round it goes',
+        items: [
+          'Merging ran the moment it was clicked. It now shows the direction, how many commits are coming in, how many the current branch has of its own, and whether a fast-forward is possible — merging the wrong way round is the mistake that actually happens, and no button label shows it.',
+          'Three choices: git\u2019s own behaviour, always create a merge commit, or squash into one staged change. A branch already contained gets no dialog, only a line saying there is nothing to merge.',
+        ],
+      },
+      {
+        heading: 'Finishing a git-flow branch finishes it on the remote too',
+        items: [
+          'Finishing merged and deleted the branch here, and stopped. Nothing was pushed and nothing on the server was touched, so you were left with development ahead of its remote, the branch still hanging on origin, and — for a release — the tag on one machine only.',
+          'The dialog now offers to push the result and to delete the branch on the remote, both on by default, and the delete only appears when the branch is actually published.',
+          'The push runs before anything is removed from the server. If it is refused because someone else moved development first, the finish stops with the branch still on the remote, where it is the only copy of that work there.',
+        ],
+      },
+      {
+        heading: 'Smaller things',
+        items: [
+          'An annotated tag now points at the commit it marks. Clicking one searched the history for the tag object\u2019s own hash, which no commit has, and quietly did nothing; every annotated tag also sorted to the bottom of the list with a date of 1970.',
+          'Text in the chrome — sidebar, toolbar, tabs, commit list, status bar — can no longer be selected. Diffs, terminal output, commit messages, the command log and these notes still can.',
+          'A step that fails during a git-flow finish reports the line that explains it. A refused push opens with "To <url>", which says nothing.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.1.2',
     date: '2026-08-18',
     title: 'Nothing leaves the machine',

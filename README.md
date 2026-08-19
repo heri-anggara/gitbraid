@@ -343,6 +343,35 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   selalu diutamakan
 - Status bar menyebut editor mana yang membuka berkasnya
 
+**Klik di panel kiri**
+- **Sekali klik** pada cabang, tag, atau cabang remote hanya memindahkan riwayat
+  ke ujung ref itu — melihat-lihat tidak mengubah keadaan repo. Kalau commit-nya
+  belum termuat, jendela riwayat melebar sendiri sampai ketemu
+- **Klik ganda** yang melakukan checkout. Kalau ada berkas terlacak yang belum
+  di-commit, GitBraid bertanya dulu: sisihkan ke stash lalu pasang kembali, bawa
+  serta, atau buang. Berkas yang tidak dilacak git tidak dihitung dan tidak
+  disentuh — checkout memang tak pernah menghapusnya
+- Tag beranotasi menunjuk ke commit yang ditandainya, bukan ke objek tag-nya,
+  jadi mengkliknya mendarat di baris yang benar dan urutan tanggalnya masuk akal
+- Teks di bagian chrome — sidebar, toolbar, tab, daftar commit, status bar —
+  tidak bisa diseleksi; ini aplikasi desktop, bukan halaman web. Yang tetap bisa
+  diseleksi dan disalin adalah isinya: diff, keluaran terminal, pesan commit,
+  log perintah, dan catatan rilis
+
+**Merge**
+- Merge tidak langsung jalan. Dialognya menyebutkan **arah**-nya — `Merge A into
+  B` — berapa commit yang akan masuk, berapa yang sudah ada di B sendiri, dan
+  apakah fast-forward mungkin. Salah arah adalah kesalahan merge yang paling
+  sering terjadi, dan tidak ada label tombol yang bisa memperlihatkannya
+- Tiga pilihan: **fast-forward bila memungkinkan** (bawaan, perilaku git
+  sendiri), **selalu buat merge commit** (`--no-ff`, yang dipakai git-flow), dan
+  **squash jadi satu perubahan** — yang membawa isinya masuk ke staging tanpa
+  satu pun commit cabang asalnya, untuk Anda tulis pesannya sendiri
+- Kalau cabangnya memang sudah termuat, tidak ada dialog sama sekali: statusnya
+  cuma bilang tidak ada yang perlu di-merge
+- Kalau ada perubahan yang belum di-commit, dialognya memberi tahu — git menolak
+  merge kalau berkas itu ikut terlibat
+
 **Klik kanan di panel kiri**
 - **Cabang lokal** — checkout, fast-forward ke upstream, fetch upstream ke
   cabang itu, push, merge, rebase, bandingkan dengan HEAD, buat cabang/tag dari
@@ -369,8 +398,21 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Menyelesaikan **feature**: merge ke development lalu cabangnya dihapus.
   **Release / hotfix**: merge ke produksi, diberi tag, merge ke development,
   lalu dihapus. Semua merge memakai `--no-ff` seperti git-flow asli
+- Kalau cabangnya sudah pernah di-push, dialog penyelesaiannya menawarkan dua
+  centang: **push** hasil merge (dan tag-nya) ke remote, dan **hapus cabang di
+  remote**. Keduanya tercentang secara bawaan — setelah merge, seluruh commit
+  cabang itu sudah ada di development, jadi ref di server tidak menyimpan apa
+  pun yang unik lagi. Tanpa ini Anda berakhir di keadaan setengah mendarat:
+  development lokal maju sendirian, cabang feature masih menggantung di server,
+  dan tag rilis cuma ada di satu komputer
+- Push dijalankan **sebelum** apa pun dihapus dari server. Kalau push ditolak —
+  misalnya orang lain menggeser development lebih dulu — penghapusannya tidak
+  jadi berjalan, jadi cabang itu tetap ada di remote sebagai satu-satunya salinan
+  pekerjaan tersebut di sana
 - Kalau ada langkah yang gagal (misalnya konflik), pesannya menyebut langkah
-  mana yang berhenti dan repo dibiarkan apa adanya untuk Anda selesaikan
+  mana yang berhenti dan repo dibiarkan apa adanya untuk Anda selesaikan.
+  Alasannya diambil dari baris yang benar-benar menjelaskan — sebuah push yang
+  ditolak dibuka dengan `To <url>`, yang tidak memberi tahu apa-apa
 
 **Panel kiri**
 - Nama repo dan branch yang sedang di-checkout ada di paling atas panel; nama
@@ -430,6 +472,27 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Baris "Uncommitted changes" ikut masuk ke graph sebagai node putus-putus
 - Tanggal absolut `08/14/2026 @ 2:59 PM`, plus cuplikan body commit yang diredupkan
 - Muat 400 commit sekaligus, ada tombol untuk menambah
+- Memilih baris hanya memindahkan sorotannya, tidak menggambar ulang daftarnya.
+  Dulu satu klik menelan biaya sebesar membuka repo: pada 4.800 baris, 239 ms —
+  177 ms di antaranya membangun ulang daftar yang satu-satunya perubahan adalah
+  sebuah kelas CSS. Sekarang di bawah 1 ms berapa pun panjang daftarnya
+- **Hanya baris yang terlihat yang dibuat.** Sebelumnya setiap commit yang dimuat
+  jadi node DOM sungguhan: pada riwayat 8.951 commit itu 124.490 node di daftar
+  plus 27.170 node SVG di graph, dan compositor membayarnya setiap kali digulir —
+  frame median 67,9 ms, alias 15 fps. Sekarang yang ada di dokumen hanya sekitar
+  satu layar penuh (± 600 node), dengan margin di atas dan bawah supaya menggulir
+  biasanya tidak menggambar ulang sama sekali: frame median **7 ms, sama rata
+  dari 400 sampai 8.951 baris**, dan `refresh()` pada riwayat penuh turun dari
+  3.346 ms ke 235 ms
+- Graph tetap digambar utuh: sebuah garis yang melintasi layar dari commit jauh
+  di atas ke induknya jauh di bawah ikut digambar walau kedua ujungnya tak
+  terlihat. Diperiksa terhadap perhitungan acuan di 65 pita berbeda yang semuanya
+  mengandung merge — nol selisih
+- Batas 400 baris itu bukan soal git: membaca seluruh 8.951 commit hanya 40 ms,
+  praktis sama dengan membaca 400 (35 ms). Yang dulu mahal adalah menggambarnya
+- Pindah tab memakai data yang sudah dipegang tab itu dulu, baru menyusul
+  bertanya ke git di belakang layar. Tab berisi 9.000 commit: dari 3.346 ms
+  menjadi ±90 ms; tab repo kecil ±20 ms
 
 **Logo**
 - Sumbernya satu file, [`build/icon.svg`](build/icon.svg): empat keping bergradasi
