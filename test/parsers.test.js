@@ -326,6 +326,33 @@ const pathHelpers = (() => {
   return ctx.__out;
 })();
 
+/* ── preferences that changed name ─────────────────────────────── */
+/* Renaming a stored setting is the kind of change nobody notices until someone
+   upgrades and quietly loses what they had switched on. */
+const loadPrefs = (stored) => {
+  const code = rendererSrc.match(
+    /const PREF_DEFAULTS = \{[\s\S]*?\n\};\n\nconst prefs = \{ \.\.\.PREF_DEFAULTS \};\ntry \{[\s\S]*?\n\} catch \{ \/\* private mode \*\/ \}/)[0];
+  const ctx = { JSON, Object, localStorage: { getItem: () => JSON.stringify(stored) } };
+  vm.createContext(ctx);
+  vm.runInContext(`${code}\nglobalThis.__out = prefs;`, ctx);
+  return ctx.__out;
+};
+
+check('a reader who had Gravatar on keeps author photos on',
+  loadPrefs({ gravatar: true }).authorPhotos === true);
+check('a reader who had it off keeps it off',
+  loadPrefs({ gravatar: false }).authorPhotos === false);
+check('a fresh install has author photos off',
+  loadPrefs({}).authorPhotos === false);
+check('the newer key wins when both are stored',
+  loadPrefs({ gravatar: false, authorPhotos: true }).authorPhotos === true);
+check('the old key is not carried forward',
+  loadPrefs({ gravatar: true }).gravatar === undefined);
+check('settings either side of it survive the rename', (() => {
+  const p = loadPrefs({ gravatar: true, commitLimit: 1200, dateStyle: 'relative' });
+  return p.commitLimit === 1200 && p.dateStyle === 'relative';
+})());
+
 /* ── updates ───────────────────────────────────────────────────── */
 
 const updateBits = lift(
