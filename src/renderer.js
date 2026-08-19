@@ -1570,7 +1570,7 @@ const F_ICON = {
     'stroke-linejoin="round"/></svg>',
 };
 
-function fileRow(f, kind, depth = 0, nameOnly = false) {
+function fileRow(f, kind, depth = 0, mode = 'path') {
   const selected =
     state.file &&
     state.file.path === f.path &&
@@ -1589,17 +1589,24 @@ function fileRow(f, kind, depth = 0, nameOnly = false) {
       ? act('stage', 'Stage this file') + act('discard', 'Throw away these changes', true)
       : '';
 
-  /* The folder is context and the file name is the point, so they are weighted
-     differently rather than run together as one grey string. `nameOnly` drops
-     the folder altogether — the whole path is still on hover, and Tree view is
-     there for when the location is what you are looking for. */
-  const shown = nameOnly
-    ? baseName(f.path)
-    : (f.label ?? f.path).replace(/\/$/, '');
-  const cut = shown.lastIndexOf('/');
-  const name = cut < 0
-    ? esc(shown)
-    : `<span class="f-dir">${esc(shown.slice(0, cut + 1))}</span>${esc(shown.slice(cut + 1))}`;
+  /* The folder is context and the file name is the point, so the two are
+     weighted differently rather than run together as one grey string. Where
+     they sit is what separates the two flat shapes: reading a path, the folder
+     leads; reading a list of files, the name leads and the folder answers
+     "which one?" beside it, without a hover. Tree hands in a leaf label and
+     needs neither. */
+  let name;
+  if (mode === 'list') {
+    const cut = f.path.lastIndexOf('/');
+    name = `<span class="f-name">${esc(cut < 0 ? f.path : f.path.slice(cut + 1))}</span>` +
+      (cut < 0 ? '' : `<span class="f-dir-after">${esc(f.path.slice(0, cut))}</span>`);
+  } else {
+    const shown = (f.label ?? f.path).replace(/\/$/, '');
+    const cut = shown.lastIndexOf('/');
+    name = cut < 0
+      ? esc(shown)
+      : `<span class="f-dir">${esc(shown.slice(0, cut + 1))}</span>${esc(shown.slice(cut + 1))}`;
+  }
 
   return (
     `<li class="${depth || f.label ? 'tree-leaf ' : ''}${selected ? 'selected' : ''}" ` +
@@ -1607,7 +1614,8 @@ function fileRow(f, kind, depth = 0, nameOnly = false) {
     `data-untracked="${f.status === '?' ? '1' : '0'}" style="--d:${depth}">` +
     `<span class="f-status s-${esc(f.status)}" title="${esc(STATUS_WORD[f.status] || f.status)}">` +
     `${esc(f.status)}</span>` +
-    `<span class="f-path" title="${esc(f.path)}">${name}</span>${actions}</li>`
+    `<span class="f-path${mode === 'list' ? ' f-split' : ''}" ` +
+    `title="${esc(f.path)}">${name}</span>${actions}</li>`
   );
 }
 
@@ -1624,7 +1632,7 @@ function wipRows(list, kind) {
   const html = fileView.mode === 'tree' && !q
     ? renderTree(buildTree(shown.map((f) => ({ ...f, name: f.path }))), `wip-${kind}`,
         (f, label, depth) => fileRow({ ...f, label }, kind, depth))
-    : shown.map((f) => fileRow(f, kind, 0, fileView.mode === 'list')).join('');
+    : shown.map((f) => fileRow(f, kind, 0, flatShape())).join('');
   return { html, count: shown.length };
 }
 
@@ -1723,6 +1731,11 @@ const VIEW_MODES = [
 
 const viewMode = () => VIEW_MODES.find((v) => v.mode === fileView.mode) || VIEW_MODES[0];
 
+/* Which of the two flat shapes a row should take. Tree can reach a flat list —
+   filtering always flattens — and there it reads as a path, not as a name with
+   nothing beside it. */
+const flatShape = () => (fileView.mode === 'list' ? 'list' : 'path');
+
 /** Keeps a panel's button showing the shape the lists are actually in. */
 function paintViewAs(id) {
   const v = viewMode();
@@ -1769,7 +1782,7 @@ function renderCommitFiles() {
       renderTree(buildTree(files.map((f) => ({ ...f, name: f.path }))), 'cfile', leaf);
   } else {
     $('list-commit-files').innerHTML =
-      files.map((f) => fileRow(f, 'commit', 0, fileView.mode === 'list')).join('');
+      files.map((f) => fileRow(f, 'commit', 0, flatShape())).join('');
   }
 
   $('c-sort').classList.toggle('on', fileView.byName);

@@ -2740,6 +2740,30 @@ mark {
 .fg-ib.danger:hover { border-color: var(--danger); color: var(--danger); }
 
 .f-dir { color: var(--text-faint); }
+
+/* Name first, folder beside it. The container has to leave RTL behind — the
+   whole-path row uses it so long paths lose their front rather than their end,
+   but here that would swap the two halves round. */
+.f-path.f-split {
+  direction: ltr;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+/* The name is the point, so it is never the part that gets cut. */
+.f-name { flex: none; }
+.f-dir-after {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Trimmed from the front, so what survives is the folder nearest the file —
+     the half that tells two same-named files apart. */
+  direction: rtl;
+  text-align: left;
+  color: var(--text-faint);
+}
 .f-act {
   display: grid;
   place-items: center;
