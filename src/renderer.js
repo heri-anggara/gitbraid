@@ -60,6 +60,9 @@ function newTab(repo) {
     mergeSide: 'in',     // which parent a merge commit's file list compares against
     containedBy: new Map(),   // hash -> nama cabang yang memuatnya
     find: { query: '', hits: [], hitSet: new Set(), index: 0 },
+    layout: null,        // graph lanes for every loaded commit, rebuilt with them
+    rowIndex: new Map(),      // hash -> row number, for scrolling to a commit
+    rowsShown: { first: 0, last: 0 },
     // Carried across tab switches so nothing typed is lost.
     commitMsg: '',
     commitBody: '',
@@ -662,6 +665,24 @@ async function activateTab(id) {
   }
 
   restoreTabUi();
+
+  /* The tab still holds every commit it was showing, so put that back on screen
+     before asking git anything. Re-reading ten thousand commits first made each
+     switch feel like the repository was being opened again. */
+  if (state.commits.length) {
+    renderOpState();
+    renderToolbar();
+    renderSidebar();
+    renderHistory();
+    $('history-scroll').scrollTop = state.scrollTop;
+    await renderDetail();
+    saveTabs();
+    // Catches up behind the reader; refresh() drops its result if they have
+    // moved to another tab by the time it lands.
+    refresh();
+    return;
+  }
+
   await refresh();
   $('history-scroll').scrollTop = state.scrollTop;
   saveTabs();
@@ -714,24 +735,30 @@ function renderTabs() {
 
 async function refresh({ keepSelection = true } = {}) {
   if (!state.repo) return;
-  const repo = state.repo.path;
+  // Whichever tab asked. A refresh can now outlive the switch that started it,
+  // so the answer has to go back to the tab that wanted it rather than to
+  // whatever happens to be in front when git finishes.
+  const tab = state;
+  const repo = tab.repo.path;
   const [status, commits, refs, stashes, flow, op] = await Promise.all([
     call('repo:status', repo),
-    call('repo:log', repo, { limit: state.limit, all: true }),
+    call('repo:log', repo, { limit: tab.limit, all: true }),
     call('repo:refs', repo),
     call('repo:stashList', repo),
     call('flow:config', repo),
     call('repo:state', repo),
   ]);
-  if (status) state.status = status;
-  state.op = op || null;          // a merge or rebase git stopped part-way
-  renderOpState();
-  if (commits) state.commits = commits;
-  if (refs) state.refs = refs;
-  if (stashes) state.stashes = stashes;
-  if (flow) state.flow = flow;
+  if (status) tab.status = status;
+  tab.op = op || null;            // a merge or rebase git stopped part-way
+  if (commits) tab.commits = commits;
+  if (refs) tab.refs = refs;
+  if (stashes) tab.stashes = stashes;
+  if (flow) tab.flow = flow;
+  tab.remoteRefNames = new Set(tab.refs.remotes.map((r) => r.name));
 
-  state.remoteRefNames = new Set(state.refs.remotes.map((r) => r.name));
+  if (tab !== state) return;      // the reader moved on: keep the data, draw nothing
+
+  renderOpState();
   state.containedBy = computeContainment();
   // Resolve avatar URLs up front; renderHistory reads the cache synchronously.
   await ensureAvatars(state.commits);
@@ -1297,7 +1324,7 @@ async function selectCommit(hash) {
   state.mergeSide = 'in';        // a side chosen on one merge means nothing on another
   state.selection = { kind: 'commit', hash };
   paintSelection();
-  el(`.commit-row[data-hash="${hash}"]`)?.scrollIntoView({ block: 'center' });
+  scrollToCommit(hash);
   await renderDetail();
 }
 
@@ -1311,7 +1338,7 @@ async function gotoMatch(index) {
   state.selection = { kind: 'commit', hash };
   paintSelection();
   renderFindCount();
-  el(`.commit-row[data-hash="${hash}"]`)?.scrollIntoView({ block: 'center' });
+  scrollToCommit(hash);
   await renderDetail();
 }
 
@@ -1328,6 +1355,35 @@ function closeFind() {
   runFind('');
 }
 
+/* Rows drawn beyond each edge of the window. They are what lets scrolling skip
+   the redraw entirely: as long as the reader stays inside this margin the
+   markup already on the page still covers the view. */
+const OVERSCAN = 24;
+
+/* Exactly the rows the reader can see — no margin. The sticky header lives
+   inside the scroller, so it eats the first --head-h pixels of scroll travel. */
+function requiredRange(total) {
+  const sc = $('history-scroll');
+  const rowH = window.Graph.ROW_H;
+  const top = Math.max(0, sc.scrollTop - $('history-head').offsetHeight);
+  const first = Math.min(Math.floor(top / rowH), Math.max(0, total - 1));
+  // clientHeight is 0 while the pane is hidden; guess high rather than draw nothing.
+  const fits = Math.ceil((sc.clientHeight || 900) / rowH) + 1;
+  return { first, last: Math.min(total, first + fits) };
+}
+
+/* Puts the row for a commit on screen without depending on the row existing —
+   at any moment most of them do not. */
+function scrollToCommit(hash) {
+  const i = state.rowIndex?.get(hash);
+  if (i === undefined) return;
+  const sc = $('history-scroll');
+  const rowH = window.Graph.ROW_H;
+  const y = $('history-head').offsetHeight + i * rowH;
+  sc.scrollTop = Math.max(0, y - (sc.clientHeight - rowH) / 2);
+  renderRows();
+}
+
 function renderHistory() {
   const dirty = hasChanges();
   const rowsData = dirty
@@ -1342,16 +1398,43 @@ function renderHistory() {
       }, ...state.commits]
     : state.commits;
 
-  const find = state.find;
   const layout = window.Graph.layout(rowsData);
-  const indexByHash = new Map(rowsData.map((c, i) => [c.hash, i]));
+  // Held on the tab so scrolling can re-slice the view without laying the
+  // graph out again — the layout only changes when the commits do.
+  state.layout = layout;
+  state.rowIndex = new Map(rowsData.map((c, i) => [c.hash, i]));
 
   document.documentElement.style.setProperty('--graph-w', layout.width + 'px');
-  $('graph-layer').innerHTML = window.Graph.render(layout, indexByHash, { avatarFor });
+  renderRows();
+  $('btn-more').hidden = state.commits.length < state.limit;
+}
+
+/* Builds the markup for the visible band only. A ten-thousand-commit history
+   put over a hundred thousand nodes in the document, and the browser paid for
+   every one of them on every scroll; this keeps it to about a screenful. */
+function renderRows() {
+  const layout = state.layout;
+  if (!layout) return;
+  const find = state.find;
+  const rowH = window.Graph.ROW_H;
+  const total = layout.rows.length;
+  const need = requiredRange(total);
+  const first = Math.max(0, need.first - OVERSCAN);
+  const last = Math.min(total, need.last + OVERSCAN);
+  state.rowsShown = { first, last };
+
+  $('graph-layer').innerHTML =
+    window.Graph.render(layout, state.rowIndex, { avatarFor, first, last });
 
   const sel = state.selection;
+  const list = $('commit-list');
+  // The rows that were skipped still have to take up their space, or the
+  // scrollbar would shrink and the graph behind would slide out of step.
+  list.style.paddingTop = `${first * rowH}px`;
+  list.style.paddingBottom = `${(total - last) * rowH}px`;
   // Walk the laid-out rows, not rowsData, so each row knows its lane colour.
-  $('commit-list').innerHTML = layout.rows
+  list.innerHTML = layout.rows
+    .slice(first, last)
     .map((row) => {
       const c = row.commit;
       if (c.pending) {
@@ -1408,8 +1491,6 @@ function renderHistory() {
       );
     })
     .join('');
-
-  $('btn-more').hidden = state.commits.length < state.limit;
 }
 
 /* ═════ detail panel ════════════════════════════════════════════ */
@@ -4519,6 +4600,23 @@ async function resetTo(hash, mode) {
   const res = await call('repo:reset', repoPath(), hash, mode);
   if (res !== null) { await refresh({ keepSelection: false }); setStatus('Branch reset', 'ok'); }
 }
+
+/* Scrolling changes which rows exist, so it has to redraw — but only once per
+   frame, and only when the band has actually moved off what is on screen. */
+let rowsQueued = false;
+$('history-scroll').addEventListener('scroll', () => {
+  if (!state.layout || rowsQueued) return;
+  rowsQueued = true;
+  requestAnimationFrame(() => {
+    rowsQueued = false;
+    const shown = state.rowsShown;
+    const need = requiredRange(state.layout.rows.length);
+    // Still covered by what is on the page: the cheapest frame is the one that
+    // does nothing at all.
+    if (need.first >= shown.first && need.last <= shown.last) return;
+    renderRows();
+  });
+}, { passive: true });
 
 $('btn-more').addEventListener('click', async () => {
   state.limit += prefs.commitLimit;
