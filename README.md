@@ -430,6 +430,13 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Baris "Uncommitted changes" ikut masuk ke graph sebagai node putus-putus
 - Tanggal absolut `08/14/2026 @ 2:59 PM`, plus cuplikan body commit yang diredupkan
 - Muat 400 commit sekaligus, ada tombol untuk menambah
+- Memilih baris hanya memindahkan sorotannya, tidak menggambar ulang daftarnya.
+  Dulu satu klik menelan biaya sebesar membuka repo: pada 4.800 baris, 239 ms —
+  177 ms di antaranya membangun ulang daftar yang satu-satunya perubahan adalah
+  sebuah kelas CSS. Sekarang di bawah 1 ms berapa pun panjang daftarnya
+- Menggulir sendiri sudah ringan (frame terburuk 0 ms pada 4.800 baris); yang
+  masih mahal adalah `refresh()` setelah operasi git, karena riwayatnya memang
+  berubah — itu yang menunggu virtualisasi
 
 **Logo**
 - Sumbernya satu file, [`build/icon.svg`](build/icon.svg): empat keping bergradasi
