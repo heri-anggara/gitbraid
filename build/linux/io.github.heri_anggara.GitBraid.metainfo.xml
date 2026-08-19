@@ -88,6 +88,39 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.2.0" date="2026-08-19">
+      <description>
+        <p>
+          Large histories stay smooth: only the commit rows on screen are drawn,
+          so scrolling holds a steady frame whether the history is four hundred
+          commits or nine thousand, and switching tabs no longer re-reads it.
+        </p>
+        <p>
+          Nothing changes the repository behind your back either. Clicking a
+          branch moves the view to it; checking out takes a double-click, and
+          warns first when there is uncommitted work. Merging asks which way
+          round it goes before it runs, and finishing a git-flow branch can now
+          publish the result and clear the branch off the remote.
+        </p>
+      </description>
+    </release>
+    <release version="0.1.2" date="2026-08-18">
+      <description>
+        <p>
+          GitBraid no longer asks gravatar.com for author photos unless you turn
+          them on. Nothing leaves the machine by default.
+        </p>
+      </description>
+    </release>
+    <release version="0.1.1" date="2026-08-18">
+      <description>
+        <p>
+          Five fixes: two places that claimed something which had not happened,
+          two that held memory they no longer needed, and a guard on discarding
+          changes.
+        </p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-08-18">
       <description>
         <p>First working build.</p>
