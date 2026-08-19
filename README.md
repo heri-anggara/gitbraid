@@ -537,9 +537,13 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   kedua tempat, jadi menyimpan dua jawaban hanya membuatnya berselisih:
   - **Show as Path List** — satu baris per berkas dengan path lengkapnya
   - **Show as File and Dir List** — *nama berkasnya* yang dibaca duluan, foldernya
-    mengiringi dengan warna redup. Perlu diingat: dua berkas bernama sama di
+    mengiringi di sebelahnya dengan warna redup:
+    `printpdf.js  code/apps/v1/controllers/cms`. Jadi dua berkas bernama sama di
     folder berbeda — misal `route.ts` di `api/orders/[id]` dan di
-    `api/products/[id]` — akan terlihat mirip di mode ini; Tree yang membedakannya
+    `api/products/[id]` — tetap bisa dibedakan tanpa perlu hover. Nama berkasnya
+    tidak pernah ikut terpotong; yang dipangkas foldernya, dan dipangkas dari
+    **depan**, supaya folder terdekat dengan berkasnya yang selamat:
+    `…at/keeps/going/for/quite/a/while/indeed`
   - **Show as Filesystem Tree** mengelompokkan berkas ke dalam foldernya. Rantai folder yang tiap
     tingkatnya hanya berisi satu folder lagi **dipadatkan jadi satu baris**,
     seperti di editor: `src ▸ app ▸ api ▸ orders ▸ [id] ▸ route.ts` yang tadinya
