@@ -343,6 +343,17 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   selalu diutamakan
 - Status bar menyebut editor mana yang membuka berkasnya
 
+**Klik di panel kiri**
+- **Sekali klik** pada cabang, tag, atau cabang remote hanya memindahkan riwayat
+  ke ujung ref itu — melihat-lihat tidak mengubah keadaan repo. Kalau commit-nya
+  belum termuat, jendela riwayat melebar sendiri sampai ketemu
+- **Klik ganda** yang melakukan checkout. Kalau ada berkas terlacak yang belum
+  di-commit, GitBraid bertanya dulu: sisihkan ke stash lalu pasang kembali, bawa
+  serta, atau buang. Berkas yang tidak dilacak git tidak dihitung dan tidak
+  disentuh — checkout memang tak pernah menghapusnya
+- Tag beranotasi menunjuk ke commit yang ditandainya, bukan ke objek tag-nya,
+  jadi mengkliknya mendarat di baris yang benar dan urutan tanggalnya masuk akal
+
 **Klik kanan di panel kiri**
 - **Cabang lokal** — checkout, fast-forward ke upstream, fetch upstream ke
   cabang itu, push, merge, rebase, bandingkan dengan HEAD, buat cabang/tag dari
