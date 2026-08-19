@@ -1244,17 +1244,28 @@ handle('repo:log', async (repo, { limit = 400, all = true, skip = 0 } = {}) => {
 });
 
 handle('repo:refs', async (repo) => {
+  /* An annotated tag is an object in its own right, so %(objectname) is the tag
+     rather than the commit it marks, and %(committerdate) is empty because a tag
+     is tagged, not committed. The starred fields are those same fields after the
+     tag has been peeled; they are empty for every other kind of ref, which is
+     exactly when the plain ones are already right. */
   const fmt = ['%(refname)', '%(objectname)', '%(upstream:short)',
-    '%(upstream:track)', '%(HEAD)', '%(committerdate:unix)'].join('%1f');
+    '%(upstream:track)', '%(HEAD)', '%(committerdate:unix)',
+    '%(*objectname)', '%(*committerdate:unix)'].join('%1f');
   const raw = await git(repo, ['for-each-ref', `--format=${fmt}`]);
   const branches = [], remotes = [], tags = [];
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
-    const [refname, oid, upstream, track, head, date] = line.split(UNIT);
+    const [refname, oid, upstream, track, head, date, peeledOid, peeledDate] =
+      line.split(UNIT);
     const item = {
-      refname, oid, upstream, track,
+      refname,
+      // What the ref means to the history: the commit a reader can point at.
+      oid: peeledOid || oid,
+      upstream,
+      track,
       current: head === '*',
-      date: Number(date) * 1000,
+      date: Number(peeledDate || date) * 1000,
     };
     if (refname.startsWith('refs/heads/')) {
       branches.push({ ...item, name: refname.slice(11) });
