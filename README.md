@@ -19,7 +19,7 @@ runtime dependencies.
 
 <div align="center">
 
-<img src="screenshots/history-light.png" alt="The commit graph, with branch lanes, tags and a merge selected" width="880">
+<img src="screenshots/commits-light.png" alt="The commit list: branch lanes, message, author, date and SHA for every row" width="880">
 
 </div>
 
@@ -51,16 +51,17 @@ newer release exists.
 ## What it does
 
 **The history, as a graph.** Branch lanes in colour, merges drawn as they
-happened, tags and branch names in a column of their own. Only the rows on
-screen are built, so a repository of nine thousand commits scrolls like one with
-nine.
+happened, tags and branch names in a column of their own, and the work you have
+not committed yet sitting at the top of the branch. Only the rows on screen are
+built, so a repository of nine thousand commits scrolls like one with nine.
 
-Fold the details panel away and every column has room: message, author, date and
-SHA, with the row you have not committed yet sitting at the top of the branch.
+Pick a commit and the panel beside it says what that commit did — and on a merge,
+which side each file came from, since a merge has two parents and "what changed"
+has more than one answer.
 
 <div align="center">
 
-<img src="screenshots/commits-light.png" alt="The commit list at full width, showing message, author, date and SHA for each row" width="880">
+<img src="screenshots/history-light.png" alt="A merge commit selected, with the details panel showing which side each file came from" width="880">
 
 </div>
 
