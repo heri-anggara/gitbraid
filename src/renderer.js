@@ -1000,7 +1000,11 @@ function renderSidebar() {
    may widen, narrow, or switch off. */
 const COLUMNS = [
   { key: 'refs',   label: 'Branch / Tag',       cls: 'c-refs',   width: 158, min: 70,  optional: true },
-  { key: 'graph',  label: 'Graph',              cls: 'c-graph',  fixed: 'var(--graph-w, 90px)' },
+  /* The graph sizes itself to the lanes it has to draw until the reader drags
+     it, and from then on keeps the width they chose — on a repository with
+     forty branches the automatic width can take half the window. */
+  { key: 'graph',  label: 'Graph',              cls: 'c-graph',  fixed: 'var(--graph-w, 90px)',
+    min: 24, optional: true, resizable: true },
   { key: 'msg',    label: 'Commit Message',     cls: 'c-msg',    fixed: 'minmax(140px, 1fr)' },
   { key: 'author', label: 'Author',             cls: 'c-author', width: 130, min: 60,  optional: true },
   { key: 'adate',  label: 'Author Time',        cls: 'c-adate',  width: 172, min: 110, optional: true,
@@ -1030,7 +1034,12 @@ const visibleColumns = () => COLUMNS.filter((c) => !cols.hidden.has(c.key));
 
 /** Back to the widths and the visibility a fresh install starts with. */
 function resetColumns() {
-  for (const c of COLUMNS) if (c.width) cols.widths[c.key] = c.width;
+  for (const c of COLUMNS) {
+    // A column with no declared width sizes itself; forgetting the dragged
+    // value is what puts the graph back to following its lanes.
+    if (c.width) cols.widths[c.key] = c.width;
+    else delete cols.widths[c.key];
+  }
   cols.hidden = new Set(COLUMNS.filter((c) => c.offByDefault).map((c) => c.key));
   saveColumns();
   applyColumns();
@@ -1039,16 +1048,26 @@ function resetColumns() {
 }
 
 /** One track list, written once and shared by the header and every row. */
+/* A dragged width always wins; without one the column falls back to whatever it
+   declared — the graph's measured lane width, or the message column's 1fr. */
+const trackFor = (c) => (cols.widths[c.key] ? `${cols.widths[c.key]}px` : c.fixed);
+
 function applyColumns() {
   const list = visibleColumns();
-  const tracks = list.map((c) => c.fixed || `${cols.widths[c.key]}px`).join(' ');
-  document.documentElement.style.setProperty('--hist-cols', tracks);
+  document.documentElement.style.setProperty('--hist-cols', list.map(trackFor).join(' '));
+
+  /* The graph layer is positioned absolutely, outside the grid, so nothing
+     stops it painting over the message column once the reader drags its column
+     narrower than the lanes need. It is given the column's own width to clip to. */
+  const graphCol = list.find((c) => c.key === 'graph');
+  document.documentElement.style.setProperty('--graph-col-w', graphCol ? trackFor(graphCol) : '0px');
+  $('graph-layer').hidden = !graphCol;
 
   /* The narrowest the history may get before it scrolls sideways. It used to be
      a constant built from the old fixed widths; with columns that move and
      disappear it has to be recomputed alongside them. */
   const fixed = list.reduce((sum, c) => sum + (c.width ? cols.widths[c.key] : 0), 0);
-  const graph = list.some((c) => c.key === 'graph') ? 'var(--graph-w, 90px)' : '0px';
+  const graph = graphCol ? trackFor(graphCol) : '0px';
   document.documentElement.style.setProperty('--hist-min', `calc(${graph} + ${fixed + 140}px)`);
 
   /* The graph is drawn on its own layer, outside the grid, so it has to be told
@@ -1071,7 +1090,7 @@ function renderHistoryHead() {
     .map((c, i) => {
       // The handle belongs to the column it resizes, and the last one has
       // nothing to its right to trade width with.
-      const grip = c.width && i < list.length - 1
+      const grip = (c.width || c.resizable) && i < list.length - 1
         ? `<span class="col-grip" data-grip="${c.key}"></span>`
         : '';
       return `<span class="hh ${c.cls}">${esc(c.label)}${grip}</span>`;
@@ -1092,7 +1111,9 @@ $('history-head').addEventListener('mousedown', (e) => {
   const key = grip.dataset.grip;
   const col = COLUMNS.find((c) => c.key === key);
   const startX = e.clientX;
-  const startW = cols.widths[key];
+  // A column that has never been dragged has no stored width — the graph starts
+  // out sized to its lanes — so the drag begins from what is on screen.
+  const startW = cols.widths[key] ?? grip.parentElement.getBoundingClientRect().width;
   document.body.classList.add('col-resizing');
 
   const onMove = (m) => {
@@ -1423,8 +1444,10 @@ function renderRows() {
   const last = Math.min(total, need.last + OVERSCAN);
   state.rowsShown = { first, last };
 
-  $('graph-layer').innerHTML =
-    window.Graph.render(layout, state.rowIndex, { avatarFor, first, last });
+  // Nothing to draw when the column is off, and the string is the expensive part.
+  $('graph-layer').innerHTML = cols.hidden.has('graph')
+    ? ''
+    : window.Graph.render(layout, state.rowIndex, { avatarFor, first, last });
 
   const sel = state.selection;
   const list = $('commit-list');

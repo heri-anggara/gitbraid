@@ -2456,6 +2456,11 @@ mark {
   position: absolute;
   top: var(--head-h);
   left: var(--graph-x, 0px);
+  /* Clipped to its column. Drawing outside the grid is what lets one SVG span
+     every row, but it also means nothing else would stop it painting across the
+     message column when the column is dragged narrower than the lanes need. */
+  width: var(--graph-col-w, var(--graph-w, 90px));
+  overflow: hidden;
   pointer-events: none;
   z-index: 0;
 }
