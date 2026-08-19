@@ -1906,22 +1906,67 @@ function syncViewerToggles() {
 /* ── jumping between changed blocks ──
    A "difference" is a run of touched rows: consecutive additions and removals
    count as one, which is what makes 1/5 mean five edits rather than five lines. */
-const nav = { blocks: [], at: -1 };
+const nav = { blocks: [], marks: [], at: -1 };
 
 function indexBlocks() {
   nav.blocks = [];
+  // One entry per block, aligned with nav.blocks: where it ends, and what it
+  // did. The map needs the extent and the colour; the counter only needs the
+  // count, which is why the two were never separated before.
+  nav.marks = [];
   nav.at = -1;
-  let current = null;
+  let mark = null;
   for (const tr of $('fv-body').querySelectorAll('.difftable tr')) {
-    const changed = tr.classList.contains('dl-add') || tr.classList.contains('dl-del') ||
-      Boolean(tr.querySelector('td.dl-add, td.dl-del'));
-    if (changed) {
-      if (!current) { current = tr; nav.blocks.push(tr); }
+    const added = tr.classList.contains('dl-add') || Boolean(tr.querySelector('td.dl-add'));
+    const removed = tr.classList.contains('dl-del') || Boolean(tr.querySelector('td.dl-del'));
+    if (added || removed) {
+      if (!mark) {
+        mark = { last: tr, add: 0, del: 0 };
+        nav.blocks.push(tr);
+        nav.marks.push(mark);
+      }
+      mark.last = tr;
+      if (added) mark.add += 1;
+      if (removed) mark.del += 1;
     } else {
-      current = null;
+      mark = null;
     }
   }
   renderNav();
+  renderChangeMap();
+}
+
+/* The strip beside the scrollbar. It is drawn from the same blocks the counter
+   counts, so the seventh mark down is difference seven, and clicking it goes
+   there rather than somewhere approximately near it. */
+function renderChangeMap() {
+  const map = $('fv-map');
+  const body = $('fv-body');
+  const total = body.scrollHeight;
+  if (!nav.marks.length || total <= 0) { map.innerHTML = ''; return; }
+
+  /* Rows are measured against the body's own scroll origin rather than
+     offsetTop, which answers relative to whichever ancestor happens to be
+     positioned — inside a table that is not the one we mean. */
+  const origin = body.getBoundingClientRect().top - body.scrollTop;
+  map.innerHTML = nav.marks.map((m, i) => {
+    const top = nav.blocks[i].getBoundingClientRect().top - origin;
+    const bottom = m.last.getBoundingClientRect().bottom - origin;
+    const kind = m.add && m.del ? 'both' : m.del ? 'del' : 'add';
+    const lines = m.add + m.del;
+    return `<button type="button" class="fv-mark m-${kind}" data-block="${i}" ` +
+      `style="top:${(top / total * 100).toFixed(3)}%;` +
+      `height:${Math.max((bottom - top) / total * 100, 0.25).toFixed(3)}%" ` +
+      `title="Difference ${i + 1} of ${nav.marks.length} — ` +
+      `${lines} line${lines === 1 ? '' : 's'}"></button>`;
+  }).join('');
+  paintCurrentMark();
+}
+
+function paintCurrentMark() {
+  const map = $('fv-map');
+  map.querySelector('.fv-mark.here')?.classList.remove('here');
+  if (nav.at >= 0) map.querySelector(`.fv-mark[data-block="${nav.at}"]`)?.classList.add('here');
 }
 
 function renderNav() {
@@ -1939,7 +1984,29 @@ function gotoBlock(index) {
   row.classList.add('dl-here');
   row.scrollIntoView({ block: 'center' });
   renderNav();
+  paintCurrentMark();
 }
+
+$('fv-map').addEventListener('click', (e) => {
+  const mark = e.target.closest('.fv-mark');
+  if (mark) { gotoBlock(Number(mark.dataset.block)); return; }
+  // Bare strip: treat the click as a position in the file, the way a scrollbar
+  // trough does, so the map is useful even where nothing changed.
+  const body = $('fv-body');
+  const box = $('fv-map').getBoundingClientRect();
+  const at = (e.clientY - box.top) / box.height;
+  body.scrollTop = at * body.scrollHeight - body.clientHeight / 2;
+});
+
+/* Every mark is a fraction of a height that changes whenever the pane does —
+   dragging the divider, toggling wrap, resizing the window. One redraw per
+   frame at most, and only while a file is open. */
+let mapQueued = false;
+new ResizeObserver(() => {
+  if (mapQueued || !nav.marks.length) return;
+  mapQueued = true;
+  requestAnimationFrame(() => { mapQueued = false; renderChangeMap(); });
+}).observe($('fv-body'));
 
 $('fv-first').addEventListener('click', () => gotoBlock(0));
 $('fv-prev').addEventListener('click', () => gotoBlock(nav.at <= 0 ? 0 : nav.at - 1));
@@ -1961,8 +2028,10 @@ function closeFile() {
      session along with the parsed hunks. Closing a file should cost nothing to
      keep, the way parking a tab already frees its diff. */
   $('fv-body').innerHTML = '';
+  $('fv-map').innerHTML = '';
   state.diffFiles = [];
   nav.blocks = [];
+  nav.marks = [];
   nav.at = -1;
   renderDetail();
 }

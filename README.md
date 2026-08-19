@@ -321,6 +321,17 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   terakhir, dengan penghitung `2/3`. Satu "blok" adalah satu rentetan baris yang
   tersentuh, jadi `3` berarti tiga suntingan, bukan tiga baris. Pintasan:
   `Alt+↑` `Alt+↓` `Alt+Home` `Alt+End`
+- **Peta perubahan** di tepi kanan, sejajar dengan scrollbar dan bukan
+  menumpanginya: satu penanda per blok, hijau untuk tambahan, merah untuk
+  hapusan, dan dua warna kalau blok itu melakukan keduanya. Tinggi penandanya
+  sebanding dengan besar bloknya, dan blok yang sedang Anda lihat diberi bingkai
+- Mengklik penanda melompat ke blok itu dan menggerakkan penghitung `2/12`
+  bersamanya — jadi penanda ketujuh dari atas benar-benar perbedaan ketujuh,
+  sama dengan yang dilompati `Alt+↓`. Mengklik jalur kosongnya menggulir ke
+  posisi itu, seperti trough sebuah scrollbar
+- Header berkas di dalam badan diff hanya muncul kalau yang ditampilkan memang
+  lebih dari satu berkas, misalnya pada tampilan perbandingan. Untuk satu berkas
+  ia mengulang nama dan hitungan yang sudah ada di header atas, persis sama
 - **Show all lines** menampilkan seluruh berkas, bukan hanya potongan hunk
   (di balik layar: `-U100000`)
 - **Syntax highlighting** untuk TS/JS/JSX/TSX, JSON, CSS, HTML, Markdown, SQL,
