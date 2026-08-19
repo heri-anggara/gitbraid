@@ -3187,7 +3187,13 @@ mark {
 .modal-card h3 { margin: 0 0 .25em; font-size: 1.15em; }
 .modal-desc { margin: 0 0 1.1em; color: var(--text-dim); font-size: .92em; }
 .modal-field { margin-bottom: .75em; }
-.modal-field label {
+/* Small capitals suit a field's caption — TAG, URL — and nothing else in a
+   dialog. The rule used to reach every label, which put a checkbox's sentence
+   and a choice's whole explanation in capitals too; worse, it shouted the
+   branch names inside them, and a ref's case is part of its identity, so
+   "Feature/X" and "feature/x" came out looking like the same branch.
+   `label[for]` is exactly the caption and nothing else. */
+.modal-field label[for] {
   display: block;
   margin-bottom: .3em;
   font-size: .85em;
