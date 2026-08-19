@@ -2950,10 +2950,26 @@ async function finishFlow(flow) {
     ? b.upstream.slice(0, b.upstream.indexOf('/'))
     : (state.refs.remotes[0]?.name.split('/')[0] || 'origin');
   const hasRemote = state.refs.remotes.length > 0;
-  // Only worth offering when the branch was actually published; a feature that
-  // never left this machine has nothing on the server to tidy up.
-  const published = state.remoteRefNames.has(`${remote}/${flow.branch}`);
   const landing = tagged ? `${cfg.master} and ${cfg.develop}` : cfg.develop;
+
+  /* Only worth offering when the branch was actually published; a feature that
+     never left this machine has nothing on the server to tidy up.
+
+     Tracking refs answer this instantly but can be stale — pushed from another
+     machine, or pruned — so when they say no, the server is asked. When they
+     say yes there is nothing to gain: the finish tolerates a branch that has
+     since been deleted. Offline, the question has no answer at all, which the
+     dialog says rather than pretending the branch is not there. */
+  let published = state.remoteRefNames.has(`${remote}/${flow.branch}`);
+  let unreachable = false;
+  if (hasRemote && !published) {
+    setStatus(`Asking ${remote} about ${flow.branch}…`);
+    const res = await window.gitbraid.invoke('repo:remoteHasBranch', repoPath(), remote, flow.branch);
+    const answer = res.ok ? res.data : null;
+    published = answer === true;
+    unreachable = answer === null;
+    setStatus(unreachable ? `${remote} did not answer` : '');
+  }
 
   const fields = tagged
     ? [
@@ -2981,7 +2997,11 @@ async function finishFlow(flow) {
       ? `Merges into ${cfg.master}, tags it, merges into ${cfg.develop}, `
       : `Merges into ${cfg.develop}, `) +
       'then deletes the branch here.' +
-      (published ? ` It is also on ${remote}.` : ''),
+      (published ? ` It is also on ${remote}.` : '') +
+      (unreachable
+        ? ` ${remote} could not be reached, so whether the branch is also there `
+          + 'is unknown — remove it there yourself if it is.'
+        : ''),
     fields,
     confirmLabel: 'Finish',
     /* Deleting the published branch without pushing the merge would take those

@@ -1409,8 +1409,16 @@ handle('flow:finish', async (repo, { kind, branch, cfg, tag, message,
   }
 
   if (deleteRemote && remote) {
-    await step(repo, `Deleting ${remote}/${branch}`, ['push', remote, '--delete', branch]);
-    done.push(`${remote}/${branch} deleted`);
+    try {
+      await step(repo, `Deleting ${remote}/${branch}`, ['push', remote, '--delete', branch]);
+      done.push(`${remote}/${branch} deleted`);
+    } catch (e) {
+      /* Somebody else removed it first. That is the outcome asked for, so it is
+         not a failure — and failing here would leave a finish that merged,
+         tagged and pushed looking like it went wrong. */
+      if (!/remote ref does not exist/i.test(e.message)) throw e;
+      done.push(`${remote}/${branch} was already gone`);
+    }
   }
 
   return done.join(', ');
@@ -1557,6 +1565,38 @@ handle('repo:setRemoteUrl', async (repo, name, url) => {
   // actually holds now, which is the thing worth showing.
   return (await git(repo, ['remote', 'get-url', remote])).trim();
 });
+
+/* Whether the server actually has this branch, asked of the server rather than
+   of the copy of its answer we happen to hold. Remote tracking refs are only as
+   fresh as the last fetch: a branch pushed from another machine, or one whose
+   tracking ref has been pruned, leaves them saying no when the answer is yes.
+
+   Three outcomes, and the third matters: ls-remote --exit-code leaves 0 for
+   found, 2 for genuinely absent, and 128 for could-not-ask. Reporting the last
+   as "absent" would quietly hide the option whenever someone is offline.
+
+   Bounded, because this runs while a dialog waits to open. A remote wanting a
+   password would otherwise hang there with nothing on screen to explain it —
+   and ssh has prompts of its own that GIT_TERMINAL_PROMPT does not cover. */
+handle('repo:remoteHasBranch', (repo, remote, branch) => new Promise((resolve, reject) => {
+  if (!remote || !branch) return resolve(null);
+  const args = ['ls-remote', '--heads', '--exit-code', remote, `refs/heads/${branch}`];
+  const started = Date.now();
+  execFile('git', args, {
+    cwd: repo,
+    encoding: 'utf8',
+    timeout: 8000,
+    env: {
+      ...gitEnv(),
+      GIT_SSH_COMMAND: `${process.env.GIT_SSH_COMMAND || 'ssh'} -oBatchMode=yes`,
+    },
+  }, (err, stdout) => {
+    const code = err ? (err.code ?? 1) : 0;
+    recordGit(repo, args, Date.now() - started, null, code);
+    if (!err) return resolve(Boolean(String(stdout).trim()));
+    resolve(code === 2 ? false : null);
+  });
+}));
 
 handle('repo:remotes', async (repo) => {
   const raw = await git(repo, ['remote', '-v']);
