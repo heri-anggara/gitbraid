@@ -521,6 +521,9 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 **Riwayat**
 - Commit graph multi-lane dengan deteksi merge dan pewarnaan per lane
 - Garis bertekuk siku membulat, dot berisi avatar Gravatar penulis
+- Foto diambil dari **GitHub** kalau alamat commit-nya alamat terbitan GitHub
+  (nomor akunnya ada di dalam alamat itu), dan dari **Gravatar** untuk alamat
+  lain. Keduanya di balik satu saklar yang mati secara bawaan
 - **Di mana wajah penulis muncul** bisa dipilih di Preferences: pada dot graph,
   di kolom Author, di keduanya, atau tidak sama sekali. Di kolom Author, commit
   yang tidak punya Gravatar tetap mendapat cakram inisial berwarna — hurufnya
@@ -866,11 +869,13 @@ Content Security Policy yang ketat. Semua yang masuk ke DOM lewat innerHTML
 sudah di-escape, termasuk tanda kutip — nama branch dan path file boleh
 mengandungnya, dan keduanya dipakai di dalam atribut.
 
-**Satu-satunya koneksi keluar adalah Gravatar**, dan itu pun mati secara bawaan.
-CSP mengizinkan `img-src` ke `www.gravatar.com` saja. Yang dikirim adalah SHA-256
-dari alamat email tiap penulis commit, sekali per alamat lalu di-cache. Kalau
-Anda tidak mau itu, hapus kedua host gravatar dari tag CSP di `src/index.html`:
-avatar gagal dimuat tanpa error dan yang tersisa adalah cakram inisial.
+**Satu-satunya koneksi keluar adalah foto penulis**, dan itu pun mati secara
+bawaan. CSP mengizinkan `img-src` ke `www.gravatar.com` dan
+`avatars.githubusercontent.com`, tidak ke tempat lain. Yang dikirim adalah
+SHA-256 alamat email, atau nomor akun GitHub — sekali per alamat lalu di-cache.
+Kalau Anda tidak mau itu, hapus ketiga host tersebut dari tag CSP di
+`src/index.html`: foto gagal dimuat tanpa error dan yang tersisa adalah cakram
+inisial.
 
 **Yang perlu dipahami tentang avatar itu:** git tidak menyimpan gambar apa pun.
 Sebuah commit hanya berisi nama dan alamat email. GitBraid tidak pernah bertanya
@@ -878,7 +883,21 @@ ke GitHub maupun GitLab — foto yang Anda unggah ke GitHub ada di server GitHub
 dan tidak pernah diminta dari sini. Satu-satunya yang ditanya adalah Gravatar,
 dan jawabannya hanya berarti "alamat ini terdaftar di gravatar.com".
 
-Permintaannya memakai `d=404`, bukan `d=identicon`. Bedanya nyata: dengan
+Ada dua sumber, dan keduanya dipilih dari alamat email commit itu sendiri:
+
+- Alamat terbitan GitHub — `73584729+nama@users.noreply.github.com` — membawa
+  **nomor akunnya** di depan tanda plus, dan nomor itu sudah cukup untuk
+  menyusun alamat fotonya di `avatars.githubusercontent.com`. Tanpa API, tanpa
+  token, tanpa pencarian nama. Alamat noreply terbitan sebelum 2017 hanya
+  memuat username; itu dilewati, karena menyelesaikannya butuh redirect lewat
+  `github.com` — satu host lagi di CSP — demi bentuk yang sudah bertahun-tahun
+  tidak dipakai
+- Alamat lain ditanyakan ke Gravatar
+
+GitHub menjawab 200 untuk nomor apa pun — akun yang sudah dihapus mendapat tanda
+abu-abu generik, bukan ketiadaan — jadi menanyakan "apakah fotonya ada" ke sana
+selalu dijawab ya, dan pertanyaan itu tidak dibuat. Untuk Gravatar sebaliknya:
+permintaannya memakai `d=404`, bukan `d=identicon`. Bedanya nyata: dengan
 `d=identicon`, alamat yang **tidak** terdaftar tetap dijawab dengan gambar —
 sebuah pola geometris yang dikarang dari hash alamat tadi, yang tiba sebagai
 gambar biasa sehingga tidak bisa dibedakan dari wajah sungguhan. Diuji langsung
