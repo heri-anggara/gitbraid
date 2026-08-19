@@ -813,12 +813,14 @@ Ini prototipe yang berfungsi, bukan pengganti GitKraken. Yang belum ada:
 
 - **Interactive rebase.** Tidak ada UI drag-and-drop untuk squash/reorder commit.
 - **Integrasi GitHub/GitLab.** Tidak ada pull request, issue, atau review.
-- **Blame, file history, dan pencarian commit.**
+- **Blame dan file history.**
 - **Submodule dan Git LFS.**
 - **Terminal sungguhan.** Panel terminal menangkap keluaran perintah, bukan
   menyediakan TTY, jadi program layar penuh tidak bisa dipakai di dalamnya.
-- **Virtualisasi daftar commit.** Di atas ±5.000 baris, scroll mulai terasa berat
-  karena semua baris dirender sekaligus.
+- **Penyaring di sidebar.** Cabang, tag, remote, dan stash hanya bisa dicari
+  dengan menggulir. Pada repo dengan ratusan tag itu terasa; commit, berkas,
+  repo, dan tab masing-masing sudah punya kotak pencarian sendiri, sidebar
+  belum.
 
 **Soal autentikasi:** `GIT_TERMINAL_PROMPT=0` sengaja diset supaya aplikasi tidak
 menggantung menunggu prompt password yang tidak kelihatan. Konsekuensinya, push
