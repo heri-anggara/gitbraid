@@ -35,6 +35,12 @@ app.whenReady().then(async () => {
   for (const theme of ['dark', 'light']) {
     const name = (base) => base + (theme === 'light' ? '-light' : '') + '.png';
     console.log('  --- ' + theme);
+    /* Each pass starts from the same place. An open file hides the history
+       behind it, so anything left over from the pass before was photographed
+       instead of what this one meant to show. */
+    await js("closeFile()");
+    await js("collapseDetail(false)");
+    await wait(400);
     await js('applyTheme(' + JSON.stringify(theme) + ')');
     // The pointer sits wherever the window opened, and a row under it grows a
     // tooltip that has no business in a published picture.
@@ -60,6 +66,17 @@ app.whenReady().then(async () => {
     await js("(async function(){ await selectCommit(state.commits.find(function (c) { return c.parents.length > 1; }).hash); })()");
     await js("setStatus('')");
     await shot(name('history'));
+
+    /* The same history with the details panel folded away, which is the only
+       way the message, author, date and SHA columns all get room to be read.
+       Photographed from the top of the branch, where the uncommitted row sits. */
+    await js("collapseDetail(true)");
+    await js("(function(){ document.getElementById('history-scroll').scrollTop = 0; })()");
+    await wait(700);
+    await js("setStatus('')");
+    await shot(name('commits'));
+    await js("collapseDetail(false)");
+    await wait(500);
 
     /* A commit with enough in it to show the viewer doing its work: syntax
        colouring, both kinds of change, the block counter, and the change map
@@ -91,8 +108,11 @@ app.whenReady().then(async () => {
     await js("(async function(){ var c = state.status.conflicted[0]; if (c) { state.file = { path: c.path, kind: 'conflict', status: c.status }; await showFileDiff(); } })()");
     await js("setStatus('')");
     await shot(name('conflict'));
+    await js("closeFile()");
     git('merge', '--abort');
     git('stash', 'pop');
+    await js("(async function(){ await refresh({ keepSelection: false }); })()");
+    await wait(600);
   }
 
   app.quit();
