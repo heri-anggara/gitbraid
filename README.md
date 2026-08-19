@@ -434,9 +434,23 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   Dulu satu klik menelan biaya sebesar membuka repo: pada 4.800 baris, 239 ms —
   177 ms di antaranya membangun ulang daftar yang satu-satunya perubahan adalah
   sebuah kelas CSS. Sekarang di bawah 1 ms berapa pun panjang daftarnya
-- Menggulir sendiri sudah ringan (frame terburuk 0 ms pada 4.800 baris); yang
-  masih mahal adalah `refresh()` setelah operasi git, karena riwayatnya memang
-  berubah — itu yang menunggu virtualisasi
+- **Hanya baris yang terlihat yang dibuat.** Sebelumnya setiap commit yang dimuat
+  jadi node DOM sungguhan: pada riwayat 8.951 commit itu 124.490 node di daftar
+  plus 27.170 node SVG di graph, dan compositor membayarnya setiap kali digulir —
+  frame median 67,9 ms, alias 15 fps. Sekarang yang ada di dokumen hanya sekitar
+  satu layar penuh (± 600 node), dengan margin di atas dan bawah supaya menggulir
+  biasanya tidak menggambar ulang sama sekali: frame median **7 ms, sama rata
+  dari 400 sampai 8.951 baris**, dan `refresh()` pada riwayat penuh turun dari
+  3.346 ms ke 235 ms
+- Graph tetap digambar utuh: sebuah garis yang melintasi layar dari commit jauh
+  di atas ke induknya jauh di bawah ikut digambar walau kedua ujungnya tak
+  terlihat. Diperiksa terhadap perhitungan acuan di 65 pita berbeda yang semuanya
+  mengandung merge — nol selisih
+- Batas 400 baris itu bukan soal git: membaca seluruh 8.951 commit hanya 40 ms,
+  praktis sama dengan membaca 400 (35 ms). Yang dulu mahal adalah menggambarnya
+- Pindah tab memakai data yang sudah dipegang tab itu dulu, baru menyusul
+  bertanya ke git di belakang layar. Tab berisi 9.000 commit: dari 3.346 ms
+  menjadi ±90 ms; tab repo kecil ±20 ms
 
 **Logo**
 - Sumbernya satu file, [`build/icon.svg`](build/icon.svg): empat keping bergradasi
