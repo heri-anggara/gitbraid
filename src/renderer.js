@@ -536,13 +536,17 @@ function contextMenu(event, items) {
   event.preventDefault();
   if (dismissMenu) dismissMenu();
   const menu = $('ctxmenu');
+  /* If one entry carries a tick or an icon, every entry pays for that column.
+     Indenting only the checkable one left the rest hanging to its left, which
+     read as a mistake rather than as a distinction. */
+  const marked = items.some((it) => it !== '-' && (it.checked !== undefined || it.icon));
   menu.innerHTML = items
     .map((it, i) => {
       if (it === '-') return '<li class="sep"></li>';
       // An entry that cannot run right now still shows, so the menu explains
       // what exists rather than quietly rearranging itself.
       const cls = [it.danger ? 'danger' : '', it.disabled ? 'off' : '',
-                   it.checked !== undefined ? 'checkable' : '',
+                   marked ? 'checkable' : '',
                    it.icon && it.checked ? 'on' : ''].filter(Boolean).join(' ');
       /* An icon takes the tick's place: a menu whose entries are pictures of
          what they do does not also need a tick to say which one is on — the
@@ -550,8 +554,8 @@ function contextMenu(event, items) {
          same left edge as checked ones. */
       const tick = it.icon
         ? `<span class="ctx-tick ctx-icon">${it.icon}</span>`
-        : it.checked === undefined ? ''
-        : `<span class="ctx-tick">${it.checked ? '✓' : ''}</span>`;
+        : marked ? `<span class="ctx-tick">${it.checked ? '✓' : ''}</span>`
+        : '';
       // A keyboard shortcut sits to the right, so the label column stays even.
       const accel = it.accel ? `<span class="ctx-accel">${esc(it.accel)}</span>` : '';
       return `<li${it.disabled ? '' : ` data-i="${i}"`}` +
