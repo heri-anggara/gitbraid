@@ -23,13 +23,19 @@ const PREF_DEFAULTS = {
   diffFontSize: 12,
   tabSize: 4,
   lineNumbers: true,
-  gravatar: false,          // off: nothing leaves the machine
+  authorPhotos: false,      // off: nothing leaves the machine
   avatarPlace: 'graph',     // graph | author | both | none
 };
 
 const prefs = { ...PREF_DEFAULTS };
 try {
-  Object.assign(prefs, JSON.parse(localStorage.getItem('gitbraid-prefs') || '{}'));
+  const saved = JSON.parse(localStorage.getItem('gitbraid-prefs') || '{}');
+  // Was `gravatar` while that was the only place a photo could come from.
+  if (saved.gravatar !== undefined && saved.authorPhotos === undefined) {
+    saved.authorPhotos = saved.gravatar;
+  }
+  delete saved.gravatar;
+  Object.assign(prefs, saved);
 } catch { /* private mode */ }
 
 function savePrefs() {
@@ -248,19 +254,38 @@ const syncMenu = () =>
    synchronously while building the SVG. */
 const avatarCache = new Map();
 
+/* GitHub writes the account's own number into the addresses it hands out —
+   "73584729+someone@users.noreply.github.com" — and that number is the whole
+   address of the picture. No API, no token, no lookup by name. Addresses from
+   before 2017 carry only the username and are left alone: resolving those means
+   a redirect through github.com, a second host in the policy, for a form that
+   is years out of use. */
+const GITHUB_NOREPLY = /^(\d+)\+[^@]+@users\.noreply\.github\.com$/;
+
+const githubAvatar = (email) => {
+  const m = GITHUB_NOREPLY.exec(email);
+  return m ? `https://avatars.githubusercontent.com/u/${m[1]}?s=32` : null;
+};
+
 async function ensureAvatars(commits) {
-  /* Off by default, and deliberately so. Drawing a Gravatar means asking
-     gravatar.com for it, which tells a third party your address and the hashed
-     email of everyone whose commits you are reading — including colleagues, on
-     a private work repository. It also fails offline and delays every repo you
-     open. The lane-coloured disc says the same thing without leaving the
-     machine, so the network version is something you switch on. */
-  if (!prefs.gravatar) return;
+  /* Off by default, and deliberately so. A photo means asking gravatar.com or
+     github.com for it, which tells a third party the hashed email — or the
+     account number — of everyone whose commits you are reading, colleagues
+     included, on a private work repository. It also fails offline and delays
+     every repository opened. The disc of initials says as much without leaving
+     the machine, so the network version is something you switch on. */
+  if (!prefs.authorPhotos) return;
 
   const emails = new Set(commits.map((c) => (c.email || '').trim().toLowerCase()));
   const todo = [...emails].filter((e) => e && !avatarCache.has(e));
 
   await Promise.all(todo.map(async (email) => {
+    /* GitHub answers 200 for any number — a deleted account gets a grey mark
+       rather than nothing — so asking whether the picture exists would always
+       come back yes. The question is not worth a round trip. */
+    const gh = githubAvatar(email);
+    if (gh) { avatarCache.set(email, gh); return; }
+
     try {
       const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(email));
       const hex = [...new Uint8Array(digest)]
@@ -291,11 +316,11 @@ const hasImage = (url) => new Promise((resolve) => {
 });
 
 /** Offline or unknown addresses simply leave the lane-coloured disc bare. */
-/* A fetched Gravatar picture, or nothing. Separate from where it is allowed to
-   appear, because the two questions are genuinely different: one is whether the
-   network was asked, the other is where the answer is drawn. */
-const gravatarFor = (commit) =>
-  (prefs.gravatar
+/* A photo that was actually found, or nothing. Separate from where it is
+   allowed to appear, because the two questions are genuinely different: one is
+   whether the network was asked, the other is where the answer is drawn. */
+const photoFor = (commit) =>
+  (prefs.authorPhotos
     ? avatarCache.get((commit.email || '').trim().toLowerCase())
     : null) || null;
 
@@ -306,12 +331,12 @@ const showsAvatar = (where) =>
    room for a picture and no room for lettering — so a dot carries a Gravatar or
    stays a plain lane-coloured disc. The Author column, having a whole row's
    height, can fall back to initials. */
-const avatarFor = (commit) => (showsAvatar('graph') ? gravatarFor(commit) : null);
+const avatarFor = (commit) => (showsAvatar('graph') ? photoFor(commit) : null);
 
 /** The small round face beside a name in the Author column. */
 function authorChip(c) {
   if (!showsAvatar('author')) return '';
-  const url = gravatarFor(c);
+  const url = photoFor(c);
   if (url) return `<img class="c-face" src="${esc(url)}" alt="" loading="lazy">`;
   // No network involved: the letters are the author's, the colour is the
   // address's, so the same person is the same colour every time.
@@ -3685,17 +3710,18 @@ function prefPages() {
                 + 'there it only ever carries a Gravatar picture.',
               get: () => prefs.avatarPlace,
               set: (v) => { prefs.avatarPlace = v; savePrefs(); if (state.repo) renderHistory(); } },
-            { kind: 'toggle', label: 'Author photos from Gravatar',
+            { kind: 'toggle', label: 'Author photos from the internet',
               help: 'Git itself stores no pictures — a commit holds a name and an email '
-                + 'address, nothing more. Off, nothing leaves this machine. On, GitBraid '
-                + 'asks gravatar.com whether that address has a picture, which tells that '
-                + 'service the hashed email of everyone whose commits you read. An address '
-                + 'with no Gravatar keeps its disc of initials; GitBraid never shows a '
-                + 'pattern invented from the address as though it were a face. GitHub is '
-                + 'never asked anything.',
-              get: () => prefs.gravatar,
+                + 'address, nothing more. Off, nothing leaves this machine. On, an address '
+                + 'GitHub issued (73584729+name@users.noreply.github.com) is read for the '
+                + 'account number it carries and the photo fetched from GitHub; any other '
+                + 'address is asked after at gravatar.com, which tells that service the '
+                + 'hashed email of everyone whose commits you read, colleagues included. '
+                + 'An address with no photo anywhere keeps its disc of initials: GitBraid '
+                + 'never shows a pattern invented from an address as though it were a face.',
+              get: () => prefs.authorPhotos,
               set: async (v) => {
-                prefs.gravatar = v; savePrefs();
+                prefs.authorPhotos = v; savePrefs();
                 if (state.repo) { await ensureAvatars(state.commits); renderHistory(); }
               } },
             { kind: 'toggle', label: 'Ghost branch badge while hovering',
