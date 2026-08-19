@@ -2026,10 +2026,10 @@ function indexBlocks() {
    counts, so the seventh mark down is difference seven, and clicking it goes
    there rather than somewhere approximately near it. */
 function renderChangeMap() {
-  const map = $('fv-map');
+  const map = $('fv-marks');
   const body = $('fv-body');
   const total = body.scrollHeight;
-  if (!nav.marks.length || total <= 0) { map.innerHTML = ''; return; }
+  if (!nav.marks.length || total <= 0) { map.innerHTML = ''; paintViewport(); return; }
 
   /* Rows are measured against the body's own scroll origin rather than
      offsetTop, which answers relative to whichever ancestor happens to be
@@ -2047,10 +2047,25 @@ function renderChangeMap() {
       `${lines} line${lines === 1 ? '' : 's'}"></button>`;
   }).join('');
   paintCurrentMark();
+  paintViewport();
+}
+
+/* Which slice of the file is on screen. Two style writes, so it can run on
+   every scroll frame without competing with the diff for the frame. */
+function paintViewport() {
+  const body = $('fv-body');
+  const view = $('fv-view');
+  const total = body.scrollHeight;
+  const seen = body.clientHeight;
+  // Nothing to point at when the whole file already fits.
+  if (!nav.marks.length || total <= seen + 1) { view.hidden = true; return; }
+  view.hidden = false;
+  view.style.top = `${(body.scrollTop / total * 100).toFixed(3)}%`;
+  view.style.height = `${(seen / total * 100).toFixed(3)}%`;
 }
 
 function paintCurrentMark() {
-  const map = $('fv-map');
+  const map = $('fv-marks');
   map.querySelector('.fv-mark.here')?.classList.remove('here');
   if (nav.at >= 0) map.querySelector(`.fv-mark[data-block="${nav.at}"]`)?.classList.add('here');
 }
@@ -2072,6 +2087,13 @@ function gotoBlock(index) {
   renderNav();
   paintCurrentMark();
 }
+
+let viewQueued = false;
+$('fv-body').addEventListener('scroll', () => {
+  if (viewQueued) return;
+  viewQueued = true;
+  requestAnimationFrame(() => { viewQueued = false; paintViewport(); });
+}, { passive: true });
 
 $('fv-map').addEventListener('click', (e) => {
   const mark = e.target.closest('.fv-mark');
@@ -2114,7 +2136,8 @@ function closeFile() {
      session along with the parsed hunks. Closing a file should cost nothing to
      keep, the way parking a tab already frees its diff. */
   $('fv-body').innerHTML = '';
-  $('fv-map').innerHTML = '';
+  $('fv-marks').innerHTML = '';
+  $('fv-view').hidden = true;
   state.diffFiles = [];
   nav.blocks = [];
   nav.marks = [];

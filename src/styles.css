@@ -2176,26 +2176,43 @@ textarea {
 
 /* ── change map ──────────────────────────────────────────────── */
 /* Always present, even with nothing to show: reserving the strip means opening
-   a file never re-flows the diff sideways. */
+   a file never re-flows the diff sideways. It carries the diff's own background
+   and no border, so it reads as the edge of the diff rather than a gutter
+   bolted onto it. */
 .fv-map {
   position: relative;
-  width: 11px;
-  background: var(--surface);
-  border-left: 1px solid var(--line);
+  width: 14px;
+  background: var(--bg);
   cursor: pointer;
 }
+.fv-marks { position: absolute; inset: 0; }
+
+/* The part of the file on screen, so the strip answers "where am I" as well as
+   "where are the changes". */
+.fv-view {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  min-height: 12px;
+  border-radius: 4px;
+  background: var(--row-sel);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  pointer-events: none;
+}
+
 .fv-mark {
   position: absolute;
-  left: 2px;
-  right: 2px;
-  min-height: 2px;
+  left: 3px;
+  right: 3px;
+  min-height: 4px;
   padding: 0;
   border: 0;
-  border-radius: 1px;
+  border-radius: 3px;
   cursor: pointer;
-  opacity: .78;
+  opacity: .85;
+  transition: left .1s ease, right .1s ease, opacity .1s ease;
 }
-.fv-mark:hover { opacity: 1; }
+.fv-mark:hover { left: 1px; right: 1px; opacity: 1; }
 .fv-mark.m-add { background: var(--add); }
 .fv-mark.m-del { background: var(--del); }
 /* A block that both adds and removes is not one or the other, so it is drawn
@@ -2203,14 +2220,18 @@ textarea {
 .fv-mark.m-both {
   background: linear-gradient(to bottom, var(--add) 50%, var(--del) 50%);
 }
-/* The difference you are standing on, so the strip answers "where am I". */
+/* The difference you are standing on. */
 .fv-mark.here {
-  left: 0;
-  right: 0;
+  left: 1px;
+  right: 1px;
   opacity: 1;
-  box-shadow: 0 0 0 1px var(--accent);
+  box-shadow: 0 0 0 1px var(--bg), 0 0 0 2px var(--accent);
 }
 .fv-mark:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fv-mark { transition: none; }
+}
 .fv-head {
   display: flex;
   align-items: center;

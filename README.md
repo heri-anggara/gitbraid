@@ -332,7 +332,12 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - **Peta perubahan** di tepi kanan, sejajar dengan scrollbar dan bukan
   menumpanginya: satu penanda per blok, hijau untuk tambahan, merah untuk
   hapusan, dan dua warna kalau blok itu melakukan keduanya. Tinggi penandanya
-  sebanding dengan besar bloknya, dan blok yang sedang Anda lihat diberi bingkai
+  sebanding dengan besar bloknya, dan blok yang sedang Anda lihat diberi bingkai.
+  Jalurnya memakai latar diff itu sendiri tanpa garis pembatas, jadi terbaca
+  sebagai tepi diff — bukan gutter yang ditempelkan
+- Sebuah kotak transparan menandai bagian berkas yang sedang terlihat di layar,
+  jadi jalur itu menjawab "di mana saya" sekaligus "di mana perubahannya". Ia
+  duduk di bawah penanda, supaya tidak pernah menutupi satu pun perubahan
 - Mengklik penanda melompat ke blok itu dan menggerakkan penghitung `2/12`
   bersamanya — jadi penanda ketujuh dari atas benar-benar perbedaan ketujuh,
   sama dengan yang dilompati `Alt+↓`. Mengklik jalur kosongnya menggulir ke

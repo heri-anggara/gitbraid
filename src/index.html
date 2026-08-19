@@ -616,7 +616,12 @@
       <div class="fv-body" id="fv-body"></div>
       <!-- Peta perubahan: satu penanda per blok, sejajar dengan hitungan
            0/40 dan navigasi Alt+↑/↓. Diisi oleh renderChangeMap(). -->
-      <div class="fv-map" id="fv-map" title="Where the changes are — click to jump"></div>
+      <div class="fv-map" id="fv-map">
+        <!-- Bagian berkas yang sedang terlihat di layar. Di bawah penanda,
+             supaya sebuah perubahan tidak pernah tertutup olehnya. -->
+        <div class="fv-view" id="fv-view" hidden></div>
+        <div class="fv-marks" id="fv-marks"></div>
+      </div>
     </section>
 
     <div class="drag-handle" data-resize="detail"></div>
