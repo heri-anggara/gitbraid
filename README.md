@@ -55,6 +55,15 @@ happened, tags and branch names in a column of their own. Only the rows on
 screen are built, so a repository of nine thousand commits scrolls like one with
 nine.
 
+Fold the details panel away and every column has room: message, author, date and
+SHA, with the row you have not committed yet sitting at the top of the branch.
+
+<div align="center">
+
+<img src="screenshots/commits-light.png" alt="The commit list at full width, showing message, author, date and SHA for each row" width="880">
+
+</div>
+
 **Diffs you can read.** Syntax colouring for around fifteen languages, written
 here rather than pulled from a library. Stage, unstage and discard by hunk. A
 strip beside the scrollbar shows where every change is — click one to jump to
