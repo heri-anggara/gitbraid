@@ -7,6 +7,58 @@
  */
 window.Releases = [
   {
+    version: '0.3.0',
+    date: '2026-08-19',
+    title: 'It updates itself, and it stops guessing',
+    summary:
+      'GitBraid can now fetch its own new version, and several places where it '
+      + 'showed something invented or out of date now go and find out instead.',
+    sections: [
+      {
+        heading: 'Updating from inside the app',
+        items: [
+          'The version button in the status bar takes a dot when a newer release exists, and opens the notes and one button. An AppImage downloads, verifies, replaces itself and restarts; a .deb is handed to your system installer, because installing a system package needs rights this app does not have and should not ask for.',
+          'A download is always checked against the SHA-512 published with the release, and refused outright when that checksum is missing rather than installed on trust — this replaces the program you run.',
+          'The check runs once a day on opening, can be switched off, and tells GitHub only that GitBraid is running. Written on node\u2019s own https and crypto: GitBraid still ships no runtime dependencies at all.',
+        ],
+      },
+      {
+        heading: 'Author pictures that are actually somebody',
+        items: [
+          'A face is now fetched from GitHub when the commit address is one GitHub issued — the account number is inside the address, so no API and no token are involved.',
+          'Gravatar is asked with d=404 rather than d=identicon. The old setting meant an address with no Gravatar was answered with a pattern generated from it, which arrived as an image like any other: every author looked photographed. An address with no picture anywhere now keeps its disc of initials.',
+          'Where a face appears is yours to choose: on the graph dot, in the Author column, both, or nowhere.',
+        ],
+      },
+      {
+        heading: 'Reading a diff',
+        items: [
+          'A strip beside the scrollbar shows where the changes are — one mark per block, green, red, or both — and clicking one goes to that difference, carrying the 2/12 counter with it.',
+          'The file name and its counts are no longer printed twice; the diff\u2019s own header now appears only when more than one file is on screen.',
+        ],
+      },
+      {
+        heading: 'Getting around',
+        items: [
+          'Commit search has a field you can see, above the history, instead of living only behind Ctrl+F.',
+          'File lists have one setting with three shapes — path list, file and dir list, filesystem tree — shared by both panels, chosen from a menu of pictures.',
+          'The Graph column can be hidden and dragged like any other, and the details panel folds to a rail rather than only disappearing.',
+          'The repository and branch header is one box with icons in place of the two captions that used to take a line each.',
+        ],
+      },
+      {
+        heading: 'Correctness',
+        items: [
+          'An annotated tag now points at the commit it marks. Clicking one used to search the history for the tag object\u2019s own hash, which no commit has, and quietly do nothing.',
+          'Whether a flow branch is on the remote is asked of the remote, not read from tracking refs that are only as fresh as the last fetch. Offline, the dialog says the answer is unknown rather than pretending the branch is not there.',
+          'A repository\u2019s remote URL can be changed from the menu, which reads back what git actually holds afterwards.',
+          'Dialogs no longer shout their sentences. A rule meant for field captions was putting whole explanations in capitals, branch names included — and a ref\u2019s case is part of what it is.',
+          'Text in the chrome can no longer be selected, so double-clicking a branch to check it out stops smearing its name in blue.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.2.0',
     date: '2026-08-19',
     title: 'Big histories, and nothing moved behind your back',
