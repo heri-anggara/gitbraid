@@ -518,9 +518,15 @@ function contextMenu(event, items) {
       // An entry that cannot run right now still shows, so the menu explains
       // what exists rather than quietly rearranging itself.
       const cls = [it.danger ? 'danger' : '', it.disabled ? 'off' : '',
-                   it.checked !== undefined ? 'checkable' : ''].filter(Boolean).join(' ');
-      // A blank tick keeps unchecked labels on the same left edge as checked ones.
-      const tick = it.checked === undefined ? ''
+                   it.checked !== undefined ? 'checkable' : '',
+                   it.icon && it.checked ? 'on' : ''].filter(Boolean).join(' ');
+      /* An icon takes the tick's place: a menu whose entries are pictures of
+         what they do does not also need a tick to say which one is on — the
+         chosen row is lit instead. A blank tick keeps unchecked labels on the
+         same left edge as checked ones. */
+      const tick = it.icon
+        ? `<span class="ctx-tick ctx-icon">${it.icon}</span>`
+        : it.checked === undefined ? ''
         : `<span class="ctx-tick">${it.checked ? '✓' : ''}</span>`;
       // A keyboard shortcut sits to the right, so the label column stays even.
       const accel = it.accel ? `<span class="ctx-accel">${esc(it.accel)}</span>` : '';
@@ -1607,17 +1613,6 @@ function fileRow(f, kind, depth = 0, nameOnly = false) {
 
 /* How the uncommitted lists are drawn. Kept apart from the commit panel's own
    setting: one is a list you act on, the other is a record you read. */
-const wipView = { mode: 'list' };
-try {
-  const saved = JSON.parse(localStorage.getItem('gitbraid-wipview') || '{}');
-  if (saved.mode === 'tree' || saved.mode === 'list') wipView.mode = saved.mode;
-} catch { /* private mode */ }
-
-const saveWipView = () => {
-  try { localStorage.setItem('gitbraid-wipview', JSON.stringify(wipView)); }
-  catch { /* private mode */ }
-};
-
 let wipFilter = '';
 
 /** Filtering flattens: a tree of folders whose files are all hidden tells you
@@ -1626,10 +1621,10 @@ function wipRows(list, kind) {
   const q = wipFilter;
   const shown = q ? list.filter((f) => f.path.toLowerCase().includes(q)) : list;
   if (!shown.length) return { html: '', count: 0 };
-  const html = wipView.mode === 'tree' && !q
+  const html = fileView.mode === 'tree' && !q
     ? renderTree(buildTree(shown.map((f) => ({ ...f, name: f.path }))), `wip-${kind}`,
         (f, label, depth) => fileRow({ ...f, label }, kind, depth))
-    : shown.map((f) => fileRow(f, kind, 0, true)).join('');
+    : shown.map((f) => fileRow(f, kind, 0, fileView.mode === 'list')).join('');
   return { html, count: shown.length };
 }
 
@@ -1653,10 +1648,7 @@ function renderWip() {
   $('list-unstaged').innerHTML = unstaged.html ||
     `<li class="empty-row">${wipFilter ? 'No changed file matches' : 'Working tree is clean'}</li>`;
 
-  $('w-view-list').classList.toggle('on', wipView.mode === 'list');
-  $('w-view-tree').classList.toggle('on', wipView.mode === 'tree');
-  // Tree is meaningless while a filter is narrowing the list to a handful.
-  $('w-view-tree').disabled = Boolean(wipFilter);
+  paintViewAs('w-viewas');
 
   $('count-staged').textContent = s.staged.length;
   $('count-unstaged').textContent = working.length;
@@ -1708,6 +1700,54 @@ const saveFileView = () => {
   try { localStorage.setItem('gitbraid-fileview', JSON.stringify(fileView)); } catch { /* ignore */ }
 };
 
+/* How a list of files is laid out. One setting, shared by the working-tree
+   panel and the commit panel: the same three shapes mean the same thing in
+   both, so keeping two answers only made them disagree. */
+const VIEW_MODES = [
+  { mode: 'path', label: 'Show as Path List',
+    hint: 'One row per file, showing the whole path',
+    icon: '<svg viewBox="0 0 14 14"><path d="M2 3.5h10M2 7h10M2 10.5h10" fill="none" '
+      + 'stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>' },
+  { mode: 'list', label: 'Show as File and Dir List',
+    hint: 'The file name reads first, its folder alongside in grey',
+    icon: '<svg viewBox="0 0 14 14"><path d="M2 3.5h3.5M7.5 3.5h4.5M2 7h3.5M7.5 7h4.5'
+      + 'M2 10.5h3.5M7.5 10.5h4.5" fill="none" stroke="currentColor" stroke-width="1.4" '
+      + 'stroke-linecap="round"/></svg>' },
+  { mode: 'tree', label: 'Show as Filesystem Tree',
+    hint: 'Group the files into the folders they live in',
+    icon: '<svg viewBox="0 0 14 14"><path d="M2.5 2.5v8.5h3M2.5 6.5h3" fill="none" '
+      + 'stroke="currentColor" stroke-width="1.3" stroke-linecap="round" '
+      + 'stroke-linejoin="round"/><path d="M7 2.5h5M7 6.5h5M7 11h5" fill="none" '
+      + 'stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>' },
+];
+
+const viewMode = () => VIEW_MODES.find((v) => v.mode === fileView.mode) || VIEW_MODES[0];
+
+/** Keeps a panel's button showing the shape the lists are actually in. */
+function paintViewAs(id) {
+  const v = viewMode();
+  $(id).innerHTML = v.icon;
+  $(id).title = `${v.label} — click to change how files are listed`;
+}
+
+function viewAsMenu(button) {
+  const box = button.getBoundingClientRect();
+  contextMenu(
+    // contextMenu opens where the pointer is; a button's menu belongs under the
+    // button, so it is handed the corner instead.
+    { preventDefault() {}, clientX: box.left, clientY: box.bottom + 4 },
+    VIEW_MODES.map((v) => ({
+      label: v.label, icon: v.icon, hint: v.hint, checked: fileView.mode === v.mode,
+      run: () => {
+        fileView.mode = v.mode;
+        saveFileView();
+        renderCommitFiles();
+        if (state.status) renderWip();
+      },
+    }))
+  );
+}
+
 const STATUS_LABEL = { M: 'modified', A: 'added', D: 'deleted', R: 'renamed', C: 'copied' };
 
 let commitFiles = [];
@@ -1728,12 +1768,12 @@ function renderCommitFiles() {
     $('list-commit-files').innerHTML =
       renderTree(buildTree(files.map((f) => ({ ...f, name: f.path }))), 'cfile', leaf);
   } else {
-    $('list-commit-files').innerHTML = files.map((f) => fileRow(f, 'commit')).join('');
+    $('list-commit-files').innerHTML =
+      files.map((f) => fileRow(f, 'commit', 0, fileView.mode === 'list')).join('');
   }
 
   $('c-sort').classList.toggle('on', fileView.byName);
-  $('c-view-path').classList.toggle('on', fileView.mode === 'path');
-  $('c-view-tree').classList.toggle('on', fileView.mode === 'tree');
+  paintViewAs('c-viewas');
 }
 
 async function renderCommitPanel(hash) {
@@ -1861,12 +1901,8 @@ $('c-edit-body').addEventListener('keydown', (e) => {
 $('c-sort').addEventListener('click', () => {
   fileView.byName = !fileView.byName; saveFileView(); renderCommitFiles();
 });
-$('c-view-path').addEventListener('click', () => {
-  fileView.mode = 'path'; saveFileView(); renderCommitFiles();
-});
-$('c-view-tree').addEventListener('click', () => {
-  fileView.mode = 'tree'; saveFileView(); renderCommitFiles();
-});
+$('c-viewas').addEventListener('click', (e) => viewAsMenu(e.currentTarget));
+$('w-viewas').addEventListener('click', (e) => viewAsMenu(e.currentTarget));
 
 $('c-parents').addEventListener('click', (e) => {
   const b = e.target.closest('.c-parent');
@@ -4864,13 +4900,6 @@ $('file-filter').addEventListener('input', (e) => {
       '#list-staged li[data-path], #list-unstaged li[data-path]').length;
     setStatus(`${shown} file${shown === 1 ? '' : 's'} match “${wipFilter}”`);
   }
-});
-
-$('w-view-list').addEventListener('click', () => {
-  wipView.mode = 'list'; saveWipView(); renderWip();
-});
-$('w-view-tree').addEventListener('click', () => {
-  wipView.mode = 'tree'; saveWipView(); renderWip();
 });
 
 $('btn-filter-clear').addEventListener('click', () => {

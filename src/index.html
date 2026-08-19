@@ -654,12 +654,9 @@
         </div>
 
         <div class="wip-viewbar">
-          <span class="c-viewtoggle">
-            <button class="btn btn-sm" id="w-view-list"
-                    title="One row per file, named only — the folder is on hover">List</button>
-            <button class="btn btn-sm" id="w-view-tree"
-                    title="Group the files into their folders">Tree</button>
-          </span>
+          <!-- Ikonnya menunjukkan bentuk daftar yang sedang dipakai;
+               diisi oleh paintViewAs(). -->
+          <button class="btn btn-sm btn-icon" id="w-viewas"></button>
         </div>
 
         <!-- Conflicts come first: nothing else in this panel can be finished
@@ -775,8 +772,7 @@
           <span class="c-stats" id="c-stats"></span>
           <span class="c-viewtoggle">
             <button class="btn btn-sm" id="c-sort" title="Sort by name, or keep git's own order">A–Z</button>
-            <button class="btn btn-sm" id="c-view-path" title="One row per file, showing the whole path">Path</button>
-            <button class="btn btn-sm" id="c-view-tree" title="Group files into their folders">Tree</button>
+            <button class="btn btn-sm btn-icon" id="c-viewas"></button>
           </span>
         </div>
         <ul class="filelist" id="list-commit-files"></ul>
