@@ -2171,11 +2171,13 @@ function diffNeed() {
   };
 }
 
-/* Wrapping makes a row as tall as it needs to be, and how tall that is depends
-   on the width it is drawn at — not something a window can be counted from. It
-   alone draws whole. */
+/* Wrapping makes a row as tall as it needs to be — unless nothing wraps, or
+   everything wraps to the same height, either of which leaves the rows uniform
+   and therefore countable. Whether that is the case is decided by settleWrap()
+   after the first full draw; until then a wrapping view draws whole. */
 const diffIsWindowed = () =>
-  Boolean(diffView) && !viewer.wrap && diffView.rows > 600;
+  Boolean(diffView) && diffView.rows > 600 &&
+  (!viewer.wrap || diffView.wrapUniform === true);
 
 function paintDiff() {
   if (!diffView) return;
@@ -2205,10 +2207,57 @@ function paintDiff() {
   const fileHead = body.querySelector('.difffile-head');
   rowSize.fileHead = fileHead && fileHead.offsetParent
     ? Math.round(fileHead.getBoundingClientRect().height) : 0;
+
+  syncHBar();
+  settleWrap();
 }
+
+/* The horizontal scrollbar for the pane. It mirrors the pane's scrollLeft and
+   is the thing the user grabs: the pane's own horizontal scrollbar is hidden,
+   because a native one sits at the bottom of the content, a mile below a long
+   diff. The bar is its own row beneath the pane, so it is always in reach. */
+function syncHBar() {
+  const body = $('fv-body');
+  const bar = $('fv-hbar');
+  if (!bar) return;
+  const wide = body.scrollWidth > body.clientWidth + 1;
+  bar.hidden = !wide;
+  if (wide) {
+    $('fv-hbar-run').style.width = body.scrollWidth + 'px';
+    bar.scrollLeft = body.scrollLeft;
+  }
+}
+
+/* A wrapping view draws whole on its first pass, because a window cannot be cut
+   until the rows are known to be a single height. That pass measures itself:
+   what the uniform model predicted, against what the browser actually laid
+   out. They agree when nothing wraps — or when everything wraps to the same
+   height — and disagree the moment any row is taller than the rest. The 1px
+   per-hunk and per-file borders are the only systematic difference, so they are
+   taken out before the comparison. */
+function settleWrap() {
+  if (!diffView || !viewer.wrap || diffView.rows <= 600) return;
+  if (diffView.wrapUniform !== undefined) return;
+  const layout = diffLayout();
+  const borders = layout.hunks.length + state.diffFiles.length;
+  const extra = $('fv-body').scrollHeight - layout.height - borders;
+  diffView.wrapUniform = Math.abs(extra) <= 2;
+  // Uniform after all: cut the window that was skipped on the first pass.
+  if (diffView.wrapUniform) paintDiff();
+}
+
+/* The bar and the pane are two views of one scrollLeft, so each follows the
+   other. Setting scrollLeft to the value it already has is a no-op, so the two
+   listeners cannot chase each other. */
+$('fv-hbar').addEventListener('scroll', () => {
+  $('fv-body').scrollLeft = $('fv-hbar').scrollLeft;
+}, { passive: true });
 
 let diffQueued = false;
 $('fv-body').addEventListener('scroll', () => {
+  const bar = $('fv-hbar');
+  if (bar && !bar.hidden) bar.scrollLeft = $('fv-body').scrollLeft;
+
   if (!diffIsWindowed() || diffQueued) return;
   diffQueued = true;
   requestAnimationFrame(() => {
@@ -2568,6 +2617,7 @@ async function showFileDiff() {
     opts: { path: f.path, highlight: viewer.syntax },
     rows: diffRowTotal(),
     shown: null,
+    wrapUniform: undefined,
   };
   $('fv-body').scrollTop = 0;
   paintDiff();
