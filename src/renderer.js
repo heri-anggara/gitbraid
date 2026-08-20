@@ -5164,9 +5164,34 @@ function renderNotes() {
    path-filtered log drops the commits between the ones that touched the file,
    so the parents the graph draws its lanes from are no longer all present —
    lanes that lie are worse than no lanes at all. */
-const fhist = { path: '', commits: [], names: {}, at: -1 };
+const fhist = { path: '', commits: [], names: {}, at: -1,
+                home: null, next: null, was: null };
+
+/* The diff panel is moved here rather than rebuilt. Everything it can do — the
+   toolbar, the change map, block navigation, wrapping, side-by-side, drawing
+   only the rows on screen — is bound to that one element, and a second copy
+   would be a second place to fix every time. Moving a node keeps its listeners,
+   so it arrives working. */
+function mountViewer() {
+  const fv = $('fileview');
+  if (fhist.home) return;
+  fhist.home = fv.parentNode;
+  fhist.next = fv.nextSibling;
+  $('fh-slot').appendChild(fv);
+  fv.hidden = false;
+}
+
+function unmountViewer() {
+  const fv = $('fileview');
+  if (!fhist.home) return;
+  fhist.home.insertBefore(fv, fhist.next);
+  fhist.home = null;
+  fhist.next = null;
+}
 
 async function openFileHistory(file) {
+  // Whatever the middle pane was showing comes back when this panel closes.
+  if (!fhist.home) fhist.was = { file: state.file, selection: state.selection };
   fhist.path = file;
   fhist.commits = [];
   fhist.names = {};
@@ -5176,9 +5201,9 @@ async function openFileHistory(file) {
   $('fh-path').title = file;
   $('fh-count').textContent = '';
   $('fh-list').innerHTML = '<li class="fh-empty">Reading history…</li>';
-  $('fh-diff').innerHTML = '';
   $('app').classList.add('reading-fhist');
   $('fhist').hidden = false;
+  mountViewer();
 
   const out = await call('repo:fileLog', repoPath(), file, { limit: 200 });
   if (out === null) { closeFileHistory(); return; }
@@ -5224,18 +5249,15 @@ async function pickFileCommit(i) {
     li.classList.toggle('on', Number(li.dataset.i) === i);
   }
   /* The name it had at that commit, not the name it has now — asking for
-     today's path at a commit made before the rename returns nothing. */
-  const at = fhist.names[c.hash] || fhist.path;
-  const raw = await call('repo:diffCommitFile', repoPath(), {
-    hash: c.hash, file: at, ignoreWhitespace: viewer.ignoreWhitespace,
-    context: viewer.allLines ? 100000 : 3, side: 'in',
-  });
-  if (raw === null || fhist.at !== i) return;
-  const files = window.Diff.parse(raw || '');
-  $('fh-diff').innerHTML = files.length
-    ? window.Diff.render(files, [], { path: at, highlight: viewer.syntax })
-    : '<div class="empty-note">This commit records no textual change to the file.</div>';
-  $('fh-diff').scrollTop = 0;
+     today's path at a commit made before the rename returns nothing.
+
+     Handed to the ordinary viewer as a file inside a commit, which is what it
+     is: that path already fetches with repo:diffCommitFile and already puts the
+     staging buttons away, because there is nothing to stage in the past. */
+  state.selection = { kind: 'commit', hash: c.hash };
+  state.file = { path: fhist.names[c.hash] || fhist.path, kind: 'commit',
+                 status: 'M', untracked: false };
+  await showFileDiff();
 }
 
 $('fh-list').addEventListener('click', (e) => {
@@ -5244,12 +5266,19 @@ $('fh-list').addEventListener('click', (e) => {
 });
 
 function closeFileHistory() {
+  unmountViewer();
   $('app').classList.remove('reading-fhist');
   $('fhist').hidden = true;
   fhist.commits = [];
   fhist.names = {};
+  fhist.at = -1;
   $('fh-list').innerHTML = '';
-  $('fh-diff').innerHTML = '';
+  // Put back whatever the middle pane was showing before this opened.
+  const was = fhist.was || { file: null, selection: null };
+  fhist.was = null;
+  state.file = was.file;
+  state.selection = was.selection;
+  renderViewer();
 }
 
 $('fh-close').addEventListener('click', closeFileHistory);
