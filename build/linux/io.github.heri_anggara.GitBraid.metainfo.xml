@@ -96,6 +96,25 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.4.0" date="2026-08-20">
+      <description>
+        <p>
+          Large diffs draw only the rows on screen, in every view: unified,
+          side-by-side and wrapped. A twelve-thousand-line diff went from about
+          nine frames a second to a steady seven milliseconds a frame.
+        </p>
+        <p>
+          A failed git command now opens a dialog with the line that explains it
+          and the whole of git's output, and Git-Flow refuses a version number
+          that is already tagged before it changes anything.
+        </p>
+        <p>
+          Side-by-side keeps its halves even and its divider in the middle, the
+          diff has a horizontal scrollbar that is always in reach, and the change
+          map doubles as the pane's scrollbar.
+        </p>
+      </description>
+    </release>
     <release version="0.3.1" date="2026-08-19">
       <description>
         <p>
