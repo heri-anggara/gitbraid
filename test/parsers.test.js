@@ -250,6 +250,117 @@ check('only the first hunk was staged',
   stagedDiff[0].hunks[0].lines.some((l) => l.text === 'CHANGED TOP'),
   stagedDiff[0].hunks.length);
 
+/* Side-by-side draws only the rows in the window, and where it cuts comes from
+   pairCount rather than from the rows themselves. If the two ever disagree the
+   pane scrolls to offsets its content does not have, so they are checked
+   against each other on every hunk of a real diff — including the awkward ones:
+   a removal with no partner, an addition with no partner, and an uneven run. */
+{
+  let hunks = 0;
+  let agree = 0;
+  let paired = 0;
+  const seen = new Set();
+  for (const f of files.concat(stagedDiff)) {
+    for (const h of f.hunks || []) {
+      hunks += 1;
+      const rows = Diff.pairRows(h);
+      if (Diff.pairCount(h) === rows.length) agree += 1;
+      for (const r of rows) {
+        if (r.left && r.right && !r.ctx) paired += 1;
+        seen.add(r.left && r.right ? 'both' : r.left ? 'left' : 'right');
+      }
+    }
+  }
+  check('pairCount agrees with the rows pairRows builds, on every hunk',
+    hunks > 0 && agree === hunks, `${agree}/${hunks}`);
+  check('the fixture exercises additions and pairs',
+    seen.has('right') && seen.has('both'), [...seen].join(','));
+
+  /* Constructed rather than found: an uneven run is where a miscount hides, and
+     the fixture happens not to contain one. Four removals against one addition
+     is four rows, three of them with an empty right half. */
+  const uneven = Diff.parse(
+    'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,6 +1,3 @@\n' +
+    ' keep\n-one\n-two\n-three\n-four\n+ONE\n keep2');
+  const un = uneven[0].hunks[0];
+  check('four removals against one addition is four rows, not five',
+    Diff.pairCount(un) === 6 && Diff.pairRows(un).length === 6,
+    Diff.pairCount(un));
+  check('the three unpartnered removals leave the right half empty',
+    Diff.pairRows(un).filter((r) => r.left && !r.right).length === 3,
+    Diff.pairRows(un).filter((r) => r.left && !r.right).length);
+  check('side-by-side and unified count different totals for the same diff',
+    Diff.rowCountSplit(files) < Diff.rowCount(files) || paired === 0,
+    `${Diff.rowCountSplit(files)} vs ${Diff.rowCount(files)}`);
+
+  // A window has to name the same rows the renderer draws.
+  const html = Diff.renderSplit(files, [], { first: 0, last: 3, rowH: 20, headH: 27 });
+  const drawn = (html.match(/<tr>/g) || []).length;
+  check('a three-row window draws at most three rows', drawn <= 3 && drawn > 0, drawn);
+  check('the rows left out keep their height', html.includes('class="dl-gap"') ||
+    html.includes('hunk-gap'));
+}
+
+/* A fixed table takes its column widths from whichever row comes first. Once a
+   side-by-side window has scrolled that row is a spacer spanning all four
+   columns, which says nothing about any one of them — so the columns collapsed
+   to equal quarters and the left side slid into the middle of the pane. The
+   widths are declared on the table now, and this is what says so. */
+{
+  const many = ['diff --git a/y b/y', '--- a/y', '+++ b/y', '@@ -1,100 +1,100 @@'];
+  for (let i = 0; i < 100; i++) many.push((i % 5 === 0 ? '-old ' : ' ctx ') + i);
+  const wide = Diff.parse(many.join('\n'));
+  const win = Diff.renderSplit(wide, [], { first: 40, last: 60, rowH: 20, headH: 27 });
+  check('side-by-side declares its columns instead of inferring them',
+    win.includes('<colgroup>') && win.indexOf('<colgroup>') < win.indexOf('<tbody>'));
+  check('four columns are declared, two numbers and two texts',
+    (win.match(/<col class="c-num">/g) || []).length === 2 &&
+    (win.match(/<col class="c-text">/g) || []).length === 2);
+  // The row that used to dictate the widths: a spacer, first inside the body.
+  const body = win.slice(win.indexOf('<tbody>'));
+  check('a scrolled window really does open with a spacer row',
+    body.indexOf('dl-gap') < body.indexOf('<tr>') && body.includes('colspan="4"'));
+}
+
+/* A wrapped row is not the same height as its neighbour, so the spacers that
+   stand in for the rows outside the window cannot be a row count times one
+   height. They are measured, and passed in as running totals. If the spacers
+   and the model disagree, the page is a different height from the map that
+   decides what to draw, and the diff slides under the pointer as it scrolls. */
+{
+  const src = ['diff --git a/z b/z', '--- a/z', '+++ b/z', '@@ -1,10 +1,10 @@'];
+  for (let i = 0; i < 10; i++) src.push((i === 3 ? '-row ' : ' row ') + i);
+  const one = Diff.parse(src.join('\n'));
+  const n = one[0].hunks[0].lines.length;
+
+  // Rows 0-2 are 20px, rows 3-9 are 60px: a run that is nothing like uniform.
+  const rowSum = new Float64Array(n + 1);
+  for (let i = 0; i < n; i++) rowSum[i + 1] = rowSum[i] + (i < 3 ? 20 : 60);
+
+  const html = Diff.render(one, [], { first: 5, last: 7, rowH: 20, headH: 27, rowSum });
+  const gaps = [...html.matchAll(/class="dl-gap" style="height:(\d+(?:\.\d+)?)px"/g)]
+    .map((m) => Number(m[1]));
+  check('the spacer above the window is as tall as the rows it replaces',
+    gaps[0] === rowSum[5], `${gaps[0]} vs ${rowSum[5]}`);
+  check('the spacer below it covers the rest of the hunk',
+    gaps[1] === rowSum[n] - rowSum[7], `${gaps[1]} vs ${rowSum[n] - rowSum[7]}`);
+  check('the two spacers plus the window account for the whole hunk',
+    gaps[0] + gaps[1] + (rowSum[7] - rowSum[5]) === rowSum[n]);
+
+  // Without measurements it must still fall back to one height per row.
+  const plain = Diff.render(one, [], { first: 5, last: 7, rowH: 20, headH: 27 });
+  const flat = [...plain.matchAll(/class="dl-gap" style="height:(\d+)px"/g)].map((m) => Number(m[1]));
+  check('with nothing measured, spacers go back to a row count times one height',
+    flat[0] === 5 * 20 && flat[1] === (n - 7) * 20, flat.join('/'));
+
+  // Side-by-side takes the same offsets.
+  const sp = Diff.renderSplit(one, [], { first: 5, last: 7, rowH: 20, headH: 27, rowSum });
+  const spGaps = [...sp.matchAll(/class="dl-gap" style="height:(\d+(?:\.\d+)?)px"/g)]
+    .map((m) => Number(m[1]));
+  check('side-by-side spacers use the measured heights too',
+    spGaps.length === 2 && spGaps[0] === rowSum[5], spGaps.join('/'));
+}
+
 // And unstage it again with the reverse patch, the way the UI does.
 git(['apply', '--cached', '--reverse', '-'], { input: Diff.hunkPatch(mFile, mFile.hunks[0]) });
 const afterUnstage = P.parseStatus(git(['status', '--porcelain=v2', '--branch', '-z']));

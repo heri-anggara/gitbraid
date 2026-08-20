@@ -164,8 +164,40 @@
     return Boolean(lang);
   }
 
-  function renderHunk(file, hunk, fileIndex, hunkIndex, actions) {
+  /* How tall a line row and a hunk header are. Measured by the renderer from
+     what is actually on screen and handed back in, because a window has to be
+     cut in pixels and CSS owns those numbers. */
+  let ROW_H = 20;
+  let HEAD_H = 27;
+
+  /** Every line row in the file, in order — what a window is cut out of. */
+  function rowCount(files) {
+    let n = 0;
+    for (const f of files) for (const h of f.hunks || []) n += h.lines.length;
+    return n;
+  }
+
+  const gapRow = (px) =>
+    (px > 0 ? `<tr class="dl-gap" style="height:${px}px"><td colspan="4"></td></tr>` : '');
+
+  /* How tall a run of rows is. Rows are one height each until they wrap, and
+     then they are not — so when the caller has measured them it passes the
+     offsets in and the spacers hold the true distance. Getting this wrong does
+     not misdraw anything visible: it makes the page a different height from the
+     model that decides what to draw, and the diff slides under the pointer. */
+  /* Running totals of row heights alone — no hunk headers in them, so the
+     distance between any two row numbers is exactly the rows between them. */
+  let ROW_SUM = null;
+  const spanPx = (from, to) =>
+    (ROW_SUM ? Math.max(0, ROW_SUM[to] - ROW_SUM[from]) : Math.max(0, to - from) * ROW_H);
+
+  function renderHunk(file, hunk, fileIndex, hunkIndex, actions, from = 0, to = Infinity,
+                      base = 0) {
+    // Which of this hunk's rows the window actually asks for.
+    const lo = Math.max(0, from);
+    const hi = Math.min(hunk.lines.length, to);
     const rows = hunk.lines
+      .slice(lo, hi)
       .map((l) => {
         const cls =
           l.type === 'add' ? 'dl-add' :
@@ -193,11 +225,16 @@
       )
       .join('');
 
+    /* The rows left out still take their space, so the scrollbar keeps its
+       length and nothing under the pointer moves as the window slides. */
     return (
       '<div class="hunk">' +
       `<div class="hunk-head"><span class="hunk-range">${esc(hunk.header)}</span>` +
       `<span class="hunk-actions">${buttons}</span></div>` +
-      `<table class="difftable"><tbody>${rows}</tbody></table>` +
+      '<table class="difftable"><tbody>' +
+      gapRow(spanPx(base, base + lo)) + rows +
+      gapRow(spanPx(base + hi, base + hunk.lines.length)) +
+      '</tbody></table>' +
       '</div>'
     );
   }
@@ -205,9 +242,21 @@
   /** Render a parsed diff. `actions` are the per-hunk buttons to show. */
   function render(files, actions = [], opts = null) {
     setPaint(opts);
+    if (opts && opts.rowH) ROW_H = opts.rowH;
+    if (opts && opts.headH) HEAD_H = opts.headH;
+    ROW_SUM = (opts && opts.rowSum) || null;
     if (!files.length) {
       return '<div class="empty-note">No textual changes here.</div>';
     }
+    /* The window, counted in line rows across the whole diff. Left out, every
+       row is drawn — which is right for a short diff and ruinous for a long
+       one: a file with thousands of changed lines put tens of thousands of
+       elements in the document, and the browser laid out all of them on every
+       scroll. */
+    const first = opts && Number.isFinite(opts.first) ? opts.first : 0;
+    const last = opts && Number.isFinite(opts.last) ? opts.last : Infinity;
+    let seen = 0;
+
     return files
       .map((file, fi) => {
         const title =
@@ -218,7 +267,16 @@
         const body = file.binary
           ? '<div class="empty-note">Binary file — no preview available.</div>'
           : file.hunks
-              .map((h, hi) => renderHunk(file, h, fi, hi, actions))
+              .map((h, hi) => {
+                const start = seen;
+                seen += h.lines.length;
+                // Wholly outside the window: kept as height, not as elements.
+                if (seen <= first || start >= last) {
+                  return `<div class="hunk hunk-gap" style="height:${
+                    spanPx(start, seen) + HEAD_H}px"></div>`;
+                }
+                return renderHunk(file, h, fi, hi, actions, first - start, last - start, start);
+              })
               .join('');
 
         return (
@@ -257,7 +315,34 @@
     return rows;
   }
 
-  function splitHunk(file, hunk, fileIndex, hunkIndex, actions) {
+  /* How many rows pairHunk will produce, without building them. Side-by-side
+     was left undrawn-in-a-window because "rows are not countable there" — they
+     are: a run of removals beside a run of additions is as many rows as the
+     longer of the two, and everything else is one row for one line. */
+  function pairCount(hunk) {
+    let n = 0;
+    let dels = 0;
+    let adds = 0;
+    for (const l of hunk.lines) {
+      if (l.type === 'del') dels += 1;
+      else if (l.type === 'add') adds += 1;
+      else { n += Math.max(dels, adds) + 1; dels = 0; adds = 0; }
+    }
+    return n + Math.max(dels, adds);
+  }
+
+  function rowCountSplit(files) {
+    let n = 0;
+    for (const f of files) for (const h of f.hunks || []) n += pairCount(h);
+    return n;
+  }
+
+  const SPLIT_COLS =
+    '<colgroup><col class="c-num"><col class="c-text">' +
+    '<col class="c-num"><col class="c-text"></colgroup>';
+
+  function splitHunk(file, hunk, fileIndex, hunkIndex, actions, from = 0, to = Infinity,
+                     base = 0) {
     const cell = (l, side, ctx) => {
       if (!l) return '<td class="dl-num dl-void"></td><td class="dl-text dl-void"></td>';
       const cls = ctx ? 'dl-ctx' : side === 'left' ? 'dl-del' : 'dl-add';
@@ -266,7 +351,11 @@
         `<td class="dl-text ${cls}">${paint(l.text) || '&nbsp;'}</td>`
       );
     };
-    const rows = pairHunk(hunk)
+    const all = pairHunk(hunk);
+    const lo = Math.max(0, from);
+    const hi = Math.min(all.length, to);
+    const rows = all
+      .slice(lo, hi)
       .map((r) => `<tr>${cell(r.left, 'left', r.ctx)}${cell(r.right, 'right', r.ctx)}</tr>`)
       .join('');
 
@@ -282,7 +371,14 @@
       '<div class="hunk">' +
       `<div class="hunk-head"><span class="hunk-range">${esc(hunk.header)}</span>` +
       `<span class="hunk-actions">${buttons}</span></div>` +
-      `<table class="difftable split"><tbody>${rows}</tbody></table>` +
+      /* The widths are declared here rather than left to the first row. A fixed
+         table takes its columns from whatever row comes first, and once the
+         window has scrolled that is a spacer spanning all four — which says
+         nothing about any single column, so they collapsed to equal quarters
+         and the left side slid into the middle of the pane. */
+      '<table class="difftable split">' + SPLIT_COLS + '<tbody>' +
+      gapRow(spanPx(base, base + lo)) + rows + gapRow(spanPx(base + hi, base + all.length)) +
+      '</tbody></table>' +
       '</div>'
     );
   }
@@ -290,7 +386,13 @@
   /** Side-by-side counterpart of render(): before on the left, after on the right. */
   function renderSplit(files, actions = [], opts = null) {
     setPaint(opts);
+    if (opts && opts.rowH) ROW_H = opts.rowH;
+    if (opts && opts.headH) HEAD_H = opts.headH;
+    ROW_SUM = (opts && opts.rowSum) || null;
     if (!files.length) return '<div class="empty-note">No textual changes here.</div>';
+    const first = opts && Number.isFinite(opts.first) ? opts.first : 0;
+    const last = opts && Number.isFinite(opts.last) ? opts.last : Infinity;
+    let seen = 0;
     return files
       .map((file, fi) => {
         const title =
@@ -299,7 +401,18 @@
             : esc(file.newPath || file.oldPath);
         const body = file.binary
           ? '<div class="empty-note">Binary file — no preview available.</div>'
-          : file.hunks.map((h, hi) => splitHunk(file, h, fi, hi, actions)).join('');
+          : file.hunks
+              .map((h, hi) => {
+                const start = seen;
+                const n = pairCount(h);
+                seen += n;
+                if (seen <= first || start >= last) {
+                  return `<div class="hunk hunk-gap" style="height:${
+                    spanPx(start, seen) + HEAD_H}px"></div>`;
+                }
+                return splitHunk(file, h, fi, hi, actions, first - start, last - start, start);
+              })
+              .join('');
         return (
           '<section class="difffile">' +
           `<header class="difffile-head"><span class="difffile-name">${title}</span>` +
@@ -312,5 +425,6 @@
       .join('');
   }
 
-  window.Diff = { parse, render, renderSplit, hunkPatch, esc };
+  window.Diff = { parse, render, renderSplit, hunkPatch, esc,
+                  rowCount, rowCountSplit, pairCount, pairRows: pairHunk };
 })();

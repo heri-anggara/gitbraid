@@ -112,18 +112,26 @@ function hideProgress() {
 }
 
 /** Call the main process. Returns data, or null after showing the error. */
+/* Whatever git last complained about, kept whole. The status bar can only hold
+   its first line, and the line that explains a rejected push is rarely the
+   first one. */
+let lastFailure = '';
+
 async function call(channel, ...args) {
   startBusy();
   try {
     const res = await window.gitbraid.invoke(channel, ...args);
     if (!res.ok) {
+      lastFailure = String(res.error || '');
       setStatus(firstLine(res.error), 'error');
       return null;
     }
+    lastFailure = '';
     return res.data;
   } catch (err) {
     // A missing handler rejects rather than answering {ok:false}. Swallow it
     // here so one bad channel cannot abort the caller's whole sequence.
+    lastFailure = String(err?.message || err || '');
     setStatus(firstLine(err?.message || err), 'error');
     return null;
   } finally {
@@ -364,8 +372,11 @@ function fieldHtml(f) {
     );
   }
   if (f.type === 'checkbox') {
+    /* `hidden` lets a field exist from the start and appear once something
+       slow enough to be worth not waiting for has answered. collect() reads it
+       either way, so an unrevealed box returns false — the safe answer. */
     return (
-      `<div class="modal-field"><label class="check">` +
+      `<div class="modal-field"${f.hidden ? ' hidden' : ''}><label class="check">` +
       `<input type="checkbox" data-field="${f.name}"${f.value ? ' checked' : ''}> ${esc(f.label)}` +
       `</label></div>`
     );
@@ -2078,6 +2089,336 @@ function syncViewerToggles() {
   $('fv-body').classList.toggle('wrap', viewer.wrap);
 }
 
+/* ── the diff, a window at a time ──
+   Only the rows on screen are built. A file with a few hundred changed lines is
+   fine either way; one with thousands put tens of thousands of elements in the
+   document, and the browser laid every one of them out on each scroll. */
+let diffView = null;
+
+/* Written by the renderer from what is on screen, because CSS owns these and a
+   window has to be cut in pixels. The first numbers are only a starting guess;
+   the first real render corrects them. */
+const rowSize = { row: 20, head: 27, fileHead: 0 };
+
+/* Rows drawn past each edge, so an ordinary scroll usually redraws nothing. */
+const DIFF_OVERSCAN = 40;
+
+/* Where each hunk's rows begin, in pixels and in row numbers. A hunk header
+   takes space of its own, so a row's offset is not its index times a row
+   height — getting that wrong puts the window a header's worth further up with
+   every hunk passed. */
+/* Side-by-side draws a different number of rows from the same lines, so this
+   has to count the mode on screen. Counting the wrong one put the change map's
+   marks and the window's edges at offsets the pane never had. */
+const rowsInHunk = (h) =>
+  viewer.split ? window.Diff.pairCount(h) : h.lines.length;
+
+function diffRowTotal() {
+  return viewer.split
+    ? window.Diff.rowCountSplit(state.diffFiles)
+    : window.Diff.rowCount(state.diffFiles);
+}
+
+/* Where every row starts, in pixels. Built once per shape rather than per
+   frame, because with wrapped rows it is an array as long as the diff and
+   diffNeed() asks for it on every scroll. */
+function diffLayout() {
+  const key = [rowSize.row, rowSize.head, rowSize.fileHead, diffRowTotal(),
+               viewer.split, viewer.wrap, diffView && diffView.heightsAt].join('|');
+  if (diffView && diffView.layout && diffView.layoutKey === key) return diffView.layout;
+
+  const hunks = [];
+  const heights = (diffView && viewer.wrap) ? diffView.heights : null;
+  let top = 0;
+  let rows = 0;
+  const manyFiles = state.diffFiles.length > 1;
+  /* One entry per row plus a closing one, so a row's height is the difference
+     between neighbours and the last entry is the whole height. Only wrapped
+     rows need it; everywhere else a row height is a single number. */
+  const rowTop = heights ? new Float64Array(heights.length + 1) : null;
+  for (const f of state.diffFiles) {
+    if (manyFiles) top += rowSize.fileHead;
+    for (const h of f.hunks || []) {
+      top += rowSize.head;
+      const n = rowsInHunk(h);
+      hunks.push({ rowStart: rows, rows: n, top });
+      if (rowTop) {
+        for (let i = 0; i < n; i++) {
+          rowTop[rows + i] = top;
+          top += heights[rows + i] || rowSize.row;
+        }
+      } else {
+        top += n * rowSize.row;
+      }
+      rows += n;
+    }
+  }
+  if (rowTop) rowTop[rows] = top;
+  const layout = { hunks, rows, height: top, rowTop };
+  if (diffView) { diffView.layout = layout; diffView.layoutKey = key; }
+  return layout;
+}
+
+/** The row shown at a given pixel offset, and the offset a row sits at. */
+function rowAtPixel(layout, px) {
+  if (layout.rowTop) {
+    // The offsets only ever increase, so the row is a bisection away.
+    let lo = 0;
+    let hi = layout.rows;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (layout.rowTop[mid] <= px) lo = mid + 1; else hi = mid;
+    }
+    return Math.max(0, lo - 1);
+  }
+  for (const h of layout.hunks) {
+    if (px < h.top) return h.rowStart;
+    if (px < h.top + h.rows * rowSize.row) {
+      return h.rowStart + Math.floor((px - h.top) / rowSize.row);
+    }
+  }
+  return layout.rows;
+}
+
+function pixelAtRow(layout, index) {
+  if (layout.rowTop) {
+    return layout.rowTop[Math.max(0, Math.min(index, layout.rows))];
+  }
+  for (const h of layout.hunks) {
+    if (index < h.rowStart + h.rows) {
+      return h.top + Math.max(0, index - h.rowStart) * rowSize.row;
+    }
+  }
+  return layout.height;
+}
+
+/* Exactly the rows on screen, with no margin. The margin belongs to what gets
+   drawn, not to what is needed: comparing one padded range against another
+   means any movement at all falls outside, and the diff is redrawn on every
+   single frame — which is how this was written the first time. */
+function diffNeed() {
+  const body = $('fv-body');
+  const layout = diffLayout();
+  diffView.layout = layout;
+  return {
+    first: rowAtPixel(layout, body.scrollTop),
+    last: rowAtPixel(layout, body.scrollTop + (body.clientHeight || 900)),
+  };
+}
+
+/* Wrapping makes a row as tall as it needs to be, so a window cannot be cut
+   from one row height. It is cut from a measured height per row instead, and a
+   wrapped diff is windowed exactly when those measurements are in hand. */
+const diffIsWindowed = () =>
+  Boolean(diffView) && diffView.rows > 600 &&
+  (!viewer.wrap || Boolean(diffView.heights));
+
+/* Every wrapped row's height, measured without drawing the diff.
+
+   Reading them back off the rendered table would cost what rendering the table
+   costs, which is the thing being avoided: 786 ms for a 5,848-row diff. The
+   same text laid out in a plain hidden column of the same width, under the same
+   wrapping rules, is one layout pass — 182 ms, and on that diff it agreed with
+   the table on all 5,848 rows to the pixel.
+
+   Two details decide whether it agrees at all. An empty line is drawn as a
+   non-breaking space, so measuring it as an empty div would call it two pixels
+   tall instead of twenty. And in side-by-side a row is as tall as its taller
+   half, so both halves are measured and the larger kept. */
+function measureWrapHeights(cell) {
+  const rows = [];
+  for (const f of state.diffFiles) {
+    for (const h of f.hunks || []) {
+      if (viewer.split) {
+        for (const r of window.Diff.pairRows(h)) {
+          const meta = (r.left || r.right || {}).type === 'meta';
+          rows.push([r.left ? r.left.text : '', r.right ? r.right.text : '', meta]);
+        }
+      } else {
+        for (const l of h.lines) rows.push([l.text, null, l.type === 'meta']);
+      }
+    }
+  }
+  if (!rows.length) return null;
+
+  /* The styles are copied off a real cell rather than restated in the
+     stylesheet. Restating them cost exactly the two pixels of vertical padding
+     that were left out, and every row was two pixels short — which over a diff
+     this long is a window cut in the wrong place. Copying cannot drift. */
+  const cs = getComputedStyle(cell);
+  const probe = document.createElement('div');
+  probe.className = 'wrap-probe';
+  probe.style.width = `${cell.getBoundingClientRect().width}px`;
+  for (const k of ['fontFamily', 'fontSize', 'fontWeight', 'letterSpacing',
+                   'lineHeight', 'tabSize', 'wordSpacing']) {
+    probe.style[k] = cs[k];
+  }
+  probe.style.setProperty('--wp-pad', cs.padding);
+  probe.innerHTML = rows
+    .map(([left, right, meta]) => {
+      const cls = meta ? 'wp-row wp-meta' : 'wp-row';
+      const one = (t) => `<div class="${cls}">${esc(t) || '&nbsp;'}</div>`;
+      return right === null ? one(left) : one(left) + one(right);
+    })
+    .join('');
+  document.body.appendChild(probe);
+  // Read every height in one sweep, so the browser lays the column out once.
+  const kids = probe.children;
+  const flat = new Int32Array(kids.length);
+  for (let i = 0; i < kids.length; i++) flat[i] = kids[i].offsetHeight;
+  probe.remove();
+
+  const out = new Int32Array(rows.length);
+  if (viewer.split) {
+    for (let i = 0; i < rows.length; i++) out[i] = Math.max(flat[i * 2], flat[i * 2 + 1]);
+  } else {
+    out.set(flat.subarray(0, rows.length));
+  }
+  return out;
+}
+
+/* The measurements are only good for the width they were taken at, so the width
+   is remembered with them and they are thrown away when it changes. */
+function prepareWrap() {
+  const body = $('fv-body');
+  diffView.rowSum = null;
+  // A short window first, purely to put a real cell on the page to measure.
+  body.innerHTML = viewer.split
+    ? window.Diff.renderSplit(state.diffFiles, diffView.actions,
+        { ...diffView.opts, first: 0, last: 40, rowH: rowSize.row, headH: rowSize.head })
+    : window.Diff.render(state.diffFiles, diffView.actions,
+        { ...diffView.opts, first: 0, last: 40, rowH: rowSize.row, headH: rowSize.head });
+  measureRowSizes(body);
+  const cell = body.querySelector('td.dl-text');
+  const width = cell ? cell.getBoundingClientRect().width : 0;
+  if (width <= 0) return;
+  diffView.heights = measureWrapHeights(cell);
+  diffView.heightsAt = `${width}|${rowSize.head}`;
+  /* Running totals, so a spacer standing in for rows 40 to 900 can be given the
+     height those rows really occupy. Headers are deliberately not in here: the
+     spacer replaces rows, and the headers around it are drawn either way. */
+  if (diffView.heights) {
+    const sum = new Float64Array(diffView.heights.length + 1);
+    for (let i = 0; i < diffView.heights.length; i++) sum[i + 1] = sum[i] + diffView.heights[i];
+    diffView.rowSum = sum;
+  }
+}
+
+/* A measured height that is wrong puts the window at an offset the pane does
+   not have, and the diff jumps under the pointer as it scrolls. Cheap to check
+   — only the drawn rows need looking at — and if the measurements turn out not
+   to describe the page, they are dropped and the diff goes back to being drawn
+   whole, which is slower and right. */
+function verifyWrapWindow(body) {
+  if (!viewer.wrap || !diffView || !diffView.heights || !diffView.shown) return;
+  const drawn = body.querySelectorAll('.difftable tr:not(.dl-gap)');
+  let worst = 0;
+  for (let i = 0; i < drawn.length; i++) {
+    const want = diffView.heights[diffView.shown.first + i];
+    if (!want) continue;
+    worst = Math.max(worst, Math.abs(drawn[i].getBoundingClientRect().height - want));
+    if (worst > 1) break;
+  }
+  /* And the total, which is the half that was missed the first time: every row
+     drawn can be the right height while the page as a whole is a different
+     height from the model, because the spacers standing in for the rows not
+     drawn are what set it. */
+  const layout = diffLayout();
+  const slack = Math.abs(body.scrollHeight - layout.height);
+  if (worst <= 1 && slack <= layout.hunks.length + state.diffFiles.length + 2) return;
+  console.warn(`GitBraid: wrapped rows are off by ${Math.round(worst)}px and the ` +
+    `page by ${Math.round(slack)}px; drawing the diff whole instead.`);
+  diffView.heights = null;
+  diffView.rowSum = null;
+  diffView.heightsAt = 'off';   // not '' — '' would ask for measuring all over again
+  diffView.wrapOff = true;
+  paintDiff();
+}
+
+function paintDiff() {
+  if (!diffView) return;
+  const body = $('fv-body');
+  diffView.rows = diffRowTotal();
+  // Wrapped and long: the heights have to exist before a window can be cut.
+  if (viewer.wrap && diffView.rows > 600 && !diffView.heights && !diffView.wrapOff) prepareWrap();
+  let win = { first: 0, last: Infinity };
+  if (diffIsWindowed()) {
+    const need = diffNeed();
+    win = {
+      first: Math.max(0, need.first - DIFF_OVERSCAN),
+      last: Math.min(diffView.rows, need.last + DIFF_OVERSCAN),
+    };
+  }
+  diffView.shown = win;
+
+  const opts = { ...diffView.opts, first: win.first, last: win.last,
+                 rowH: rowSize.row, headH: rowSize.head,
+                 rowSum: viewer.wrap ? diffView.rowSum : null };
+  body.innerHTML = viewer.split
+    ? window.Diff.renderSplit(state.diffFiles, diffView.actions, opts)
+    : window.Diff.render(state.diffFiles, diffView.actions, opts);
+
+  measureRowSizes(body);
+  verifyWrapWindow(body);
+  syncHBar();
+}
+
+/* Measure what was actually drawn, so the next window is cut correctly. With
+   wrapped rows the first row is no guide to the rest, and the per-row heights
+   answer instead — but the headers between them are still one height each. */
+function measureRowSizes(body) {
+  const row = body.querySelector('.difftable tr:not(.dl-gap)');
+  const head = body.querySelector('.hunk-head');
+  if (row && !viewer.wrap) {
+    rowSize.row = Math.round(row.getBoundingClientRect().height) || rowSize.row;
+  }
+  if (head) rowSize.head = Math.round(head.getBoundingClientRect().height) || rowSize.head;
+  const fileHead = body.querySelector('.difffile-head');
+  rowSize.fileHead = fileHead && fileHead.offsetParent
+    ? Math.round(fileHead.getBoundingClientRect().height) : 0;
+}
+
+/* The horizontal scrollbar for the pane. It mirrors the pane's scrollLeft and
+   is the thing the user grabs: the pane's own horizontal scrollbar is hidden,
+   because a native one sits at the bottom of the content, a mile below a long
+   diff. The bar is its own row beneath the pane, so it is always in reach. */
+function syncHBar() {
+  const body = $('fv-body');
+  const bar = $('fv-hbar');
+  if (!bar) return;
+  const wide = body.scrollWidth > body.clientWidth + 1;
+  bar.hidden = !wide;
+  if (wide) {
+    $('fv-hbar-run').style.width = body.scrollWidth + 'px';
+    bar.scrollLeft = body.scrollLeft;
+  }
+}
+
+/* The bar and the pane are two views of one scrollLeft, so each follows the
+   other. Setting scrollLeft to the value it already has is a no-op, so the two
+   listeners cannot chase each other. */
+$('fv-hbar').addEventListener('scroll', () => {
+  $('fv-body').scrollLeft = $('fv-hbar').scrollLeft;
+}, { passive: true });
+
+let diffQueued = false;
+$('fv-body').addEventListener('scroll', () => {
+  const bar = $('fv-hbar');
+  if (bar && !bar.hidden) bar.scrollLeft = $('fv-body').scrollLeft;
+
+  if (!diffIsWindowed() || diffQueued) return;
+  diffQueued = true;
+  requestAnimationFrame(() => {
+    diffQueued = false;
+    const need = diffNeed();
+    const have = diffView.shown;
+    // Still covered by what is on the page: the cheapest frame does nothing.
+    if (have && need.first >= have.first && need.last <= have.last) return;
+    paintDiff();
+    paintDiffHere();
+  });
+}, { passive: true });
+
 /* ── jumping between changed blocks ──
    A "difference" is a run of touched rows: consecutive additions and removals
    count as one, which is what makes 1/5 mean five edits rather than five lines. */
@@ -2091,24 +2432,83 @@ function indexBlocks() {
   nav.marks = [];
   nav.at = -1;
   let mark = null;
-  for (const tr of $('fv-body').querySelectorAll('.difftable tr')) {
-    const added = tr.classList.contains('dl-add') || Boolean(tr.querySelector('td.dl-add'));
-    const removed = tr.classList.contains('dl-del') || Boolean(tr.querySelector('td.dl-del'));
-    if (added || removed) {
-      if (!mark) {
-        mark = { last: tr, add: 0, del: 0 };
-        nav.blocks.push(tr);
-        nav.marks.push(mark);
+  const open = (at) => { mark = { last: at, add: 0, del: 0 };
+    nav.blocks.push(at); nav.marks.push(mark); };
+
+  if (diffIsWindowed()) {
+    /* Counted from the parsed diff rather than the document, because with a
+       window only a screenful of rows is in the document and the blocks past
+       its edges are just as real. */
+    let i = 0;
+    for (const f of state.diffFiles) {
+      for (const h of f.hunks || []) {
+        /* Side-by-side puts a removal and the addition that replaced it on one
+           row, so walking the lines would count rows the pane never drew. */
+        const rows = viewer.split
+          ? window.Diff.pairRows(h).map((r) => ({
+              add: Boolean(r.right) && !r.ctx, del: Boolean(r.left) && !r.ctx }))
+          : h.lines.map((l) => ({ add: l.type === 'add', del: l.type === 'del' }));
+        for (const r of rows) {
+          if (r.add || r.del) {
+            if (!mark) open(i);
+            mark.last = i;
+            if (r.add) mark.add += 1;
+            if (r.del) mark.del += 1;
+          } else {
+            mark = null;
+          }
+          i += 1;
+        }
       }
-      mark.last = tr;
-      if (added) mark.add += 1;
-      if (removed) mark.del += 1;
-    } else {
-      mark = null;
+    }
+  } else {
+    for (const tr of $('fv-body').querySelectorAll('.difftable tr')) {
+      const added = tr.classList.contains('dl-add') || Boolean(tr.querySelector('td.dl-add'));
+      const removed = tr.classList.contains('dl-del') || Boolean(tr.querySelector('td.dl-del'));
+      if (added || removed) {
+        if (!mark) open(tr);
+        mark.last = tr;
+        if (added) mark.add += 1;
+        if (removed) mark.del += 1;
+      } else {
+        mark = null;
+      }
     }
   }
   renderNav();
   renderChangeMap();
+}
+
+/* A block is a row number when the diff is windowed and an element when it is
+   not. Both answer the only question anything here asks of them: how far down
+   the scrolling content they sit. */
+function blockTop(entry) {
+  if (typeof entry === 'number') {
+    return pixelAtRow(diffView?.layout || diffLayout(), entry);
+  }
+  const body = $('fv-body');
+  return entry.getBoundingClientRect().top - (body.getBoundingClientRect().top - body.scrollTop);
+}
+
+function blockBottom(entry) {
+  if (typeof entry === 'number') return blockTop(entry) + rowSize.row;
+  const body = $('fv-body');
+  return entry.getBoundingClientRect().bottom - (body.getBoundingClientRect().top - body.scrollTop);
+}
+
+/** Mark the block being visited, if its row happens to be on screen. */
+function paintDiffHere() {
+  const body = $('fv-body');
+  for (const tr of body.querySelectorAll('tr.dl-here')) tr.classList.remove('dl-here');
+  const entry = nav.blocks[nav.at];
+  if (entry === undefined) return;
+  if (typeof entry !== 'number') { entry.classList.add('dl-here'); return; }
+  const win = diffView?.shown;
+  if (!win || entry < win.first || entry >= win.last) return;
+  // The window's rows are in document order, so the offset into it is the row.
+  const rows = body.querySelectorAll('.difftable tr:not(.dl-gap)');
+  const at = rows[entry - win.first];
+  if (at) at.classList.add('dl-here');
 }
 
 /* The strip beside the scrollbar. It is drawn from the same blocks the counter
@@ -2134,13 +2534,11 @@ function renderChangeMap() {
     return;
   }
 
-  /* Rows are measured against the body's own scroll origin rather than
-     offsetTop, which answers relative to whichever ancestor happens to be
-     positioned — inside a table that is not the one we mean. */
-  const origin = body.getBoundingClientRect().top - body.scrollTop;
+  /* Offsets come from blockTop, which answers for a row number as readily as
+     for an element — with a window, most blocks have no element to measure. */
   map.innerHTML = nav.marks.map((m, i) => {
-    const top = nav.blocks[i].getBoundingClientRect().top - origin;
-    const bottom = m.last.getBoundingClientRect().bottom - origin;
+    const top = blockTop(nav.blocks[i]);
+    const bottom = blockBottom(m.last);
     const kind = m.add && m.del ? 'both' : m.del ? 'del' : 'add';
     const lines = m.add + m.del;
     return `<button type="button" class="fv-mark m-${kind}" data-block="${i}" ` +
@@ -2155,16 +2553,43 @@ function renderChangeMap() {
 
 /* Which slice of the file is on screen. Two style writes, so it can run on
    every scroll frame without competing with the diff for the frame. */
-function paintViewport() {
+/* The box cannot be thinner than this or it stops being visible on a long
+   diff, where the screenful it stands for is a pixel or two of strip. */
+const VIEW_MIN = 14;
+
+/* Everything the box needs, in pixels. Per cent was the mistake: the box has a
+   minimum height, and a minimum has to be taken out of the distance it travels.
+   Mapping the full strip while the height was being held at its minimum left
+   the box hanging past the bottom of the strip at the end of a file, which is
+   what put it out of step with the scrollbar next to it. Taken out of the
+   travel, the arithmetic is the one every scrollbar uses — and where the height
+   is not being clamped it reduces to exactly the old per cent. */
+function viewGeometry() {
   const body = $('fv-body');
-  const view = $('fv-view');
+  const strip = $('fv-map').clientHeight;
   const total = body.scrollHeight;
   const seen = body.clientHeight;
+  const h = Math.min(strip, Math.max((seen / total) * strip, VIEW_MIN));
+  return { body, strip, total, seen, h, travel: Math.max(0, strip - h) };
+}
+
+function paintViewport() {
+  const view = $('fv-view');
+  const g = viewGeometry();
   // Nothing to point at when the whole file already fits.
-  if (!nav.marks.length || total <= seen + 1) { view.hidden = true; return; }
+  if (!nav.marks.length || g.total <= g.seen + 1) { view.hidden = true; return; }
   view.hidden = false;
-  view.style.top = `${(body.scrollTop / total * 100).toFixed(3)}%`;
-  view.style.height = `${(seen / total * 100).toFixed(3)}%`;
+  const at = g.body.scrollTop / (g.total - g.seen);
+  view.style.top = `${(at * g.travel).toFixed(1)}px`;
+  view.style.height = `${g.h.toFixed(1)}px`;
+}
+
+/** Bring the box to the pointer, centred on it, the way a scrollbar is dragged. */
+function scrollMapTo(clientY) {
+  const g = viewGeometry();
+  if (g.travel <= 0) return;
+  const y = clientY - $('fv-map').getBoundingClientRect().top - g.h / 2;
+  g.body.scrollTop = Math.max(0, Math.min(1, y / g.travel)) * (g.total - g.seen);
 }
 
 function paintCurrentMark() {
@@ -2183,10 +2608,11 @@ function gotoBlock(index) {
   const n = nav.blocks.length;
   if (!n) return;
   nav.at = Math.max(0, Math.min(index, n - 1));
-  for (const tr of $('fv-body').querySelectorAll('tr.dl-here')) tr.classList.remove('dl-here');
-  const row = nav.blocks[nav.at];
-  row.classList.add('dl-here');
-  row.scrollIntoView({ block: 'center' });
+  const body = $('fv-body');
+  const top = blockTop(nav.blocks[nav.at]);
+  body.scrollTop = Math.max(0, top - (body.clientHeight - rowSize.row) / 2);
+  if (diffIsWindowed()) paintDiff();
+  paintDiffHere();
   renderNav();
   paintCurrentMark();
 }
@@ -2198,22 +2624,58 @@ $('fv-body').addEventListener('scroll', () => {
   requestAnimationFrame(() => { viewQueued = false; paintViewport(); });
 }, { passive: true });
 
+/* The strip is the pane's scrollbar as well as its map — the native one beside
+   it is hidden, because two indicators of the same thing standing side by side
+   can only ever agree by accident. So it has to drag like one. */
+let mapDrag = null;
+$('fv-map').addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  const body = $('fv-body');
+  if (body.scrollHeight <= body.clientHeight + 1) return;
+  mapDrag = { id: e.pointerId, from: e.clientY, moved: false };
+  $('fv-map').setPointerCapture(e.pointerId);
+});
+$('fv-map').addEventListener('pointermove', (e) => {
+  if (!mapDrag || e.pointerId !== mapDrag.id) return;
+  // A few pixels of slack, so a click on a mark stays a click.
+  if (!mapDrag.moved && Math.abs(e.clientY - mapDrag.from) < 4) return;
+  mapDrag.moved = true;
+  scrollMapTo(e.clientY);
+});
+for (const done of ['pointerup', 'pointercancel']) {
+  $('fv-map').addEventListener(done, (e) => {
+    if (!mapDrag || e.pointerId !== mapDrag.id) return;
+    $('fv-map').releasePointerCapture(e.pointerId);
+    // Remembered for the click that follows, which must not undo the drag.
+    mapDrag = mapDrag.moved ? 'dragged' : null;
+  });
+}
 $('fv-map').addEventListener('click', (e) => {
+  if (mapDrag === 'dragged') { mapDrag = null; return; }
   const mark = e.target.closest('.fv-mark');
   if (mark) { gotoBlock(Number(mark.dataset.block)); return; }
   // Bare strip: treat the click as a position in the file, the way a scrollbar
   // trough does, so the map is useful even where nothing changed.
-  const body = $('fv-body');
-  const box = $('fv-map').getBoundingClientRect();
-  const at = (e.clientY - box.top) / box.height;
-  body.scrollTop = at * body.scrollHeight - body.clientHeight / 2;
+  scrollMapTo(e.clientY);
 });
 
 /* Every mark is a fraction of a height that changes whenever the pane does —
    dragging the divider, toggling wrap, resizing the window. One redraw per
    frame at most, and only while a file is open. */
 let mapQueued = false;
+let paneWidth = 0;
 new ResizeObserver(() => {
+  /* Wrapped rows were measured at one width and mean nothing at another, so a
+     narrower pane throws them away and the next paint measures again. Only the
+     width matters: growing taller folds no text differently. */
+  const now = $('fv-body').clientWidth;
+  if (diffView && diffView.heights && now !== paneWidth) {
+    diffView.heights = null;
+    diffView.heightsAt = '';
+    paintDiff();
+    indexBlocks();
+  }
+  paneWidth = now;
   if (mapQueued || !nav.marks.length) return;
   mapQueued = true;
   requestAnimationFrame(() => { mapQueued = false; renderChangeMap(); });
@@ -2310,10 +2772,20 @@ async function showFileDiff() {
   $('fv-discard').hidden = f.kind === 'staged';
 
   syncViewerToggles();
-  const paintOpts = { path: f.path, highlight: viewer.syntax };
-  $('fv-body').innerHTML = viewer.split
-    ? window.Diff.renderSplit(state.diffFiles, actions, paintOpts)
-    : window.Diff.render(state.diffFiles, actions, paintOpts);
+  diffView = {
+    actions,
+    opts: { path: f.path, highlight: viewer.syntax },
+    rows: diffRowTotal(),
+    shown: null,
+    heights: null,
+    heightsAt: '',
+    rowSum: null,
+    wrapOff: false,
+    layout: null,
+    layoutKey: '',
+  };
+  $('fv-body').scrollTop = 0;
+  paintDiff();
   indexBlocks();
   $('fv-syntax').disabled = !window.Hl.langOf(f.path);
   $('fv-syntax').title = window.Hl.langOf(f.path)
@@ -2966,6 +3438,28 @@ async function startFlow(kind) {
     async () => { await refresh({ keepSelection: false }); setStatus(`Started ${branch}`, 'ok'); });
 }
 
+/* Which dialog is on screen. An answer that arrives after the reader has moved
+   on belongs to a question nobody is looking at any more. */
+let finishAsk = 0;
+
+async function askRemoteLater(remote, branch) {
+  const mine = ++finishAsk;
+  const res = await window.gitbraid.invoke('repo:remoteHasBranch', repoPath(), remote, branch);
+  if (mine !== finishAsk || $('modal').hidden) return;
+
+  const box = $('modal-fields').querySelector('[data-field="deleteRemote"]');
+  if (!box) return;
+  if (res.ok && res.data === true) {
+    box.checked = true;
+    box.closest('.modal-field').hidden = false;
+    $('modal-desc').textContent += ` It is also on ${remote}.`;
+  } else if (!res.ok || res.data === null) {
+    // Not an answer of "no": say so rather than letting silence stand for it.
+    $('modal-desc').textContent += ` ${remote} could not be reached, so whether the `
+      + 'branch is also there is unknown — remove it there yourself if it is.';
+  }
+}
+
 async function finishFlow(flow) {
   const cfg = state.flow;
   const tagged = flow.kind !== 'feature';
@@ -2984,16 +3478,7 @@ async function finishFlow(flow) {
      say yes there is nothing to gain: the finish tolerates a branch that has
      since been deleted. Offline, the question has no answer at all, which the
      dialog says rather than pretending the branch is not there. */
-  let published = state.remoteRefNames.has(`${remote}/${flow.branch}`);
-  let unreachable = false;
-  if (hasRemote && !published) {
-    setStatus(`Asking ${remote} about ${flow.branch}…`);
-    const res = await window.gitbraid.invoke('repo:remoteHasBranch', repoPath(), remote, flow.branch);
-    const answer = res.ok ? res.data : null;
-    published = answer === true;
-    unreachable = answer === null;
-    setStatus(unreachable ? `${remote} did not answer` : '');
-  }
+  const published = state.remoteRefNames.has(`${remote}/${flow.branch}`);
 
   const fields = tagged
     ? [
@@ -3007,13 +3492,20 @@ async function finishFlow(flow) {
       name: 'push', type: 'checkbox', value: true,
       label: `Push ${landing}${tagged ? ' and the tag' : ''} to ${remote}`,
     });
-    if (published) {
-      fields.push({
-        name: 'deleteRemote', type: 'checkbox', value: true,
-        label: `Delete ${remote}/${flow.branch}`,
-      });
-    }
+    /* Always built, so the answer has somewhere to land. Shown at once when the
+       tracking refs already say the branch is published; otherwise it waits
+       hidden while the server is asked in the background. */
+    fields.push({
+      name: 'deleteRemote', type: 'checkbox', value: published, hidden: !published,
+      label: `Delete ${remote}/${flow.branch}`,
+    });
   }
+
+  /* Asked after the dialog is on screen, never before it. A round trip to a
+     remote over ssh costs about three seconds, and it used to be spent with
+     nothing drawn — three seconds of waiting to be told, almost always, that
+     there is nothing there. */
+  if (hasRemote && !published) askRemoteLater(remote, flow.branch);
 
   const r = await modal({
     title: `Finish ${flow.branch}`,
@@ -3021,11 +3513,7 @@ async function finishFlow(flow) {
       ? `Merges into ${cfg.master}, tags it, merges into ${cfg.develop}, `
       : `Merges into ${cfg.develop}, `) +
       'then deletes the branch here.' +
-      (published ? ` It is also on ${remote}.` : '') +
-      (unreachable
-        ? ` ${remote} could not be reached, so whether the branch is also there `
-          + 'is unknown — remove it there yourself if it is.'
-        : ''),
+      (published ? ` It is also on ${remote}.` : ''),
     fields,
     confirmLabel: 'Finish',
     /* Deleting the published branch without pushing the merge would take those
@@ -3480,6 +3968,29 @@ function tbProgress(percent) {
  * Runs one git action with the button as its progress display.
  * `fn` returns null when it failed — call() has already said why.
  */
+/* A command that fails deserves more than a line that the next status message
+   scrolls away. This says what was being attempted, the reason git gave, and —
+   when git said more than one line — all of it, because on a rejected push the
+   line that explains is never the first. */
+function showFailure(verb, text) {
+  const lines = String(text).split(/[\r\n]/).map((l) => l.trimEnd()).filter(Boolean);
+  if (!lines.length) return;
+  modal({
+    // "Finishing release did not finish" — the verb already carries the word.
+    title: `${verb} failed`,
+    /* The line that explains, which is rarely the first: git opens a refused
+       push with "To <url>", and the reason is three lines further down. */
+    description: firstLine(text),
+    // Everything git said, in the order it said it, with nothing removed — the
+    // headline is a highlight, not a replacement for the output.
+    html: lines.length > 1
+      ? `<div class="modal-field"><div class="fail-out">${esc(lines.join('\n'))}</div></div>`
+      : '',
+    confirmLabel: 'Close',
+    hideCancel: true,
+  });
+}
+
 async function gitAction(id, verb, fn, done) {
   if (action) { setStatus('Another Git command is still running', 'error'); return; }
   const label = toolLabel(id);
@@ -3514,6 +4025,10 @@ async function gitAction(id, verb, fn, done) {
     if (activeId === startedOn) await done();
     else setStatus(`${verb} finished in the other tab`, 'ok');
   }
+  // Shown after the toolbar has settled, so the dialog is not fighting a
+  // spinner for attention. Not awaited: the caller still has a refresh to do,
+  // and the repository should be redrawn behind the explanation, not after it.
+  if (!ok && lastFailure && activeId === startedOn) showFailure(verb, lastFailure);
   return ok;
 }
 
@@ -4943,6 +5458,7 @@ async function showCompare() {
   $('fv-stage-tools').hidden = true;
   syncViewerToggles();
   const opts = { path: '', highlight: false };   // a comparison spans many files
+  diffView = null;
   $('fv-body').innerHTML = state.diffFiles.length
     ? (viewer.split ? window.Diff.renderSplit(state.diffFiles, [], opts)
                     : window.Diff.render(state.diffFiles, [], opts))

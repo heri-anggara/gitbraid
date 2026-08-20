@@ -302,6 +302,128 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   Anda sendiri adalah remote yang sah, begitu juga host yang belum pernah didengar
   GitBraid. Yang ditolak hanya URL kosong
 
+**Diff yang sangat besar**
+- Tampilan unified hanya menggambar baris yang terlihat. Diperlukan karena
+  sebuah berkas dengan ribuan baris berubah menaruh puluhan ribu elemen di
+  dokumen, dan browser menata ulang semuanya di tiap gulir. Terukur pada diff
+  12.037 baris: median frame **93–112 ms turun jadi 7,0 ms**, node **168.235
+  jadi 1.168**
+- Baris yang dilewati tetap memakan ruangnya lewat baris penahan, jadi panjang
+  scrollbar tidak berubah dan tidak ada yang bergeser di bawah kursor
+- Ambangnya 600 baris. Di bawah itu menggambar utuh justru lebih murah daripada
+  membukukan jendela — diukur, bukan ditebak: diff nyata dengan 66 hunk hanya
+  529 baris dan sudah 7,1 ms tanpa perlakuan apa pun
+- Yang menghalangi selama ini bukan jumlah node melainkan **tata letak tabel**:
+  mematikan pewarnaan sintaks membuang 58% node dan hanya memperbaiki 9%.
+  `content-visibility` juga bukan jawabannya — pada diff banyak-hunk ia justru
+  memperlambat dari 7,1 ke 12,5 ms
+- Prasyaratnya adalah perbaikan saklar wrap: selama baris bisa membungkus,
+  tingginya bermacam-macam (20/38/56/74/110px) dan sebuah jendela tidak bisa
+  dihitung. Dengan wrap benar-benar mati, semuanya 20px
+- Nomor baris untuk navigasi antar blok dan peta perubahan kini dihitung dari
+  diff yang sudah diurai, bukan dari DOM — dengan jendela, blok di luar layar
+  sama nyatanya tapi tidak punya elemen untuk diukur
+- Split ikut ber-jendela. Sempat dilewati dengan alasan "barisnya tidak bisa
+  dihitung" — padahal bisa: serangkaian penghapusan di samping serangkaian
+  penambahan menghasilkan sebanyak yang lebih panjang, sisanya satu baris untuk
+  satu baris. Terukur pada diff 12.037 baris dalam mode split: **64,1 ms turun
+  jadi 7,9 ms**, 74 baris digambar dari 9.001
+- Karena split menggambar 9.001 baris dari lines yang sama yang di unified jadi
+  12.001, model tata letaknya harus menghitung mode yang sedang tampil. Sebelum
+  ini ia selalu menghitung unified, jadi di split penanda peta perubahan
+  ditaruh pada tinggi 240.049px sementara panelnya cuma 180.049px — meleset
+  makin jauh ke bawah. Sekarang model dan panel sepakat dalam 2px
+- Kolom split dikunci separuh-separuh supaya garis pemisahnya tidak bergeser
+  saat digulir dan **kedua sisi tetap di layar** — itu seluruh alasan orang
+  membaca diff dengan cara ini. Kolom terkunci tidak bisa melar, dan baris yang
+  tidak dibungkus tidak melipat, jadi baris panjang dipotong di pemisah dan
+  diberi elipsis. Saklar wrap menampilkan sisanya
+- Lebar kolomnya dinyatakan di `<colgroup>`, bukan diserahkan pada baris
+  pertama. Tabel `table-layout: fixed` mengambil kolomnya dari baris yang
+  kebetulan datang duluan — dan begitu jendelanya bergulir, baris itu adalah
+  baris penahan `colspan="4"` yang tidak menyebut satu kolom pun, jadi keempat
+  kolom jatuh ke seperempat-seperempat (terukur: 160/160/160/160) dan sisi kiri
+  meluncur ke tengah panel. Di puncak berkas baris penahannya tidak ada, jadi
+  gejalanya cuma muncul setelah menggulir
+- Mematikan nomor baris dulu membuang selnya dengan `display: none`. Tabel
+  terkunci dengan kolom yang dinyatakan menuntut semua barisnya berbentuk sama
+  seperti pernyataannya — buang dua sel dari sebagian baris dan paruhnya berhenti
+  jadi paruh. Sekarang selnya tetap ada dan dikempiskan jadi nol
+- Percobaan pertama melebarkan tabelnya sampai baris terpanjang supaya panelnya
+  menggulir ke samping seperti unified. **Itu keliru**: sisi seberangnya
+  terdorong keluar layar dan sebagian besar baris cuma memandangi kolom kosong —
+  tumpang-tindihnya hilang dengan cara membuang perbandingannya
+- Memotong itu ada harganya: 8,7 ms jadi 14,2 ms per frame di diff 12.000 baris.
+  Elipsisnya sendiri gratis (diukur terpisah: 14,1 ms tanpa elipsis) — yang
+  berbayar `overflow: hidden`-nya. Masih di dalam anggaran 16,7 ms
+- Tajuk hunk dipaksa satu baris. Ia membawa nama fungsi di belakang nomor baris,
+  dan pada berkas berbaris sangat panjang itu melipat jadi dua baris — sementara
+  jendela mengukur satu tajuk lalu menganggap sisanya sama tinggi
+- Mode wrap ikut ber-jendela, **termasuk saat tinggi barisnya bercampur**.
+  Jendelanya tidak dipotong dari satu tinggi baris melainkan dari tinggi yang
+  diukur per baris. Terukur pada diff 5.848 baris split+wrap: **35,1 ms jadi
+  7 ms** per frame, 62 baris digambar dari 5.848, node 57.443 jadi 331. Menekan
+  tombol wrap: **786 ms jadi 268 ms**
+- Mengukurnya **tidak** dengan membaca tabel yang sudah digambar — itu berbiaya
+  persis sama dengan menggambarnya (786 ms). Teks yang sama ditata di satu kolom
+  tersembunyi selebar sel yang sama, dengan aturan pelipatan yang sama, sekali
+  tata letak: **182 ms**, dan cocok **5.848 dari 5.848 baris, meleset 0px**
+- Gayanya **disalin dari sel sungguhan** saat mengukur, bukan ditulis ulang di
+  stylesheet. Menulis ulang persis memakan korban: padding tegak 2px terlewat,
+  dan setiap baris jadi 2px pendek
+- Baris kosong digambar sebagai `&nbsp;`, jadi mengukurnya sebagai div kosong
+  memberi 2px alih-alih 20px. Di split sebuah baris setinggi paruh yang lebih
+  tinggi, jadi kedua paruh diukur dan diambil yang terbesar
+- **Baris penahan** ikut memakai tinggi terukur itu lewat jumlah kumulatif.
+  Kekeliruan di sini tidak menyalahgambarkan apa pun yang terlihat — ia membuat
+  halaman berbeda tinggi dari model yang memutuskan apa yang digambar (186.611
+  vs 117.529), dan diff-nya meleset di bawah kursor
+- Verifikasi setelah tiap gambar: tinggi baris **dan** tinggi halaman. Versi
+  pertama cuma memeriksa barisnya — yang memang benar — sementara yang salah
+  justru totalnya. Kalau meleset, ukurannya dibuang dan diff digambar utuh:
+  lebih lambat tapi benar. Diuji dengan sengaja merusak angkanya
+- Ukuran hanya berlaku untuk lebar saat ia diambil, jadi panel yang berubah
+  lebar membuangnya dan mengukur lagi. Diuji 1280→980→1280: model dan halaman
+  tetap sepakat dalam 2px di ketiganya
+
+**Palang gulir horizontal**
+- Mode unified tanpa wrap memakai bilah gulir horizontal yang **selalu terlihat**
+  di bawah panel, bukan bilah bawaan yang menunggu di dasar konten ratusan ribu
+  piksel di bawah. Bilah ini cermin dua arah dari `scrollLeft` panel: seret,
+  klik palung, atau shift-roda, dan panelnya ikut — dan sebaliknya
+- Bilahnya hanya muncul kalau memang ada yang lebih lebar dari panel (di split
+  tidak ada: baris panjang dipotong dengan elipsis)
+
+**Peta perubahan sebagai palang gulir**
+- Strip di kanan panel diff kini satu-satunya penunjuk posisi: palang gulir
+  tegak bawaan disembunyikan. Dua penunjuk hal yang sama berdampingan cuma bisa
+  sejajar secara kebetulan, dan memang tidak sejajar
+- Kotak posisinya dulu ditaruh dengan persen (`scrollTop / tinggiIsi`) sementara
+  tingginya dijepit minimum lewat CSS. Sebuah minimum harus diambil dari jarak
+  tempuhnya: di dasar berkas kotak itu menggantung **8px lewat ujung strip**,
+  sedangkan palang gulir di sebelahnya berhenti pas. Sekarang dihitung dalam
+  piksel dengan rumus yang dipakai setiap palang gulir — dan ketika tingginya
+  tidak sedang dijepit, rumus itu menyederhana persis jadi persen yang lama
+- Strip-nya bisa diseret seperti palang gulir sungguhan, dengan kelonggaran 4px
+  supaya klik pada penanda tetap terbaca sebagai klik
+- Penandanya sendiri ternyata **tidak pernah salah** — pada diff uji mereka
+  duduk di 36,6%–44,1% dan 90,5%, persis di mana perubahannya berada
+
+**Saat aksi git gagal**
+- Kegagalan aksi git memunculkan **dialog**, bukan cuma satu baris di status bar
+  yang tergeser pesan berikutnya. Judulnya menyebut apa yang sedang dikerjakan,
+  di bawahnya alasan yang **menjelaskan** — bukan baris pertama, karena git
+  membuka push yang ditolak dengan `To <url>` dan alasannya tiga baris di bawah
+- Seluruh keluaran git ditampilkan apa adanya di bawahnya, dalam urutan aslinya
+  dan tanpa satu baris pun dibuang. Termasuk *hint* dari git sendiri, yang justru
+  sering memberi tahu langkah berikutnya. Teksnya bisa diseleksi, karena hal
+  pertama yang orang lakukan dengan pesan galat adalah menyalinnya
+- **Finish menolak tag yang namanya sudah dipakai sebelum menyentuh apa pun.**
+  Dulu ia gagal di langkah penandaan — sesudah produksi ter-merge — sehingga
+  meninggalkan keadaan setengah jadi: main berubah, tanpa tag, development belum
+  menerima apa pun, cabangnya masih ada. Padahal memakai ulang nomor versi itu
+  kekeliruan yang wajar
+
 **Repository management**
 - Tombol **Browse / Clone / Init / Scan a folder…** masing-masing membawa ikon,
   dan tombol tutupnya setinggi tombol lain. Sebuah glyph lebih pendek daripada
@@ -482,6 +604,14 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   dari komputer lain, atau yang ref-nya sudah dipangkas, membuatnya menjawab
   "tidak ada" padahal ada. Ditanyakan hanya kalau jawaban lokalnya "tidak" —
   kalau lokal bilang ada, tidak ada yang perlu dipastikan lagi
+- Pertanyaan itu dikirim **sesudah** dialognya tampil, tidak pernah sebelumnya.
+  Satu perjalanan ke remote lewat ssh memakan sekitar **3 detik**, dan dulu
+  waktu itu dihabiskan dengan layar kosong — menunggu tiga detik untuk diberi
+  tahu, hampir selalu, bahwa tidak ada apa-apa di sana. Terukur: dialog muncul
+  dalam **2.930 ms**, sekarang **10 ms**. Centang hapus-remote sudah ada di DOM
+  sejak awal dalam keadaan tersembunyi, lalu muncul sendiri kalau jawabannya
+  "ada"; `collect()` membacanya apa pun keadaannya, jadi kotak yang belum
+  sempat muncul bernilai `false` — sisi yang aman
 - Ada **tiga** kemungkinan jawaban, dan yang ketiga penting: ada, tidak ada, dan
   *tidak bisa ditanyakan*. Saat offline dialognya berkata apa adanya bahwa
   jawabannya tidak diketahui, bukan berpura-pura cabangnya tidak ada. Pertanyaan

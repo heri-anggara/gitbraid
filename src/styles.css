@@ -2204,7 +2204,7 @@ textarea {
      is placed explicitly: a grid child that is hidden stops being a grid item,
      and the rest would silently shuffle up. */
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   background: var(--bg-graph);
   overflow: hidden;
@@ -2212,6 +2212,13 @@ textarea {
 .fv-head { grid-column: 1 / -1; grid-row: 1; }
 .fv-body { grid-column: 1; grid-row: 2; }
 .fv-map  { grid-column: 2; grid-row: 2; }
+
+/* The horizontal scrollbar for the diff, in a row of its own so it is always
+   visible instead of sitting at the bottom of the content. It mirrors the
+   pane's scrollLeft and drives it, so a long unwrapped line can be reached the
+   way every other scrollbar works: drag, trough-click, shift-wheel. */
+.fv-hbar { grid-column: 1; grid-row: 3; overflow-x: auto; overflow-y: hidden; height: 11px; background: var(--bg); }
+.fv-hbar-run { height: 1px; }
 
 /* ── updates ─────────────────────────────────────────────────── */
 /* A dot on the version, and nothing else: an update is worth noticing, not
@@ -2254,7 +2261,20 @@ textarea {
   width: 18px;
   background: var(--bg);
   cursor: pointer;
+  /* It is dragged like a scrollbar, so the pointer must not select anything. */
+  touch-action: none;
 }
+
+/* The strip does this pane's scrolling, so the native bar beside it goes: two
+   indicators of one position, a few pixels apart, only ever look broken. The
+   horizontal one stays — nothing else shows how far a long line runs. */
+/* The pane's own scrollbars are both hidden: the vertical one lives on as the
+   change-map strip, the horizontal one as a bar beneath the pane. A native
+   scrollbar sits at the bottom of its content, which for a diff tens of
+   thousands of lines deep is a mile below where the reader is — the bar under
+   the pane is always in reach. */
+.fv-body::-webkit-scrollbar:vertical { width: 0; }
+.fv-body::-webkit-scrollbar:horizontal { height: 0; }
 .fv-marks { position: absolute; inset: 0; }
 
 /* The part of the file on screen, so the strip answers "where am I" as well as
@@ -2263,7 +2283,8 @@ textarea {
   position: absolute;
   left: 1px;
   right: 1px;
-  min-height: 12px;
+  /* Height and offset are both set in pixels from paintViewport: a minimum
+     height has to be taken out of the travel, which per cent cannot do. */
   border-radius: 4px;
   background: var(--row-sel);
   box-shadow: inset 0 0 0 1px var(--line-strong);
@@ -2369,11 +2390,69 @@ textarea {
 /* The block you jumped to gets a rail so the eye lands on it. */
 .difftable tr.dl-here td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
 .fv-body { overflow: auto; }
-.fv-body.wrap .dl-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Switched on, a long line folds instead of running off the side. */
+.fv-body.wrap .dl-text { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 
-/* Side-by-side: two number/text pairs, with a rule down the middle. */
+/* The hidden column wrapped rows are measured in. It has to fold text exactly
+   as the real cell does, or the window would be cut at offsets the pane does
+   not have — so the wrapping rules, the font and the padding are the same ones,
+   inherited from the same custom properties. Off-screen rather than
+   display:none, which lays nothing out and would measure nothing. */
+.wrap-probe {
+  position: absolute;
+  left: -99999px;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+  contain: layout style;
+}
+/* Font, spacing and padding are copied onto the probe from a real cell at
+   measuring time — restating them here is how they came to disagree. Only the
+   folding rules stay, because those the real cell gets from .fv-body.wrap. */
+.wrap-probe .wp-row {
+  padding: var(--wp-pad, 0);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.wrap-probe .wp-meta { font-style: italic; }
+
+/* Side-by-side: two number/text pairs, with a rule down the middle.
+
+   The halves are fixed and each takes half the pane, so the rule down the middle
+   stays where it is and both sides stay on screen — which is the entire point of
+   reading a diff this way. Widening the table to the longest line instead, so
+   the pane could scroll sideways, pushed the far side out of view and left most
+   rows staring at a wall of empty column: it fixed the overlap by taking away
+   the comparison.
+
+   A fixed half cannot grow, and an unwrapped line does not fold, so a long line
+   is cut off at the divider and marked with an ellipsis rather than painted
+   across its neighbour. Turning on Wrap long lines shows the rest. */
 .difftable.split { table-layout: fixed; width: 100%; }
-.difftable.split td.dl-text { width: 50%; }
+/* Stated on the columns, so they hold whatever row happens to be drawn first. */
+.difftable.split col.c-num { width: 44px; }
+.difftable.split col.c-text { width: calc(50% - 44px); }
+/* Turning the numbers off takes the cell out of the table everywhere else, but
+   a fixed table with declared columns needs its rows to keep the same shape as
+   the declaration — remove two cells from some rows and the halves stop being
+   halves. Here the cell stays and collapses to nothing instead. */
+.app.no-line-numbers .difftable.split col.c-num { width: 0; }
+.app.no-line-numbers .difftable.split col.c-text { width: 50%; }
+.app.no-line-numbers .difftable.split .dl-num {
+  display: table-cell;
+  width: 0;
+  padding: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+.difftable.split td.dl-text {
+  width: calc(50% - 44px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Wrapped, there is nothing to cut off and nothing to mark. */
+.fv-body.wrap .difftable.split td.dl-text { overflow: visible; text-overflow: clip; }
 .difftable.split td:nth-child(3) { border-left: 1px solid var(--line); }
 .dl-void { background: var(--surface); opacity: .35; }
 
@@ -3094,6 +3173,11 @@ mark {
 .stat-del { color: var(--del); }
 
 .hunk { border-top: 1px solid var(--line-soft); }
+/* Rows and hunks the window left out, kept as height so the scrollbar keeps
+   its length and nothing under the pointer shifts as the window slides. */
+.dl-gap td { padding: 0; border: 0; }
+.hunk-gap { display: block; }
+
 .hunk-head {
   display: flex;
   align-items: center;
@@ -3101,7 +3185,21 @@ mark {
   padding: 3px 12px;
   background: rgba(124, 140, 255, .05);
 }
-.hunk-range { font-family: var(--mono); font-size: 11px; color: var(--accent); opacity: .8; }
+/* One line, always. A hunk header carries the enclosing function after the line
+   numbers, and on a file with very long lines that ran to a second line — which
+   would be untidy on its own, but the window that decides which rows to draw
+   measures one header and assumes the rest match, so headers of differing
+   heights would walk the window off its rows. */
+.hunk-range {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  opacity: .8;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .hunk-actions { margin-left: auto; display: flex; gap: 4px; opacity: 0; transition: opacity .1s; }
 .hunk:hover .hunk-actions { opacity: 1; }
 .hunk-btn {
@@ -3135,7 +3233,11 @@ mark {
   opacity: .65;
 }
 .dl-sign { width: 14px; text-align: center; user-select: none; vertical-align: top; }
-.dl-text { white-space: pre-wrap; word-break: break-word; padding-right: 12px; }
+/* A diff line keeps its own line by default and the pane scrolls sideways, the
+   way every other diff viewer behaves. This said pre-wrap, which is what the
+   wrap toggle switches *to* — so the toggle changed nothing and long lines
+   always wrapped, whatever Preferences said. */
+.dl-text { white-space: pre; padding-right: 12px; }
 .dl-add { background: var(--add-bg); }
 .dl-add .dl-sign, .dl-add .dl-text { color: var(--add-ink); }
 .dl-del { background: var(--del-bg); }
@@ -3236,6 +3338,24 @@ mark {
 .modal-field input:focus { border-color: var(--accent); outline: none; }
 .modal-field .with-button { display: flex; gap: .45em; }
 .modal-field .with-button input[type="text"] { flex: 1; min-width: 0; }
+/* What git actually printed. Monospace because it is output, scrollable because
+   a rejected push can run to a dozen lines, and selectable because the first
+   thing anyone does with an error is paste it somewhere. */
+.fail-out {
+  max-height: 220px;
+  padding: 9px 10px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--text-dim);
+  user-select: text;
+}
+
 .modal-note {
   margin: .15em 0 0;
   font-family: var(--mono);
