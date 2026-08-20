@@ -2393,6 +2393,30 @@ textarea {
 /* Switched on, a long line folds instead of running off the side. */
 .fv-body.wrap .dl-text { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 
+/* The hidden column wrapped rows are measured in. It has to fold text exactly
+   as the real cell does, or the window would be cut at offsets the pane does
+   not have — so the wrapping rules, the font and the padding are the same ones,
+   inherited from the same custom properties. Off-screen rather than
+   display:none, which lays nothing out and would measure nothing. */
+.wrap-probe {
+  position: absolute;
+  left: -99999px;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+  contain: layout style;
+}
+/* Font, spacing and padding are copied onto the probe from a real cell at
+   measuring time — restating them here is how they came to disagree. Only the
+   folding rules stay, because those the real cell gets from .fv-body.wrap. */
+.wrap-probe .wp-row {
+  padding: var(--wp-pad, 0);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.wrap-probe .wp-meta { font-style: italic; }
+
 /* Side-by-side: two number/text pairs, with a rule down the middle.
 
    The halves are fixed and each takes half the pane, so the rule down the middle
