@@ -164,8 +164,28 @@
     return Boolean(lang);
   }
 
-  function renderHunk(file, hunk, fileIndex, hunkIndex, actions) {
+  /* How tall a line row and a hunk header are. Measured by the renderer from
+     what is actually on screen and handed back in, because a window has to be
+     cut in pixels and CSS owns those numbers. */
+  let ROW_H = 20;
+  let HEAD_H = 27;
+
+  /** Every line row in the file, in order — what a window is cut out of. */
+  function rowCount(files) {
+    let n = 0;
+    for (const f of files) for (const h of f.hunks || []) n += h.lines.length;
+    return n;
+  }
+
+  const gapRow = (px) =>
+    (px > 0 ? `<tr class="dl-gap" style="height:${px}px"><td colspan="4"></td></tr>` : '');
+
+  function renderHunk(file, hunk, fileIndex, hunkIndex, actions, from = 0, to = Infinity) {
+    // Which of this hunk's rows the window actually asks for.
+    const lo = Math.max(0, from);
+    const hi = Math.min(hunk.lines.length, to);
     const rows = hunk.lines
+      .slice(lo, hi)
       .map((l) => {
         const cls =
           l.type === 'add' ? 'dl-add' :
@@ -193,11 +213,15 @@
       )
       .join('');
 
+    /* The rows left out still take their space, so the scrollbar keeps its
+       length and nothing under the pointer moves as the window slides. */
     return (
       '<div class="hunk">' +
       `<div class="hunk-head"><span class="hunk-range">${esc(hunk.header)}</span>` +
       `<span class="hunk-actions">${buttons}</span></div>` +
-      `<table class="difftable"><tbody>${rows}</tbody></table>` +
+      '<table class="difftable"><tbody>' +
+      gapRow(lo * ROW_H) + rows + gapRow((hunk.lines.length - hi) * ROW_H) +
+      '</tbody></table>' +
       '</div>'
     );
   }
@@ -205,9 +229,20 @@
   /** Render a parsed diff. `actions` are the per-hunk buttons to show. */
   function render(files, actions = [], opts = null) {
     setPaint(opts);
+    if (opts && opts.rowH) ROW_H = opts.rowH;
+    if (opts && opts.headH) HEAD_H = opts.headH;
     if (!files.length) {
       return '<div class="empty-note">No textual changes here.</div>';
     }
+    /* The window, counted in line rows across the whole diff. Left out, every
+       row is drawn — which is right for a short diff and ruinous for a long
+       one: a file with thousands of changed lines put tens of thousands of
+       elements in the document, and the browser laid out all of them on every
+       scroll. */
+    const first = opts && Number.isFinite(opts.first) ? opts.first : 0;
+    const last = opts && Number.isFinite(opts.last) ? opts.last : Infinity;
+    let seen = 0;
+
     return files
       .map((file, fi) => {
         const title =
@@ -218,7 +253,16 @@
         const body = file.binary
           ? '<div class="empty-note">Binary file — no preview available.</div>'
           : file.hunks
-              .map((h, hi) => renderHunk(file, h, fi, hi, actions))
+              .map((h, hi) => {
+                const start = seen;
+                seen += h.lines.length;
+                // Wholly outside the window: kept as height, not as elements.
+                if (seen <= first || start >= last) {
+                  return `<div class="hunk hunk-gap" style="height:${
+                    h.lines.length * ROW_H + HEAD_H}px"></div>`;
+                }
+                return renderHunk(file, h, fi, hi, actions, first - start, last - start);
+              })
               .join('');
 
         return (
@@ -312,5 +356,5 @@
       .join('');
   }
 
-  window.Diff = { parse, render, renderSplit, hunkPatch, esc };
+  window.Diff = { parse, render, renderSplit, hunkPatch, esc, rowCount };
 })();

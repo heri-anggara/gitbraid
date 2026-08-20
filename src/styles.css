@@ -3095,6 +3095,11 @@ mark {
 .stat-del { color: var(--del); }
 
 .hunk { border-top: 1px solid var(--line-soft); }
+/* Rows and hunks the window left out, kept as height so the scrollbar keeps
+   its length and nothing under the pointer shifts as the window slides. */
+.dl-gap td { padding: 0; border: 0; }
+.hunk-gap { display: block; }
+
 .hunk-head {
   display: flex;
   align-items: center;
