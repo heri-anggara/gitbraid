@@ -451,6 +451,21 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   bukan sebagai escape
 - Rename ditandai di baris tempat ia terjadi, karena `--follow` menyeberanginya
   tanpa berkata apa-apa
+- **Panel diff-nya dipindahkan ke sini, bukan dibangun ulang.** Semua
+  kemampuannya — toolbar, peta perubahan, navigasi antar blok, wrap,
+  side-by-side, menggambar hanya baris yang terlihat — terikat pada satu elemen
+  itu; salinan kedua berarti tempat kedua yang harus diperbaiki setiap kali.
+  Memindahkan node mempertahankan listener-nya, jadi ia datang dalam keadaan
+  bekerja. Saat panel ditutup, node-nya dikembalikan ke tempat semula dan berkas
+  yang tadinya terbuka dipulihkan
+- Commit yang dipilih diserahkan ke penampil sebagai **berkas di dalam sebuah
+  commit** — memang begitu keadaannya. Jalur itu sudah mengambil lewat
+  `repo:diffCommitFile` dan sudah menyembunyikan tombol stage, karena tidak ada
+  yang bisa di-stage di masa lalu
+- `grid-column: 3` milik penampil itu untuk tempatnya di tata letak utama; di
+  slot riwayat itu akan mengarang dua kolom yang tidak ada, jadi ditimpa
+- Tombol tutup milik penampil disembunyikan di sini: menutup diff akan
+  menyisakan separuh panel kosong. Escape menutup panel riwayatnya
 - Penggeser panel dibuat berbasis tabel. Dua panel sebelumnya dieja satu per
   satu di dalam kondisi; panel ketiga harus dieja lagi, dan satu kondisi
   terlewat berarti menggeser panel yang salah

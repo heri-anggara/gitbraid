@@ -2558,7 +2558,15 @@ textarea {
   min-height: 0;
 }
 .fh-list { margin: 0; padding: 6px 0; list-style: none; overflow: auto; border-right: 1px solid var(--line); }
-.fh-diff { overflow: auto; background: var(--bg-graph); }
+
+/* Where the real diff panel goes while history is open. It carries
+   `grid-column: 3` for its place in the main layout, which here would invent
+   two columns that do not exist. */
+.fh-slot { display: grid; min-width: 0; min-height: 0; }
+.fh-slot > .fileview { grid-column: 1; grid-row: 1; }
+/* Its own close button would shut the diff and leave an empty half; the panel's
+   close button is the way out of here. */
+.app.reading-fhist #fv-close { display: none; }
 
 .fh-row { padding: 7px 14px; cursor: pointer; border-left: 2px solid transparent; }
 .fh-row:hover { background: var(--surface-2); }
