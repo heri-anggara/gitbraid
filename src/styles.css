@@ -142,7 +142,16 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 
-button, input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
+/* line-height: normal leaves the box height to the font, and fonts disagree by
+   about two pixels at this size: Cantarell wants 16 of a 16-pixel box, Noto Sans
+   wants 18. With no headroom at all, whether a "g" keeps its tail came down to
+   which font happened to be installed. An explicit line-height ends that. */
+button, input, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1.5;
+  color: inherit;
+}
 
 /* ── what can be selected ───────────────────────────────────── */
 /* This is a desktop application, not a web page: the chrome is furniture you
@@ -392,6 +401,11 @@ textarea {
   font-weight: 700;
   letter-spacing: .02em;
 }
+/* Big enough to be a face rather than a swatch, so it shows one when there is
+   one. The initials stay underneath for an address nobody has a picture for. */
+.avatar.has-photo { background: none; }
+.avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
+
 .avatar.unset {
   background: none;
   border: 1px dashed var(--line-strong);
@@ -716,9 +730,18 @@ textarea {
   align-items: center;
   justify-content: center;
   padding: 5px 7px;
+  /* A glyph is shorter than a line of text, so an icon button left to its own
+     content stands two-thirds the height of the worded buttons beside it. This
+     is the same box those get: one line, plus .btn's padding and border. */
+  min-height: calc(1.5em + 12px);
   color: var(--text-dim);
 }
 .btn-icon:hover:not(:disabled) { color: var(--text); }
+/* A button that carries an icon and a word sets them on one line with a gap,
+   rather than letting the glyph sit on the text's baseline. */
+.btn-with-i { display: inline-flex; align-items: center; gap: 6px; }
+.btn-i { width: 14px; height: 14px; flex: none; opacity: .8; }
+.btn:hover .btn-i { opacity: 1; }
 .btn-sm { padding: 3px 8px; font-size: 12px; }
 .btn-danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
 
@@ -2695,14 +2718,16 @@ mark {
 .wip-head h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 
 /* ── how files are listed ────────────────────────────────────── */
-.btn-icon {
+/* Its own class. This was written as `.btn-icon`, which already belonged to
+   every close button in the window: redefining it here, later in the file,
+   flattened those from 32 pixels tall to 16 and stripped their padding. */
+.btn-viewas {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0;
-  width: 26px;
+  padding: 3px 7px;
 }
-.btn-icon svg { width: 14px; height: 14px; }
+.btn-viewas svg { width: 14px; height: 14px; }
 
 /* A menu whose entries are pictures of what they do: the icon stands where the
    tick would, and the row that is on is lit rather than ticked. */

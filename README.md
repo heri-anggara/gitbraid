@@ -27,13 +27,13 @@ runtime dependencies.
 
 ## Download
 
-Latest release: **v0.3.0**
+Latest release: **v0.3.1**
 
 | Platform | File | Notes |
 |---|---|---|
-| **Debian / Ubuntu** | [`gitbraid_0.3.0_amd64.deb`](https://github.com/heri-anggara/gitbraid/releases/download/v0.3.0/gitbraid_0.3.0_amd64.deb) | Installs into the applications menu |
-| **Any Linux** | [`GitBraid-0.3.0.AppImage`](https://github.com/heri-anggara/gitbraid/releases/download/v0.3.0/GitBraid-0.3.0.AppImage) | One file, no install, updates itself |
-| **Windows** | [`GitBraid Setup 0.3.0.exe`](https://github.com/heri-anggara/gitbraid/releases/download/v0.3.0/GitBraid.Setup.0.3.0.exe) | Unsigned — see the note below |
+| **Debian / Ubuntu** | [`gitbraid_0.3.1_amd64.deb`](https://github.com/heri-anggara/gitbraid/releases/download/v0.3.1/gitbraid_0.3.1_amd64.deb) | Installs into the applications menu |
+| **Any Linux** | [`GitBraid-0.3.1.AppImage`](https://github.com/heri-anggara/gitbraid/releases/download/v0.3.1/GitBraid-0.3.1.AppImage) | One file, no install, updates itself |
+| **Windows** | [`GitBraid Setup 0.3.1.exe`](https://github.com/heri-anggara/gitbraid/releases/download/v0.3.1/GitBraid.Setup.0.3.1.exe) | Unsigned — see the note below |
 
 Older versions and full notes live on the [releases page](https://github.com/heri-anggara/gitbraid/releases).
 
@@ -44,7 +44,7 @@ Older versions and full notes live on the [releases page](https://github.com/her
 
 Once you are running 0.3.0 or newer, GitBraid checks for its own updates and can
 install them for you — the version button in the status bar takes a dot when a
-newer release exists.
+newer release exists, and **Help ▸ Check for Updates…** asks at any time.
 
 ---
 
@@ -65,8 +65,8 @@ has more than one answer.
 
 </div>
 
-**Diffs you can read.** Syntax colouring for around fifteen languages, written
-here rather than pulled from a library. Stage, unstage and discard by hunk. A
+**Diffs you can read.** Syntax colouring for eleven languages across some thirty
+file extensions, written here rather than pulled from a library. Stage, unstage and discard by hunk. A
 strip beside the scrollbar shows where every change is — click one to jump to
 it.
 
@@ -103,7 +103,7 @@ log of every `git` command it ran, so nothing it does is a mystery.
 **Debian / Ubuntu**
 
 ```bash
-sudo apt install ./gitbraid_0.3.0_amd64.deb
+sudo apt install ./gitbraid_0.3.1_amd64.deb
 ```
 
 Then find GitBraid in your applications menu, or run `gitbraid`.
@@ -111,8 +111,8 @@ Then find GitBraid in your applications menu, or run `gitbraid`.
 **AppImage**
 
 ```bash
-chmod +x GitBraid-0.3.0.AppImage
-./GitBraid-0.3.0.AppImage
+chmod +x GitBraid-0.3.1.AppImage
+./GitBraid-0.3.1.AppImage
 ```
 
 **To remove**

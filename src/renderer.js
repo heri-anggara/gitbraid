@@ -370,8 +370,11 @@ function fieldHtml(f) {
       `</label></div>`
     );
   }
+  /* Branch names, URLs and paths are identifiers, not prose; underlining them
+     in red says they are wrong when they are not. The commit message keeps its
+     spell check, being the one box here whose words other people read. */
   const input =
-    `<input type="text" id="mf-${f.name}" data-field="${f.name}" ` +
+    `<input type="text" id="mf-${f.name}" data-field="${f.name}" spellcheck="false" ` +
     `value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}">`;
   // A folder is picked, not typed — but stays editable for anyone who'd rather paste.
   const body =
@@ -1880,8 +1883,15 @@ async function renderCommitPanel(hash) {
 
   $('c-author').textContent = c.author;
   $('c-date').textContent = `authored ${absoluteTime(c.commitDate)}`;
+  /* The one large avatar in the window, so it shows whatever is best: the
+     photograph when one was found, initials otherwise. It does not follow the
+     placement setting — that exists to thin out a list of thousands of rows,
+     and this is a single face that is already on screen. */
   const av = $('c-avatar');
-  av.textContent = initials(c.author);
+  const photo = photoFor(c);
+  if (photo) av.innerHTML = `<img src="${esc(photo)}" alt="">`;
+  else av.textContent = initials(c.author);
+  av.classList.toggle('has-photo', Boolean(photo));
   av.style.setProperty('--hue', avatarHue(c.email));
   av.classList.remove('unset');
 
@@ -2104,11 +2114,25 @@ function indexBlocks() {
 /* The strip beside the scrollbar. It is drawn from the same blocks the counter
    counts, so the seventh mark down is difference seven, and clicking it goes
    there rather than somewhere approximately near it. */
+/* A block can never take more than this much of the strip. On a normal diff a
+   mark is one to three per cent, so it never applies; it exists for a diff that
+   scrolls by only a line or two, where a single block is a third of the file
+   and its mark would draw as a bar rather than a mark. */
+const MAX_MARK_PCT = 25;
+
 function renderChangeMap() {
   const map = $('fv-marks');
   const body = $('fv-body');
   const total = body.scrollHeight;
-  if (!nav.marks.length || total <= 0) { map.innerHTML = ''; paintViewport(); return; }
+  /* Nothing to point at when the whole diff is already on screen — the same
+     test the viewport box makes, which until now was the only half of this
+     strip that knew to keep quiet. Marks drawn then were not merely useless:
+     on a short diff they filled half the strip while nothing was hidden. */
+  if (!nav.marks.length || total <= 0 || total <= body.clientHeight + 1) {
+    map.innerHTML = '';
+    paintViewport();
+    return;
+  }
 
   /* Rows are measured against the body's own scroll origin rather than
      offsetTop, which answers relative to whichever ancestor happens to be
@@ -2121,7 +2145,7 @@ function renderChangeMap() {
     const lines = m.add + m.del;
     return `<button type="button" class="fv-mark m-${kind}" data-block="${i}" ` +
       `style="top:${(top / total * 100).toFixed(3)}%;` +
-      `height:${Math.max((bottom - top) / total * 100, 0.25).toFixed(3)}%" ` +
+      `height:${Math.min(Math.max((bottom - top) / total * 100, 0.25), MAX_MARK_PCT).toFixed(3)}%" ` +
       `title="Difference ${i + 1} of ${nav.marks.length} — ` +
       `${lines} line${lines === 1 ? '' : 's'}"></button>`;
   }).join('');
@@ -4310,6 +4334,7 @@ const markChecked = () => {
    failures are worth saying out loud. */
 async function checkForUpdates({ quiet = false } = {}) {
   markChecked();
+  if (!quiet) setStatus('Checking for updates…');
   const res = await window.gitbraid.invoke('update:check');
   if (!res.ok) {
     if (!quiet) setStatus(firstLine(res.error), 'error');
@@ -4317,7 +4342,12 @@ async function checkForUpdates({ quiet = false } = {}) {
   }
   update = res.data.newer ? res.data : null;
   paintUpdateFlag();
-  if (!quiet && !update) setStatus(`GitBraid ${res.data.current} is the latest release`, 'ok');
+  /* Asked for by hand, "there is one" has to be the offer itself. Marking the
+     status bar and saying nothing answers a question nobody asked. */
+  if (!quiet) {
+    if (update) offerUpdate();
+    else setStatus(`GitBraid ${res.data.current} is the latest release`, 'ok');
+  }
   return res.data;
 }
 
@@ -4547,6 +4577,7 @@ const MENU_ACTIONS = {
   'repo-manager': () => ($('app').classList.contains('managing')
     ? closeRepoManager() : openRepoManager()),
   about: openAbout,
+  'check-updates': () => (update ? offerUpdate() : checkForUpdates()),
   'release-notes': () => ($('app').classList.contains('reading-notes')
     ? closeNotes() : openNotes()),
   'terminal-panel': toggleTerm,     // the panel inside the window
@@ -4563,7 +4594,7 @@ const MENU_ACTIONS = {
 
 /* Anything that opens a dialog is skipped while one is already up — the
    modal is a single shared element. */
-const DIALOG_ACTIONS = new Set(['clone', 'init', 'shortcuts']);
+const DIALOG_ACTIONS = new Set(['clone', 'init', 'shortcuts', 'check-updates']);
 
 window.gitbraid.on('menu:action', (msg) => {
   if (DIALOG_ACTIONS.has(msg.action) && !$('modal').hidden) return;
