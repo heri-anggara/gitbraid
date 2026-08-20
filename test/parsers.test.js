@@ -373,6 +373,48 @@ check('only the first hunk was staged',
     spGaps.length === 2 && spGaps[0] === rowSum[5], spGaps.join('/'));
 }
 
+console.log('\nfile history and ignoring');
+{
+  /* The name a file had at each commit is read out of --name-status. Asking a
+     commit made before a rename for today's path returns nothing, which reads
+     as "this commit changed nothing" when what it changed was a file under
+     another name. A rename line names both; everything else names one. */
+  const nameAt = (record) => {
+    const parts = record.split('\t');
+    return parts.length >= 3 ? parts[2] : parts[1];
+  };
+  check('a modification names the file', nameAt('M\tsrc/app.js') === 'src/app.js');
+  check('an addition names the file', nameAt('A\tsrc/new.js') === 'src/new.js');
+  check('a deletion names the file', nameAt('D\tsrc/gone.js') === 'src/gone.js');
+  check('a rename names the file it became, not the one it was',
+    nameAt('R100\told-name.txt\tnew-name.txt') === 'new-name.txt');
+  check('a partial rename is still a rename',
+    nameAt('R087\tsrc/a.js\tsrc/b.js') === 'src/b.js');
+
+  /* Appending to .gitignore. A file that does not end in a newline would have
+     the next pattern joined onto its last line. */
+  const append = (text, add) => text + (text && !text.endsWith('\n') ? '\n' : '') + add + '\n';
+  check('a pattern is added on its own line', append('*.log\n', 'build/') === '*.log\nbuild/\n');
+  check('a file with no trailing newline gets one first',
+    append('*.log', 'build/') === '*.log\nbuild/\n');
+  check('an empty .gitignore needs no leading newline', append('', 'build/') === 'build/\n');
+
+  const seen = (text) => new Set(text.split(/\r?\n/).map((l) => l.trim()));
+  check('a pattern already there is not written twice', seen('*.log\nbuild/\n').has('build/'));
+  check('and one that is not there is recognised as new', !seen('*.log\n').has('build/'));
+
+  // The same guard as the other list-taking commands.
+  for (const name of ['ignore', 'stop tracking']) {
+    check(`the ${name} handler refuses an empty list`,
+      new RegExp(`Nothing was named to ${name}`).test(mainSrc));
+  }
+  check('file history refuses to run without a file',
+    /No file was named/.test(mainSrc));
+  check('file history follows renames', /'--follow'/.test(mainSrc));
+  check('and asks git not to escape unusual paths',
+    /core\.quotePath=false/.test(mainSrc));
+}
+
 console.log('\ncommands that take a list of files');
 {
   /* Every one of these builds a git command ending in `-- <paths>`. Handed an

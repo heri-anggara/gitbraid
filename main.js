@@ -1461,6 +1461,80 @@ handle('repo:log', async (repo, { limit = 400, all = true, skip = 0 } = {}) => {
   }
 });
 
+/* Every commit that touched one path, newest first.
+
+   --follow carries the history across renames, which is the whole reason a file
+   older than its current name has any history worth reading. It only accepts a
+   single path, which is why this takes one rather than a list. */
+handle('repo:fileLog', async (repo, file, { limit = 200 } = {}) => {
+  if (typeof file !== 'string' || !file.trim()) throw new Error('No file was named.');
+  let commits;
+  try {
+    commits = parseLog(await git(repo, ['log', '--follow', '--date-order', '-z',
+      `--pretty=format:${LOG_FORMAT}`, `--max-count=${limit}`, '--', file]));
+  } catch (e) {
+    if (/does not have any commits|unknown revision/i.test(e.message)) return { commits: [], names: {} };
+    throw e;
+  }
+  if (!commits.length) return { commits: [], names: {} };
+
+  /* What the file was called at each of those commits.
+
+     This has to come from the log itself. Asking a commit made before a rename
+     for today's path returns nothing — which read as "this commit changed
+     nothing", when what it changed was a file with another name. --name-status
+     reports the path as it was at each commit, and spells a rename out as
+     "R100 <old> <new>", which is the only place the old name appears at all.
+
+     core.quotePath is turned off so a path with an accent or a space arrives as
+     itself rather than as escapes. */
+  const names = {};
+  const raw = await git(repo, ['-c', 'core.quotePath=false', 'log', '--follow',
+    `--max-count=${limit}`, '--format=%x00%H', '--name-status', '--', file]);
+  for (const chunk of raw.split('\0')) {
+    const lines = chunk.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) continue;
+    const hash = lines[0];
+    const record = lines[1];
+    if (!record) continue;
+    const parts = record.split('\t');
+    // "R100 old new" names both; everything else names one.
+    names[hash] = parts.length >= 3 ? parts[2] : parts[1];
+  }
+  return { commits, names };
+});
+
+/* Adding a line to .gitignore. The file is created if it is missing, the line is
+   not written twice, and a file that does not end in a newline gets one first —
+   otherwise the new pattern would join itself to the last one. */
+handle('repo:ignore', async (repo, patterns) => {
+  const list = (Array.isArray(patterns) ? patterns : [patterns])
+    .filter((p) => typeof p === 'string' && p.trim())
+    .map((p) => p.trim());
+  if (!list.length) throw new Error('Nothing was named to ignore.');
+
+  const file = path.join(repo, '.gitignore');
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); } catch { /* not there yet */ }
+  const have = new Set(text.split(/\r?\n/).map((l) => l.trim()));
+  const add = list.filter((p) => !have.has(p));
+  if (!add.length) return { added: [], already: list };
+
+  const head = text && !text.endsWith('\n') ? '\n' : '';
+  fs.appendFileSync(file, `${head}${add.join('\n')}\n`);
+  return { added: add, already: list.filter((p) => have.has(p)) };
+});
+
+/* Stop tracking a file without deleting it. Writing a tracked file into
+   .gitignore does nothing at all — git ignores untracked files only — so the
+   two go together or the menu entry is a lie. */
+handle('repo:untrack', async (repo, files) => {
+  const list = (Array.isArray(files) ? files : [files])
+    .filter((f) => typeof f === 'string' && f.trim());
+  if (!list.length) throw new Error('Nothing was named to stop tracking.');
+  return git(repo, ['rm', '--cached', '-r', '--', ...list]);
+});
+
 handle('repo:refs', async (repo) => {
   /* An annotated tag is an object in its own right, so %(objectname) is the tag
      rather than the commit it marks, and %(committerdate) is empty because a tag

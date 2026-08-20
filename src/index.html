@@ -316,6 +316,34 @@
     <div class="nt-body" id="nt-body"></div>
   </section>
 
+  <!-- ── file history ────────────────────────────────────────
+       Sebuah panel tersendiri, bukan daftar commit utama yang disaring: log
+       yang disaring memutus tautan induk, jadi lajur graph-nya akan berbohong.
+       Kiri commit yang menyentuh berkas ini, kanan berkas itu di commit yang
+       dipilih. -->
+  <section class="fhist" id="fhist" hidden>
+    <header class="fh-head">
+      <div class="fh-title">
+        <div class="fh-eyebrow">File history</div>
+        <h1 id="fh-path" title=""></h1>
+      </div>
+      <div class="fh-actions">
+        <span class="fh-count" id="fh-count"></span>
+        <button class="btn btn-icon" id="fh-close" title="Close (Esc)">
+          <svg viewBox="0 0 12 12" width="13" height="13" aria-hidden="true">
+            <path d="M3 3 9 9M9 3 3 9" fill="none" stroke="currentColor"
+                  stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+    <div class="fh-body">
+      <ul class="fh-list" id="fh-list"></ul>
+      <div class="drag-handle" data-resize="fhist"></div>
+      <div class="fh-diff" id="fh-diff"></div>
+    </div>
+  </section>
+
   <!-- ── welcome ─────────────────────────────────────────────── -->
   <section id="welcome" class="welcome">
     <div class="welcome-inner">

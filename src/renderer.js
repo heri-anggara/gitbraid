@@ -5158,6 +5158,102 @@ function renderNotes() {
   }).join('') || '<p class="nt-empty">No release notes yet.</p>';
 }
 
+/* ═════ file history ════════════════════════════════════════════ */
+
+/* A panel of its own rather than the main list filtered to a path. git's own
+   path-filtered log drops the commits between the ones that touched the file,
+   so the parents the graph draws its lanes from are no longer all present —
+   lanes that lie are worse than no lanes at all. */
+const fhist = { path: '', commits: [], names: {}, at: -1 };
+
+async function openFileHistory(file) {
+  fhist.path = file;
+  fhist.commits = [];
+  fhist.names = {};
+  fhist.at = -1;
+
+  $('fh-path').textContent = file;
+  $('fh-path').title = file;
+  $('fh-count').textContent = '';
+  $('fh-list').innerHTML = '<li class="fh-empty">Reading history…</li>';
+  $('fh-diff').innerHTML = '';
+  $('app').classList.add('reading-fhist');
+  $('fhist').hidden = false;
+
+  const out = await call('repo:fileLog', repoPath(), file, { limit: 200 });
+  if (out === null) { closeFileHistory(); return; }
+  if (fhist.path !== file) return;        // another file was opened while git ran
+  fhist.commits = out.commits;
+  fhist.names = out.names || {};
+
+  if (!fhist.commits.length) {
+    $('fh-list').innerHTML =
+      '<li class="fh-empty">No commit has touched this file yet.</li>';
+    $('fh-count').textContent = '';
+    return;
+  }
+
+  renderFileHistory();
+  pickFileCommit(0);
+}
+
+function renderFileHistory() {
+  const n = fhist.commits.length;
+  $('fh-count').textContent = `${n} commit${n === 1 ? '' : 's'}`;
+  $('fh-list').innerHTML = fhist.commits.map((c, i) => {
+    /* --follow carries the history across a rename but says nothing about it,
+       so the one place the file changed name is called out where it happened. */
+    const now = fhist.names[c.hash];
+    const before = fhist.names[fhist.commits[i + 1]?.hash];
+    const renamed = now && before && now !== before
+      ? `<div class="fh-renamed">renamed from ${esc(before)}</div>` : '';
+    return `<li class="fh-row${i === fhist.at ? ' on' : ''}" data-i="${i}">` +
+      `<div class="fh-msg">${esc(c.subject || '(no message)')}</div>` +
+      `<div class="fh-meta"><span class="fh-sha">${esc(c.hash.slice(0, 7))}</span>` +
+      `<span>${esc(c.author)}</span><span>${esc(stamp(c.commitDate))}</span></div>` +
+      renamed +
+      '</li>';
+  }).join('');
+}
+
+async function pickFileCommit(i) {
+  const c = fhist.commits[i];
+  if (!c) return;
+  fhist.at = i;
+  for (const li of $('fh-list').querySelectorAll('.fh-row')) {
+    li.classList.toggle('on', Number(li.dataset.i) === i);
+  }
+  /* The name it had at that commit, not the name it has now — asking for
+     today's path at a commit made before the rename returns nothing. */
+  const at = fhist.names[c.hash] || fhist.path;
+  const raw = await call('repo:diffCommitFile', repoPath(), {
+    hash: c.hash, file: at, ignoreWhitespace: viewer.ignoreWhitespace,
+    context: viewer.allLines ? 100000 : 3, side: 'in',
+  });
+  if (raw === null || fhist.at !== i) return;
+  const files = window.Diff.parse(raw || '');
+  $('fh-diff').innerHTML = files.length
+    ? window.Diff.render(files, [], { path: at, highlight: viewer.syntax })
+    : '<div class="empty-note">This commit records no textual change to the file.</div>';
+  $('fh-diff').scrollTop = 0;
+}
+
+$('fh-list').addEventListener('click', (e) => {
+  const row = e.target.closest('.fh-row');
+  if (row) pickFileCommit(Number(row.dataset.i));
+});
+
+function closeFileHistory() {
+  $('app').classList.remove('reading-fhist');
+  $('fhist').hidden = true;
+  fhist.commits = [];
+  fhist.names = {};
+  $('fh-list').innerHTML = '';
+  $('fh-diff').innerHTML = '';
+}
+
+$('fh-close').addEventListener('click', closeFileHistory);
+
 function openNotes() {
   renderNotes();
   $('app').classList.add('reading-notes');
@@ -6077,9 +6173,55 @@ for (const id of FILE_LISTS) {
       run: () => savePatch(paths, kind, untracked.length),
     });
     items.push('-');
+
+    /* Ignoring means two different things depending on what git already knows
+       about the file, and offering the wrong one is offering something that
+       silently does nothing. Deleted files are left out of both: a path that is
+       gone has nothing to ignore and nothing left to stop tracking. */
+    if (kind !== 'commit') {
+      const deleted = paths.filter((p) => isDeleted(p));
+      const tracked = paths.filter((p) => !isUntracked(p) && !isDeleted(p));
+      const fresh = paths.filter((p) => isUntracked(p));
+
+      if (deleted.length === n) {
+        items.push({ label: 'Add to .gitignore', disabled: true,
+          hint: n === 1 ? 'This file is already deleted'
+            : 'These files are already deleted' });
+      } else if (fresh.length === n) {
+        items.push({ label: many ? `Ignore ${n} files…` : 'Ignore this file…',
+          run: () => ignoreFiles(fresh) });
+      } else if (tracked.length === n) {
+        // .gitignore has no effect on a tracked file, so the honest offer is
+        // the pair: stop tracking it, then ignore it.
+        items.push({ label: many ? `Stop tracking ${n} files and ignore…`
+                                 : 'Stop tracking and ignore…',
+          hint: 'git already tracks this — ignoring alone would do nothing',
+          run: () => untrackAndIgnore(tracked) });
+      } else {
+        // A mixed selection: each half gets the entry that fits it.
+        if (fresh.length) {
+          items.push({ label: `Ignore ${plural(fresh.length, 'untracked file')}…`,
+            run: () => ignoreFiles(fresh) });
+        }
+        if (tracked.length) {
+          items.push({ label: `Stop tracking ${plural(tracked.length, 'tracked file')} and ignore…`,
+            run: () => untrackAndIgnore(tracked) });
+        }
+      }
+      items.push('-');
+    }
+
     items.push(
-      { label: 'Open in editor', disabled: many, run: () => openInEditor(path) },
-      { label: 'Show in file manager', disabled: many,
+      { label: 'File history…', disabled: many || isUntracked(path),
+        hint: many ? 'One file at a time'
+          : isUntracked(path) ? 'This file has never been committed' : '',
+        run: () => openFileHistory(path) },
+      '-',
+      // A deleted file has nothing on disk to open, and its folder may be gone too.
+      { label: 'Open in editor', disabled: many || isDeleted(path),
+        hint: isDeleted(path) && !many ? 'This file is no longer on disk' : '',
+        run: () => openInEditor(path) },
+      { label: 'Show in file manager', disabled: many || isDeleted(path),
         run: () => call('shell:openPath', `${repoPath()}/${path}`.replace(/\/[^/]*$/, '')) },
       '-',
       { label: many ? `Copy ${n} paths` : 'Copy path', run: () => {
@@ -6124,10 +6266,89 @@ for (const id of FILE_LISTS) {
   });
 }
 
+/* ── ignoring ──
+   git ignores untracked files only. Writing a tracked path into .gitignore
+   changes nothing at all, which is why the menu offers a different thing for
+   each: an untracked file is simply ignored, a tracked one has to stop being
+   tracked first, and that is a change to the index worth saying out loud. */
+function ignorePatterns(path) {
+  const cut = path.lastIndexOf('/');
+  const dir = cut < 0 ? '' : path.slice(0, cut);
+  const name = cut < 0 ? path : path.slice(cut + 1);
+  const dot = name.lastIndexOf('.');
+  const ext = dot > 0 ? name.slice(dot) : '';
+  const out = [{ value: path, label: `Just this file`, help: path }];
+  if (ext) {
+    out.push({ value: `*${ext}`, label: `Every ${ext} file`,
+      help: `*${ext} — anywhere in the repository` });
+  }
+  if (dir) {
+    out.push({ value: `${dir}/`, label: 'Everything in this folder', help: `${dir}/` });
+  }
+  return out;
+}
+
+async function ignoreFiles(paths) {
+  if (!paths.length) return;
+  const many = paths.length > 1;
+  const r = await modal({
+    title: many ? `Ignore ${plural(paths.length, 'file')}` : 'Ignore this file',
+    description: 'The pattern is added to .gitignore in the top of the repository. '
+      + 'Ignoring only ever applies to files git is not already tracking.',
+    fields: many
+      // One rule per file is the only choice that means the same thing for all
+      // of them; a shared extension or folder is not something to assume.
+      ? [{ name: 'how', type: 'choice', options: [
+          { value: 'each', label: `Each of the ${paths.length} files by name`,
+            help: paths.slice(0, 3).join(', ') + (paths.length > 3 ? `, and ${paths.length - 3} more` : '') },
+        ] }]
+      : [{ name: 'how', type: 'choice', options: ignorePatterns(paths[0]) }],
+    confirmLabel: 'Ignore',
+  });
+  if (!r) return;
+  const patterns = many ? paths : [r.how];
+  const out = await call('repo:ignore', repoPath(), patterns);
+  if (out === null) return;
+  clearPicked();
+  await refresh();
+  setStatus(out.added.length
+    ? `Added ${plural(out.added.length, 'line')} to .gitignore`
+    : 'Already in .gitignore', 'ok');
+}
+
+/* Tracked, and the user wants it gone from the repository but kept on disk.
+   git rm --cached stages the removal; the file itself is untouched. */
+async function untrackAndIgnore(paths) {
+  if (!paths.length) return;
+  const ok = await confirmAction(
+    paths.length === 1 ? 'Stop tracking this file' : `Stop tracking ${plural(paths.length, 'file')}`,
+    `${paths.length === 1 ? 'The file stays' : 'The files stay'} on your disk, but git stops `
+    + `tracking ${paths.length === 1 ? 'it' : 'them'}: the removal is staged, and the next commit `
+    + `takes ${paths.length === 1 ? 'it' : 'them'} out of the repository for everyone. `
+    + `${paths.length === 1 ? 'Its name is' : 'Their names are'} added to .gitignore.`,
+    'Stop tracking'
+  );
+  if (!ok) return;
+  const gone = await call('repo:untrack', repoPath(), paths);
+  if (gone === null) return;
+  await call('repo:ignore', repoPath(), paths);
+  if (paths.includes(state.file?.path)) { state.file = null; closeFile(); }
+  clearPicked();
+  await refresh();
+  setStatus(`Stopped tracking ${plural(paths.length, 'file')}`, 'ok');
+}
+
 /** Whether a path is untracked, read from the row the list drew for it. */
 function isUntracked(path) {
   const s = state.status;
   return Boolean(s && s.untracked.some((f) => f.path === path));
+}
+
+/** Deleted in the working tree or staged as deleted — either way, not there. */
+function isDeleted(path) {
+  const s = state.status;
+  if (!s) return false;
+  return [...s.unstaged, ...s.staged].some((f) => f.path === path && f.status === 'D');
 }
 
 $('btn-stage-all').addEventListener('click', async () => {
@@ -6178,6 +6399,7 @@ document.addEventListener('keydown', (e) => {
     if (!$('prefs').hidden) { closePrefs(); return; }
     if (!$('about').hidden) { closeAbout(); return; }
     if (!$('notes').hidden) { closeNotes(); return; }
+    if (!$('fhist').hidden) { closeFileHistory(); return; }
     if ($('app').classList.contains('managing')) { closeRepoManager(); return; }
     if ($('app').classList.contains('viewing-file')) { closeFile(); return; }
   }
@@ -6200,21 +6422,31 @@ document.addEventListener('keydown', (e) => {
 });
 
 /* pane resizing */
+/* Each handle names the pane it drags, which side of it that pane is on, and
+   the custom property that carries the width. Two of them were spelled out in
+   the conditions here; a third would have had to be spelled out again, and one
+   missed condition drags the wrong pane. */
+const RESIZERS = {
+  sidebar: { sel: '.sidebar', grows: 'right', varName: '--sidebar-w' },
+  detail: { sel: '.detail', grows: 'left', varName: '--detail-w' },
+  fhist: { sel: '.fh-list', grows: 'right', varName: '--fhist-w' },
+};
+
 document.querySelectorAll('.drag-handle').forEach((handle) => {
   handle.addEventListener('mousedown', (down) => {
     down.preventDefault();
-    const which = handle.dataset.resize;
+    const spec = RESIZERS[handle.dataset.resize];
+    if (!spec) return;
     const startX = down.clientX;
     const root = document.documentElement;
     // Measure the pane itself: the widths default to clamp(), which
     // getPropertyValue hands back unresolved.
-    const pane = el(which === 'sidebar' ? '.sidebar' : '.detail');
-    const startW = pane.getBoundingClientRect().width;
+    const startW = el(spec.sel).getBoundingClientRect().width;
 
     const onMove = (move) => {
-      const delta = which === 'sidebar' ? move.clientX - startX : startX - move.clientX;
+      const delta = spec.grows === 'right' ? move.clientX - startX : startX - move.clientX;
       const next = Math.min(700, Math.max(160, startW + delta));
-      root.style.setProperty(which === 'sidebar' ? '--sidebar-w' : '--detail-w', next + 'px');
+      root.style.setProperty(spec.varName, next + 'px');
     };
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
