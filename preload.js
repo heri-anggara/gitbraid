@@ -26,6 +26,7 @@ const CHANNELS = new Set([
   'repo:cherryPick', 'repo:tag',
   'repo:fetch', 'repo:pull', 'repo:push',
   'repo:stashList', 'repo:stashSave', 'repo:stashApply', 'repo:stashDrop',
+  'repo:stashPaths', 'repo:savePatch',
   'repo:raw',
   'shell:openPath', 'shell:openExternal', 'shell:openInEditor',
   'git:option', 'git:setOption', 'repos:existing',

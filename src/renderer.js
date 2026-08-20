@@ -1750,6 +1750,13 @@ function renderWip() {
     `<li class="empty-row">${wipFilter ? 'No changed file matches' : 'Working tree is clean'}</li>`;
 
   paintViewAs('w-viewas');
+  /* The lists were just replaced wholesale, so the selection has to be put back
+     — and anything staged, discarded or gone from disk drops out of it. */
+  const alive = new Set([...s.conflicted, ...s.staged, ...s.unstaged, ...s.untracked]
+    .map((f) => f.path));
+  for (const p of [...picked.paths]) if (!alive.has(p)) picked.paths.delete(p);
+  if (!picked.paths.size) picked.kind = null;
+  paintPicked();
 
   $('count-staged').textContent = s.staged.length;
   $('count-unstaged').textContent = working.length;
@@ -2828,12 +2835,17 @@ $('fv-discard').addEventListener('click', () =>
 
 const repoPath = () => state.repo.path;
 
+/* Staging moves a file to the other list, so a selection naming it is about a
+   row that is no longer there. It is dropped rather than left pointing at a
+   list the file has left. */
 async function stage(paths) {
   await call('repo:stage', repoPath(), paths);
+  clearPicked();
   await refresh();
 }
 async function unstage(paths) {
   await call('repo:unstage', repoPath(), paths);
+  clearPicked();
   await refresh();
 }
 async function discard(path, untracked) {
@@ -2846,6 +2858,82 @@ async function discard(path, untracked) {
   await call('repo:discard', repoPath(), [path], untracked);
   state.file = null;
   await refresh();
+}
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/* Discarding several. Tracked and untracked go separately because they are two
+   different commands — one restores a file, the other deletes it — and the
+   warning says so, since deleting an untracked file is the one thing here git
+   keeps no copy of anywhere. */
+async function discardMany(paths) {
+  if (!paths.length) return;
+  const gone = paths.filter((p) => isUntracked(p));
+  const kept = paths.filter((p) => !isUntracked(p));
+  if (paths.length === 1) return discard(paths[0], gone.length === 1);
+
+  const ok = await confirmAction(
+    `Discard ${plural(paths.length, 'file')}`,
+    [kept.length ? `${plural(kept.length, 'file')} will go back to the last committed state.` : '',
+     gone.length ? `${plural(gone.length, 'untracked file')} will be deleted.` : '',
+     'This cannot be undone.'].filter(Boolean).join(' '),
+    'Discard'
+  );
+  if (!ok) return;
+  if (kept.length) await call('repo:discard', repoPath(), kept, false);
+  if (gone.length) await call('repo:discard', repoPath(), gone, true);
+  if (paths.includes(state.file?.path)) { state.file = null; closeFile(); }
+  clearPicked();
+  await refresh();
+  setStatus(`Discarded ${plural(paths.length, 'file')}`, 'ok');
+}
+
+async function resolveMany(paths, how) {
+  for (const p of paths) await call('repo:resolve', repoPath(), p, how);
+  clearPicked();
+  await refresh();
+  setStatus(`${plural(paths.length, 'file')} resolved`, 'ok');
+}
+
+/* Stashing part of the working tree. Untracked files need -u or git leaves them
+   where they are without saying so, which would look like the stash had quietly
+   skipped them. */
+async function stashPaths(paths, untrackedCount) {
+  if (!paths.length) return;
+  const r = await modal({
+    title: `Stash ${plural(paths.length, 'file')}`,
+    description: untrackedCount
+      ? `Their changes are set aside and the files go back to their last committed `
+        + `state. ${plural(untrackedCount, 'untracked file')} will be taken along too.`
+      : 'Their changes are set aside and the files go back to their last committed state.',
+    fields: [{ name: 'message', label: 'Message (optional)',
+               placeholder: paths.length === 1 ? paths[0] : `${paths.length} files` }],
+    confirmLabel: 'Stash',
+  });
+  if (!r) return;
+  const out = await call('repo:stashPaths', repoPath(), paths, r.message,
+    untrackedCount > 0);
+  if (out === null) return;
+  if (paths.includes(state.file?.path)) { state.file = null; closeFile(); }
+  clearPicked();
+  await refresh();
+  setStatus(`Stashed ${plural(paths.length, 'file')}`, 'ok');
+}
+
+/* A patch of what was picked, saved wherever the user says. */
+async function savePatch(paths, kind, untrackedCount) {
+  const usable = paths.filter((p) => !isUntracked(p));
+  if (!usable.length) { setStatus('A patch is made from tracked changes', 'warn'); return; }
+  const name = usable.length === 1
+    ? usable[0].split('/').pop().replace(/\.[^.]*$/, '')
+    : `${baseName(repoPath())}-${usable.length}-files`;
+  const out = await call('repo:savePatch', repoPath(), usable,
+    { staged: kind === 'staged', skipped: untrackedCount, name });
+  if (out === null) return;              // cancelled, or the call failed and said so
+  if (out.empty) { setStatus('Those files have no changes to put in a patch', 'warn'); return; }
+  setStatus(
+    `Patch saved to ${out.path}` +
+    (out.skipped ? ` — ${plural(out.skipped, 'untracked file')} left out` : ''), 'ok');
 }
 
 async function applyHunk(fileIndex, hunkIndex, action) {
@@ -5771,6 +5859,86 @@ $('c-hash').addEventListener('click', () => {
   setStatus('Full SHA copied', 'ok');
 });
 
+/* ── picking more than one file ──
+
+   The lists are redrawn wholesale on every refresh — a stage, a discard, a file
+   changing on disk — so a selection cannot live in the document as a class on a
+   row. It lives here, as paths, and is painted back on after each draw.
+
+   One list at a time holds the selection. Staged and unstaged are not two halves
+   of one list: the actions differ, and a menu offering to stage a file that is
+   already staged is a menu that has stopped meaning anything. */
+const picked = { kind: null, paths: new Set(), anchor: null };
+
+const pickedList = () => (picked.kind === 'conflict' ? 'list-conflicts'
+  : picked.kind === 'staged' ? 'list-staged'
+  : picked.kind === 'unstaged' ? 'list-unstaged'
+  : picked.kind === 'commit' ? 'list-commit-files' : null);
+
+function clearPicked() {
+  picked.kind = null;
+  picked.paths.clear();
+  picked.anchor = null;
+  paintPicked();
+}
+
+/** Put the selection back on the rows after a redraw. */
+function paintPicked() {
+  for (const id of FILE_LISTS) {
+    const list = $(id);
+    if (!list) continue;
+    const mine = id === pickedList();
+    for (const li of list.querySelectorAll('li[data-path]')) {
+      li.classList.toggle('picked', mine && picked.paths.has(li.dataset.path));
+    }
+  }
+  const n = picked.paths.size;
+  $('app').classList.toggle('multi-picked', n > 1);
+}
+
+/** The rows of one list, in the order they are drawn — what a Shift range means. */
+const rowsOf = (id) => [...$(id).querySelectorAll('li[data-path]')].map((li) => li.dataset.path);
+
+function pickOne(kind, path) {
+  picked.kind = kind;
+  picked.paths = new Set([path]);
+  picked.anchor = path;
+  paintPicked();
+}
+
+function pickToggle(id, kind, path) {
+  if (picked.kind !== kind) { pickOne(kind, path); return; }
+  if (picked.paths.has(path)) picked.paths.delete(path);
+  else picked.paths.add(path);
+  picked.anchor = path;
+  if (!picked.paths.size) picked.kind = null;
+  paintPicked();
+}
+
+function pickRange(id, kind, path) {
+  if (picked.kind !== kind || !picked.anchor) { pickOne(kind, path); return; }
+  const rows = rowsOf(id);
+  const a = rows.indexOf(picked.anchor);
+  const b = rows.indexOf(path);
+  if (a < 0 || b < 0) { pickOne(kind, path); return; }
+  const [lo, hi] = a < b ? [a, b] : [b, a];
+  picked.paths = new Set(rows.slice(lo, hi + 1));
+  paintPicked();
+}
+
+/** What the menu and the keys act on: the selection, or just the row under the
+    pointer when that row is not part of it. */
+function pickedFor(kind, path) {
+  if (picked.kind === kind && picked.paths.has(path) && picked.paths.size > 1) {
+    // Drawn order, not click order, so a patch reads the way the list does.
+    const rows = rowsOf(pickedList());
+    return rows.filter((p) => picked.paths.has(p));
+  }
+  return [path];
+}
+
+const FILE_LISTS = ['list-conflicts', 'list-staged', 'list-unstaged', 'list-commit-files'];
+
 /* file lists */
 function wireFileList(id) {
   $(id).addEventListener('click', async (e) => {
@@ -5790,11 +5958,25 @@ function wireFileList(id) {
         return resolveConflict(path, what);
       }
     }
-    state.file = { path, kind: li.dataset.kind, status: li.dataset.status,
+    const kind = li.dataset.kind;
+    /* Ctrl and Shift extend the selection and leave the open diff where it is:
+       picking a second file is not a request to read it, and swapping the pane
+       under the pointer on every Shift-click makes a range impossible to build. */
+    if (e.ctrlKey || e.metaKey) { pickToggle(id, kind, path); return; }
+    if (e.shiftKey) { pickRange(id, kind, path); return; }
+
+    pickOne(kind, path);
+    state.file = { path, kind, status: li.dataset.status,
                    untracked: li.dataset.untracked === '1' };
     $(id).querySelectorAll('li').forEach((n) => n.classList.remove('selected'));
     li.classList.add('selected');
     await showFileDiff();
+  });
+
+  /* A range is built with Shift held, and the browser would select the text of
+     every row between the two clicks while it is. */
+  $(id).addEventListener('mousedown', (e) => {
+    if (e.shiftKey && e.target.closest('li[data-path]')) e.preventDefault();
   });
 }
 ['list-conflicts', 'list-staged', 'list-unstaged', 'list-commit-files'].forEach(wireFileList);
@@ -5837,38 +6019,115 @@ $('btn-discard-all').addEventListener('click', async () => {
   setStatus(`Discarded ${paths.length} file${paths.length === 1 ? '' : 's'}`, 'ok');
 });
 
-/* ── per-file context menu ── */
-for (const id of ['list-conflicts', 'list-staged', 'list-unstaged', 'list-commit-files']) {
+/* ── per-file context menu ──
+   Every entry names how many files it will touch, because "Discard changes" and
+   "Discard 12 files" are not the same offer and the difference is not
+   recoverable. Entries that can only mean one file stay singular and act on the
+   row under the pointer. */
+for (const id of FILE_LISTS) {
   $(id).addEventListener('contextmenu', (e) => {
     const li = e.target.closest('li[data-path]');
     if (!li) return;
     const { path, kind } = li.dataset;
-    const untracked = li.dataset.untracked === '1';
+
+    /* Right-clicking outside the selection moves it, the way every file list
+       behaves — otherwise the menu would describe files that are not under the
+       pointer and look like it had misread the click. */
+    if (picked.kind !== kind || !picked.paths.has(path)) pickOne(kind, path);
+
+    const paths = pickedFor(kind, path);
+    const n = paths.length;
+    const many = n > 1;
+    const these = many ? `${n} files` : 'this file';
+    const untracked = paths.filter((p) => isUntracked(p));
+
     const items = [];
     if (kind === 'conflict') {
-      items.push({ label: 'Keep your version', run: () => resolveConflict(path, 'ours') });
-      items.push({ label: 'Keep their version', run: () => resolveConflict(path, 'theirs') });
-      items.push({ label: 'Mark resolved', run: () => resolveConflict(path, 'mark') });
+      items.push({ label: many ? `Keep your version of ${n} files` : 'Keep your version',
+        run: () => resolveMany(paths, 'ours') });
+      items.push({ label: many ? `Keep their version of ${n} files` : 'Keep their version',
+        run: () => resolveMany(paths, 'theirs') });
+      items.push({ label: many ? `Mark ${n} files resolved` : 'Mark resolved',
+        run: () => resolveMany(paths, 'mark') });
       items.push('-');
     }
-    if (kind === 'unstaged') items.push({ label: 'Stage this file', run: () => stage([path]) });
-    if (kind === 'staged') items.push({ label: 'Unstage this file', run: () => unstage([path]) });
+    if (kind === 'unstaged') {
+      items.push({ label: many ? `Stage ${n} files` : 'Stage this file',
+        accel: 'Enter', run: () => stage(paths) });
+    }
+    if (kind === 'staged') {
+      items.push({ label: many ? `Unstage ${n} files` : 'Unstage this file',
+        accel: 'Enter', run: () => unstage(paths) });
+    }
     if (kind !== 'commit') {
-      items.push({ label: 'Discard changes', danger: true, run: () => discard(path, untracked) });
+      items.push({ label: many ? `Discard ${n} files…` : 'Discard changes…',
+        accel: 'Delete', danger: true, run: () => discardMany(paths) });
+      items.push({ label: many ? `Stash ${n} files…` : 'Stash this file…',
+        run: () => stashPaths(paths, untracked.length) });
       items.push('-');
     }
+    items.push({
+      label: many ? `Save ${n} files as patch…` : 'Save as patch…',
+      hint: untracked.length === n && n > 0
+        ? 'A patch is made from tracked changes, and these are untracked'
+        : untracked.length
+          ? `${untracked.length} untracked file${untracked.length === 1 ? '' : 's'} cannot go in a patch`
+          : '',
+      disabled: untracked.length === n,
+      run: () => savePatch(paths, kind, untracked.length),
+    });
+    items.push('-');
     items.push(
-      { label: 'Open in editor', run: () => openInEditor(path) },
-      { label: 'Show in file manager',
+      { label: 'Open in editor', disabled: many, run: () => openInEditor(path) },
+      { label: 'Show in file manager', disabled: many,
         run: () => call('shell:openPath', `${repoPath()}/${path}`.replace(/\/[^/]*$/, '')) },
       '-',
-      { label: 'Copy path', run: () => {
-          navigator.clipboard.writeText(path);
-          setStatus('File path copied', 'ok');
+      { label: many ? `Copy ${n} paths` : 'Copy path', run: () => {
+          navigator.clipboard.writeText(paths.join('\n'));
+          setStatus(many ? `${n} file paths copied` : 'File path copied', 'ok');
         } },
     );
     contextMenu(e, items);
   });
+}
+
+/* The keys the menu advertises. A list only answers them while it has the
+   focus, so Delete in the commit message never reaches a file. */
+for (const id of FILE_LISTS) {
+  $(id).setAttribute('tabindex', '0');
+  $(id).addEventListener('keydown', (e) => {
+    if (e.target.closest('input, textarea')) return;
+    const kind = picked.kind;
+    if (!kind || id !== pickedList() || !picked.paths.size) return;
+    const paths = rowsOf(id).filter((p) => picked.paths.has(p));
+    if (!paths.length) return;
+
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      picked.paths = new Set(rowsOf(id));
+      paintPicked();
+      return;
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (kind === 'unstaged') stage(paths);
+      else if (kind === 'staged') unstage(paths);
+      return;
+    }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (kind === 'commit') return;
+      e.preventDefault();
+      discardMany(paths);
+      return;
+    }
+    if (e.key === 'Escape' && picked.paths.size > 1) { e.preventDefault(); clearPicked(); }
+  });
+}
+
+/** Whether a path is untracked, read from the row the list drew for it. */
+function isUntracked(path) {
+  const s = state.status;
+  return Boolean(s && s.untracked.some((f) => f.path === path));
 }
 
 $('btn-stage-all').addEventListener('click', async () => {

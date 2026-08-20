@@ -386,6 +386,52 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   lebar membuangnya dan mengukur lagi. Diuji 1280→980→1280: model dan halaman
   tetap sepakat dalam 2px di ketiganya
 
+**Memilih banyak berkas sekaligus**
+- Ctrl/Cmd+klik menambah-mengurangi, Shift+klik membuat rentang, klik biasa
+  memilih satu sekaligus membuka diff-nya. Ctrl+A memilih seisi daftar
+- Ctrl dan Shift **tidak** mengganti berkas yang terbuka di panel: memilih
+  berkas kedua bukan permintaan untuk membacanya, dan menukar panel di tiap
+  Shift+klik membuat rentang mustahil dibangun
+- Pilihannya **tidak disimpan sebagai kelas di DOM**. Daftar digambar ulang
+  seutuhnya setiap kali ada refresh — stage, discard, berkas berubah di disk —
+  jadi pilihan disimpan sebagai daftar path lalu dicatkan kembali setelah tiap
+  gambar. Path yang sudah tidak ada di status ikut gugur dari pilihan
+- Satu daftar saja yang memegang pilihan. Staged dan unstaged bukan dua paruh
+  dari satu daftar: aksinya berbeda, dan menu yang menawarkan "stage" untuk
+  berkas yang sudah ter-stage adalah menu yang berhenti bermakna
+- Klik kanan di luar pilihan **memindahkan** pilihan ke baris itu, seperti
+  daftar berkas mana pun — kalau tidak, menunya akan menyebut berkas yang tidak
+  ada di bawah kursor dan tampak salah baca
+- Tiap entri menyebut **berapa** berkas yang akan disentuh. "Discard changes"
+  dan "Discard 12 files" bukan tawaran yang sama, dan selisihnya tidak bisa
+  dibatalkan
+- Tombol per-baris disembunyikan pada baris terpilih selama lebih dari satu
+  dipilih: tombol itu akan mengenai satu berkas dan terbaca seolah mengabaikan
+  sisanya
+- Baris terpilih dan baris terbuka dua hal berbeda — yang satu berkata "aksi
+  akan mengenai ini", yang lain "ini yang sedang ditampilkan panel". Bisa baris
+  yang sama, jadi tandanya harus beda: yang terbuka berlatar penuh, yang
+  terpilih diberi pita di tepi kiri
+
+**Aksi atas banyak berkas**
+- Discard memisahkan yang terlacak dari yang tidak, karena itu dua perintah
+  berbeda — satu memulihkan berkas, satu menghapusnya — dan peringatannya
+  menyebutkan keduanya. Menghapus berkas tak terlacak adalah satu-satunya hal
+  di sini yang git tidak menyimpan salinannya di mana pun
+- Stash sebagian memakai `git stash push -- <paths>`. Berkas tak terlacak butuh
+  `-u`, kalau tidak git meninggalkannya tanpa berkata apa-apa — dan itu akan
+  tampak seperti stash yang diam-diam melewatkannya
+- Save as Patch memakai `git diff [--cached] -- <paths>`. `git diff` hanya
+  melaporkan perubahan terlacak, jadi berkas tak terlacak tidak bisa masuk:
+  entrinya dimatikan kalau semuanya tak terlacak, dan jumlah yang ditinggalkan
+  disebutkan setelah berkas tersimpan. Diuji: hasilnya lolos `git apply --check`
+- **Semua perintah ini berakhir dengan `-- <paths>`.** Diberi daftar kosong,
+  pathspec-nya lenyap dan perintahnya mengenai seluruh working tree, bukan
+  berkas yang disebut menu. Ketiganya menolak daftar kosong, string kosong, dan
+  nilai bukan-string; sebuah string telanjang tidak dipecah jadi huruf. Diuji
+  dengan memanggil ketiganya lewat IPC: tiga-tiganya ditolak dan tidak satu
+  berkas pun berubah
+
 **Catatan rilis di dialog update**
 - Isi rilis GitHub itu Markdown yang ditulis untuk halaman web, dan dialognya
   dulu mencetaknya **mentah** di dalam `<pre>` — jadi tabel pengukuran datang

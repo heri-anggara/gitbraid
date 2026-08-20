@@ -2508,6 +2508,23 @@ textarea {
 .difftable.split td:nth-child(3) { border-left: 1px solid var(--line); }
 .dl-void { background: var(--surface); opacity: .35; }
 
+/* ── picking several files ───────────────────────────────────── */
+/* A picked row and the open row are two different things: one says "the actions
+   will touch this", the other says "this is what the pane is showing". They can
+   be the same row, so they must not be the same mark — the open file keeps its
+   filled background, and a picked row is banded down its left edge. */
+.filelist li.picked {
+  background: var(--row-sel);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.filelist li.picked.selected { box-shadow: inset 2px 0 0 var(--accent); }
+/* Building a range with Shift must not paint the rows it passes as text. */
+.filelist li { user-select: none; }
+.filelist:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* While several are picked, the per-row buttons would act on one of them and
+   read as though they had ignored the rest. */
+.app.multi-picked .filelist li.picked .f-act { visibility: hidden; }
+
 /* ── find in history ────────────────────────────────────────── */
 /* Docked rather than floating: an overlay would sit on top of the very row it
    just found whenever the match is near the top of the list. */
