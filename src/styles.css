@@ -227,6 +227,7 @@ textarea {
 .repomgr  { grid-row: 4; }
 .prefs    { grid-row: 4; }
 .notes    { grid-row: 4; }
+.fhist    { grid-row: 4; }
 .term      { grid-row: 5; }
 .statusbar { grid-row: 6; }
 
@@ -244,6 +245,12 @@ textarea {
 .app.reading-notes .main,
 .app.reading-notes .repomgr,
 .app:not(.reading-notes) .notes { display: none; }
+
+/* ── file history ────────────────────────────────────────────── */
+.app.reading-fhist .welcome,
+.app.reading-fhist .main,
+.app.reading-fhist .repomgr,
+.app:not(.reading-fhist) .fhist { display: none; }
 
 .app.prefs-open .welcome,
 .app.prefs-open .main,
@@ -2507,6 +2514,77 @@ textarea {
 .fv-body.wrap .difftable.split td.dl-text { overflow: visible; text-overflow: clip; }
 .difftable.split td:nth-child(3) { border-left: 1px solid var(--line); }
 .dl-void { background: var(--surface); opacity: .35; }
+
+/* ── file history ────────────────────────────────────────────── */
+/* A panel of its own rather than the main list filtered: a filtered log breaks
+   the parent links the graph draws its lanes from, and lanes that lie are worse
+   than no lanes. Commits on the left, the file at the chosen one on the right. */
+.fhist {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  background: var(--bg);
+}
+.fh-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.fh-title { min-width: 0; }
+.fh-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.fh-head h1 {
+  margin: 2px 0 0;
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fh-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.fh-count { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+.fh-body {
+  display: grid;
+  grid-template-columns: var(--fhist-w, 380px) 4px minmax(0, 1fr);
+  min-height: 0;
+}
+.fh-list { margin: 0; padding: 6px 0; list-style: none; overflow: auto; border-right: 1px solid var(--line); }
+.fh-diff { overflow: auto; background: var(--bg-graph); }
+
+.fh-row { padding: 7px 14px; cursor: pointer; border-left: 2px solid transparent; }
+.fh-row:hover { background: var(--surface-2); }
+.fh-row.on { background: var(--row-sel); border-left-color: var(--accent); }
+.fh-msg {
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fh-meta {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.fh-sha { font-family: var(--mono); }
+/* A rename is the one thing --follow hides, so it is called out where it happened. */
+.fh-renamed {
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--accent-text);
+}
+.fh-empty { padding: 28px 18px; text-align: center; color: var(--text-faint); font-size: 12px; }
 
 /* ── picking several files ───────────────────────────────────── */
 /* A picked row and the open row are two different things: one says "the actions

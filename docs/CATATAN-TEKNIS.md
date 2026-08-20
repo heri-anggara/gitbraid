@@ -413,6 +413,48 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   yang sama, jadi tandanya harus beda: yang terbuka berlatar penuh, yang
   terpilih diberi pita di tepi kiri
 
+**Ignore, menyesuaikan keadaan berkas**
+- git **hanya** mengabaikan berkas tak terlacak. Menulis berkas terlacak ke
+  `.gitignore` tidak berefek apa pun — jadi menunya menawarkan hal berbeda untuk
+  keadaan yang berbeda, karena menawarkan yang salah sama dengan menawarkan
+  sesuatu yang diam-diam tidak melakukan apa-apa:
+  - **tak terlacak** → "Ignore this file…", dengan pilihan pola: berkas itu
+    saja, semua berkas berekstensi sama, atau seisi foldernya
+  - **terlacak** → "Stop tracking and ignore…" — `git rm --cached` lalu tulis ke
+    `.gitignore`. Berkasnya tetap di disk, tapi penghapusannya ter-stage dan
+    commit berikutnya mengeluarkannya dari repo untuk semua orang. Ada dialog
+    konfirmasi yang menyebut itu
+  - **terhapus** → entrinya mati: path yang sudah hilang tidak punya apa pun
+    untuk diabaikan maupun dihentikan pelacakannya
+  - **campuran** → tiap bagian dapat entrinya sendiri
+- "Open in editor" juga mati untuk berkas terhapus — tidak ada yang bisa dibuka
+- `.gitignore` dibuat kalau belum ada, pola tidak ditulis dua kali, dan berkas
+  yang tidak berakhir dengan baris-baru diberi satu dulu — kalau tidak, pola
+  baru akan menyambung ke baris terakhir
+
+**File history**
+- **Panel tersendiri**, bukan daftar commit utama yang disaring. Log yang
+  disaring per-path menjatuhkan commit di antaranya, jadi induk yang dipakai
+  graph untuk menggambar lajur tidak lagi lengkap — dan lajur yang berbohong
+  lebih buruk daripada tidak ada lajur
+- Kiri daftar commit yang menyentuh berkas itu, kanan diff berkas itu pada
+  commit yang dipilih. Pembatasnya bisa digeser
+- `--follow` membawa riwayat melewati rename — itu justru alasan utama riwayat
+  berkas berguna
+- **Nama berkas di tiap commit harus diambil dari log itu sendiri.** Percobaan
+  pertama menanyakan `git show --follow <hash> -- <path-sekarang>` per commit:
+  untuk commit sebelum rename hasilnya kosong, dan itu terbaca sebagai "commit
+  ini tidak mengubah apa-apa" padahal yang diubahnya berkas bernama lain.
+  `--name-status` melaporkan nama sebagaimana adanya saat itu, dan mengeja
+  rename sebagai `R100 <lama> <baru>` — satu-satunya tempat nama lama muncul
+- `core.quotePath=false` supaya path beraksen atau berspasi datang apa adanya,
+  bukan sebagai escape
+- Rename ditandai di baris tempat ia terjadi, karena `--follow` menyeberanginya
+  tanpa berkata apa-apa
+- Penggeser panel dibuat berbasis tabel. Dua panel sebelumnya dieja satu per
+  satu di dalam kondisi; panel ketiga harus dieja lagi, dan satu kondisi
+  terlewat berarti menggeser panel yang salah
+
 **Aksi atas banyak berkas**
 - Discard memisahkan yang terlacak dari yang tidak, karena itu dua perintah
   berbeda — satu memulihkan berkas, satu menghapusnya — dan peringatannya
