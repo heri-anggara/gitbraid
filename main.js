@@ -1374,6 +1374,20 @@ async function step(repo, what, args) {
 handle('flow:finish', async (repo, { kind, branch, cfg, tag, message,
                                      remote, push, deleteRemote }) => {
   const done = [];
+
+  /* Checked before anything is touched. A tag whose name is already taken fails
+     at the tagging step — after production has been merged — leaving the branch
+     merged there, untagged, and not carried back to development: a half-finished
+     release, from a mistake as ordinary as reusing a version number. Refusing
+     here costs one command and leaves the repository exactly as it was. */
+  if (tag) {
+    const taken = await git(repo, ['tag', '-l', tag]).catch(() => '');
+    if (taken.trim()) {
+      throw new Error(`The tag ${tag} already exists. Nothing has been merged — `
+        + 'choose another name, or delete that tag first.');
+    }
+  }
+
   if (kind === 'feature') {
     await step(repo, `Checking out ${cfg.develop}`, ['checkout', cfg.develop]);
     await step(repo, `Merging ${branch} into ${cfg.develop}`, ['merge', '--no-ff', '--no-edit', branch]);
