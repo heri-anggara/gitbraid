@@ -730,9 +730,18 @@ textarea {
   align-items: center;
   justify-content: center;
   padding: 5px 7px;
+  /* A glyph is shorter than a line of text, so an icon button left to its own
+     content stands two-thirds the height of the worded buttons beside it. This
+     is the same box those get: one line, plus .btn's padding and border. */
+  min-height: calc(1.5em + 12px);
   color: var(--text-dim);
 }
 .btn-icon:hover:not(:disabled) { color: var(--text); }
+/* A button that carries an icon and a word sets them on one line with a gap,
+   rather than letting the glyph sit on the text's baseline. */
+.btn-with-i { display: inline-flex; align-items: center; gap: 6px; }
+.btn-i { width: 14px; height: 14px; flex: none; opacity: .8; }
+.btn:hover .btn-i { opacity: 1; }
 .btn-sm { padding: 3px 8px; font-size: 12px; }
 .btn-danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
 
@@ -2709,14 +2718,16 @@ mark {
 .wip-head h2 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
 
 /* ── how files are listed ────────────────────────────────────── */
-.btn-icon {
+/* Its own class. This was written as `.btn-icon`, which already belonged to
+   every close button in the window: redefining it here, later in the file,
+   flattened those from 32 pixels tall to 16 and stripped their padding. */
+.btn-viewas {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0;
-  width: 26px;
+  padding: 3px 7px;
 }
-.btn-icon svg { width: 14px; height: 14px; }
+.btn-viewas svg { width: 14px; height: 14px; }
 
 /* A menu whose entries are pictures of what they do: the icon stands where the
    tick would, and the row that is on is lit rather than ticked. */
