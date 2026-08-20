@@ -66,6 +66,18 @@ const parserSrc = mainSrc.slice(
 const P = {};
 vm.runInNewContext(parserSrc + '\nthis.parseStatus=parseStatus; this.parseLog=parseLog;', P);
 
+/* The release-notes renderer, lifted out of the renderer the same way the
+   parsers are lifted out of main.js. It turns text fetched from a web page into
+   markup, so what it refuses to do matters as much as what it does. */
+// Read once here; the path tests further down lift their own functions from it.
+const rendererSrc = fs.readFileSync(path.join(__dirname, '..', 'src/renderer.js'), 'utf8');
+const notesSrc = rendererSrc.slice(
+  rendererSrc.indexOf('function notesHtml(text) {'),
+  rendererSrc.indexOf('\n}\n', rendererSrc.indexOf('function notesHtml(text) {')) + 3
+);
+const N = { esc: (x) => Diff.esc(x) };
+vm.runInNewContext(notesSrc + '\nthis.notesHtml = notesHtml;', N);
+
 let pass = 0, fail = 0;
 const check = (name, cond, extra) => {
   if (cond) { pass++; console.log('  ok   ' + name); }
@@ -361,6 +373,44 @@ check('only the first hunk was staged',
     spGaps.length === 2 && spGaps[0] === rowSum[5], spGaps.join('/'));
 }
 
+console.log('\nrelease notes shown in the update dialog');
+{
+  const h = (t) => N.notesHtml(t);
+
+  // What went wrong: the dialog printed the body raw, so this arrived as pipes.
+  const table = h('| diff | before | after |\n|---|---|---|\n| unified | 93 ms | **7 ms** |');
+  check('a markdown table becomes a table',
+    table.includes('<table') && table.includes('<th>diff</th>') &&
+    table.includes('<td>unified</td>'), table.slice(0, 80));
+  check('nothing of the pipes survives into the text',
+    !table.replace(/<[^>]*>/g, '').includes('|'), table.replace(/<[^>]*>/g, ''));
+  check('emphasis inside a cell is emphasis, not asterisks',
+    table.includes('<strong>7 ms</strong>') &&
+    !table.replace(/<[^>]*>/g, '').includes('*'));
+
+  check('a heading becomes a heading', h('### When it fails').includes('<h4>When it fails</h4>'));
+  check('a bullet list becomes a list',
+    h('- one\n- two').includes('<ul><li>one</li><li>two</li></ul>'));
+  check('a wrapped bullet is still one bullet',
+    h('- one that runs\n  over two lines\n- two')
+      .includes('<li>one that runs over two lines</li>'));
+  check('inline code keeps its own face',
+    h('run `git push` first').includes('<code>git push</code>'));
+  check('a link keeps its words and loses its address',
+    h('see [the page](https://example.com/x)') === '<p>see the page</p>',
+    h('see [the page](https://example.com/x)'));
+  check('an empty body says so rather than showing nothing',
+    h('').includes('No notes were written'));
+
+  /* The body comes from a release page, which is not something the app decides
+     the contents of. It must never be able to put markup into the window. */
+  const hostile = h('<img src=x onerror="boom()">\n\n| a | <b>b</b> |\n|---|---|\n| 1 | 2 |');
+  check('markup in a release body is shown, never run',
+    !/<img|<b>|onerror=/.test(hostile.replace(/&lt;|&gt;|&quot;/g, '')) ||
+    hostile.includes('&lt;img'), hostile.slice(0, 90));
+  check('and the table beside it still renders', hostile.includes('<table'));
+}
+
 // And unstage it again with the reverse patch, the way the UI does.
 git(['apply', '--cached', '--reverse', '-'], { input: Diff.hunkPatch(mFile, mFile.hunks[0]) });
 const afterUnstage = P.parseStatus(git(['status', '--porcelain=v2', '--branch', '-z']));
@@ -405,8 +455,6 @@ check('ahead/behind parsed', (() => {
    These cannot be exercised by running the app here, so they are tested as
    pure functions instead: the source is read and evaluated with the platform
    pinned, which is the only honest way to check Windows behaviour on Linux. */
-
-const rendererSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
 
 /** Pull one declaration out of a source file and evaluate it in isolation. */
 function lift(src, pattern, names, platform) {

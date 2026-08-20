@@ -386,6 +386,23 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   lebar membuangnya dan mengukur lagi. Diuji 1280→980→1280: model dan halaman
   tetap sepakat dalam 2px di ketiganya
 
+**Catatan rilis di dialog update**
+- Isi rilis GitHub itu Markdown yang ditulis untuk halaman web, dan dialognya
+  dulu mencetaknya **mentah** di dalam `<pre>` — jadi tabel pengukuran datang
+  sebagai dinding pipa dan setiap `**kata**` masih membawa tanda bintangnya
+- Sekarang dirender: judul, penekanan, kode sebaris, daftar berbutir dan
+  bernomor, garis, dan tabel. Yang tidak dikenali dibiarkan apa adanya
+- **Di-escape dulu, dicocokkan belakangan.** Isinya berasal dari halaman yang
+  bukan aplikasi ini yang menentukan isinya, jadi tidak boleh ada yang bisa
+  menanam markup ke jendela. Diuji dengan `<img src=x onerror=...>`: nol tag
+  tertanam, skrip tidak berjalan, teksnya tetap terbaca
+- Dialognya dilebarkan (`clamp(460px, 46vw, 720px)`) khusus saat memuat catatan
+  rilis, dan kolom angka tidak boleh terpotong — dengan lebar dialog tanya-jawab
+  biasa, "268 ms" pecah jadi dua baris
+- **Perlu diingat saat menulis catatan rilis:** yang melihat dialog ini selalu
+  memakai versi **lama**. Perbaikan renderer ini baru terasa mulai rilis
+  sesudahnya, jadi isi rilis tetap harus enak dibaca sebagai teks polos
+
 **Palang gulir horizontal**
 - Mode unified tanpa wrap memakai bilah gulir horizontal yang **selalu terlihat**
   di bawah panel, bukan bilah bawaan yang menunggu di dasar konten ratusan ribu

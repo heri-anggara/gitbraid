@@ -4895,7 +4895,7 @@ async function offerUpdate() {
     description: `You have ${update.current}. ${done}`,
     html: '<div class="modal-field up-notes">' +
       `<div class="up-title">${esc(update.title || `Version ${update.latest}`)}</div>` +
-      `<pre class="up-body">${esc(clipNotes(update.notes))}</pre></div>`,
+      `<div class="up-body">${notesHtml(update.notes)}</div></div>`,
     confirmLabel: kind === 'other' ? 'Open the release page' : 'Download and install',
   });
   if (!r) return;
@@ -4922,13 +4922,85 @@ async function offerUpdate() {
 
 const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;
 
-/* Release notes are markdown written for a web page; this is a dialog. Long
-   ones are cut rather than turning the dialog into a document. */
-function clipNotes(text) {
+/* A release body is markdown, written to be read on a web page. This dialog
+   used to print it raw, so a table of measurements arrived as a wall of pipes
+   and dashes and every **word** kept its asterisks.
+
+   The subset rendered here is the whole of what these notes use: headings,
+   emphasis, inline code, bullet and numbered lists, rules and tables. Anything
+   it does not know stays as the text it was, which is the right failure for
+   something this far from the point of the program.
+
+   The body is escaped first and matched afterwards, so nothing written in a
+   release — on a page this app does not control the contents of — can put
+   markup into the window. */
+function notesHtml(text) {
   const body = String(text || '').replace(/\r/g, '').trim();
-  if (!body) return 'No notes were written for this release.';
-  const lines = body.split('\n').slice(0, 24);
-  return lines.join('\n') + (body.split('\n').length > 24 ? '\n…' : '');
+  if (!body) return '<p class="up-none">No notes were written for this release.</p>';
+
+  const lines = esc(body).split('\n');
+  const inline = (t) => t
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s.,;:)]|$)/g, '$1<em>$2</em>')
+    // A link cannot be followed here, so it keeps its words and loses its address.
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+
+  const isRow = (l) => /^\s*\|.*\|\s*$/.test(l);
+  const isRule = (l) => /^\s*\|?[\s:|-]*-[\s:|-]*\|[\s:|-]*$/.test(l);
+  const isItem = (l) => /^\s*([-*+]|\d+\.)\s+/.test(l);
+  const isHead = (l) => /^#{1,6}\s+/.test(l);
+  const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+  // Where a paragraph or a list item stops swallowing the lines beneath it.
+  const breaks = (l) => !l.trim() || isItem(l) || isRow(l) || isHead(l);
+
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i += 1; continue; }
+
+    if (isRow(line) && i + 1 < lines.length && isRule(lines[i + 1])) {
+      const head = cells(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && isRow(lines[i])) { rows.push(cells(lines[i])); i += 1; }
+      out.push('<table class="up-table"><thead><tr>' +
+        head.map((c) => `<th>${inline(c)}</th>`).join('') +
+        '</tr></thead><tbody>' +
+        rows.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join('')}</tr>`).join('') +
+        '</tbody></table>');
+      continue;
+    }
+
+    if (isHead(line)) {
+      out.push(`<h4>${inline(line.replace(/^#{1,6}\s+/, ''))}</h4>`);
+      i += 1;
+      continue;
+    }
+
+    if (/^\s*([-*_])\s*\1\s*\1[\s-*_]*$/.test(line)) { out.push('<hr>'); i += 1; continue; }
+
+    if (isItem(line)) {
+      const tag = /^\s*\d+\.\s+/.test(line) ? 'ol' : 'ul';
+      const items = [];
+      while (i < lines.length && isItem(lines[i])) {
+        let item = lines[i].replace(/^\s*([-*+]|\d+\.)\s+/, '');
+        i += 1;
+        // Markdown wraps a long item over several lines; they are one item.
+        while (i < lines.length && !breaks(lines[i])) { item += ` ${lines[i].trim()}`; i += 1; }
+        items.push(`<li>${inline(item)}</li>`);
+      }
+      out.push(`<${tag}>${items.join('')}</${tag}>`);
+      continue;
+    }
+
+    let para = line.trim();
+    i += 1;
+    while (i < lines.length && !breaks(lines[i])) { para += ` ${lines[i].trim()}`; i += 1; }
+    out.push(`<p>${inline(para)}</p>`);
+  }
+  return out.join('');
 }
 
 /* ═════ about ═══════════════════════════════════════════════════ */
