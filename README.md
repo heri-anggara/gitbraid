@@ -44,7 +44,7 @@ Older versions and full notes live on the [releases page](https://github.com/her
 
 Once you are running 0.3.0 or newer, GitBraid checks for its own updates and can
 install them for you — the version button in the status bar takes a dot when a
-newer release exists.
+newer release exists, and **Help ▸ Check for Updates…** asks at any time.
 
 ---
 
