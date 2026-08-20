@@ -303,6 +303,11 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   GitBraid. Yang ditolak hanya URL kosong
 
 **Repository management**
+- Tombol **Browse / Clone / Init / Scan a folder…** masing-masing membawa ikon,
+  dan tombol tutupnya setinggi tombol lain. Sebuah glyph lebih pendek daripada
+  sebaris teks, jadi tombol ikon yang dibiarkan mengikuti isinya berdiri
+  dua-pertiga tinggi tetangganya — ia sekarang diberi kotak yang sama: satu
+  baris ditambah padding dan border milik `.btn`
 - Tombol folder di ujung kiri strip tab, atau `Ctrl+Shift+O`, membuka halaman
   penuh berisi empat kelompok: **Open repositories**, **Favorites**,
   **Recent repositories**, dan **All repositories** — tiap kelompok punya

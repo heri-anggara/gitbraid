@@ -265,11 +265,15 @@
     <header class="rm-head">
       <h1>Repository management</h1>
       <div class="rm-actions">
-        <button class="btn" id="rm-browse">Browse</button>
-        <button class="btn" id="rm-clone">Clone</button>
-        <button class="btn" id="rm-init">Init</button>
+        <button class="btn btn-with-i" id="rm-browse"
+                title="Open a repository already on this machine"><svg class="btn-i" viewBox="0 0 14 14" aria-hidden="true"><path d="M1.6 11.2V3.4a.9.9 0 0 1 .9-.9h2.7l1.2 1.5h5.1a.9.9 0 0 1 .9.9v6.3a.9.9 0 0 1-.9.9H2.5a.9.9 0 0 1-.9-.9Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Browse</button>
+        <button class="btn btn-with-i" id="rm-clone"
+                title="Clone from a URL"><svg class="btn-i" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1.9v6.4M4.6 5.9 7 8.3l2.4-2.4M2.2 9.6v1.6a.9.9 0 0 0 .9.9h7.8a.9.9 0 0 0 .9-.9V9.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Clone</button>
+        <button class="btn btn-with-i" id="rm-init"
+                title="Create a new repository"><svg class="btn-i" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 3.2v7.6M3.2 7h7.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Init</button>
         <span class="tb-sep"></span>
-        <button class="btn" id="rm-scan" title="Look through a folder for repositories and remember them">Scan a folder…</button>
+        <button class="btn btn-with-i" id="rm-scan"
+                title="Look through a folder for repositories and remember them"><svg class="btn-i" viewBox="0 0 14 14" aria-hidden="true"><path d="M1.8 10.9V3.6a.8.8 0 0 1 .8-.8h2.4l1 1.3h2.2M6.4 9.2a2.3 2.3 0 1 0 4.6 0 2.3 2.3 0 0 0-4.6 0Zm4.1 1.7 1.6 1.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Scan a folder…</button>
         <button class="btn btn-icon" id="rm-close" title="Close (Esc)">
           <svg viewBox="0 0 12 12" width="13" height="13" aria-hidden="true">
             <path d="M3 3 9 9M9 3 3 9" fill="none" stroke="currentColor"
@@ -683,7 +687,7 @@
         <div class="wip-viewbar">
           <!-- Ikonnya menunjukkan bentuk daftar yang sedang dipakai;
                diisi oleh paintViewAs(). -->
-          <button class="btn btn-sm btn-icon" id="w-viewas"></button>
+          <button class="btn btn-sm btn-viewas" id="w-viewas"></button>
         </div>
 
         <!-- Conflicts come first: nothing else in this panel can be finished
@@ -799,7 +803,7 @@
           <span class="c-stats" id="c-stats"></span>
           <span class="c-viewtoggle">
             <button class="btn btn-sm" id="c-sort" title="Sort by name, or keep git's own order">A–Z</button>
-            <button class="btn btn-sm btn-icon" id="c-viewas"></button>
+            <button class="btn btn-sm btn-viewas" id="c-viewas"></button>
           </span>
         </div>
         <ul class="filelist" id="list-commit-files"></ul>
