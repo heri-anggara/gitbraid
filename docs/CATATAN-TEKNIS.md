@@ -302,6 +302,21 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   Anda sendiri adalah remote yang sah, begitu juga host yang belum pernah didengar
   GitBraid. Yang ditolak hanya URL kosong
 
+**Saat aksi git gagal**
+- Kegagalan aksi git memunculkan **dialog**, bukan cuma satu baris di status bar
+  yang tergeser pesan berikutnya. Judulnya menyebut apa yang sedang dikerjakan,
+  di bawahnya alasan yang **menjelaskan** — bukan baris pertama, karena git
+  membuka push yang ditolak dengan `To <url>` dan alasannya tiga baris di bawah
+- Seluruh keluaran git ditampilkan apa adanya di bawahnya, dalam urutan aslinya
+  dan tanpa satu baris pun dibuang. Termasuk *hint* dari git sendiri, yang justru
+  sering memberi tahu langkah berikutnya. Teksnya bisa diseleksi, karena hal
+  pertama yang orang lakukan dengan pesan galat adalah menyalinnya
+- **Finish menolak tag yang namanya sudah dipakai sebelum menyentuh apa pun.**
+  Dulu ia gagal di langkah penandaan — sesudah produksi ter-merge — sehingga
+  meninggalkan keadaan setengah jadi: main berubah, tanpa tag, development belum
+  menerima apa pun, cabangnya masih ada. Padahal memakai ulang nomor versi itu
+  kekeliruan yang wajar
+
 **Repository management**
 - Tombol **Browse / Clone / Init / Scan a folder…** masing-masing membawa ikon,
   dan tombol tutupnya setinggi tombol lain. Sebuah glyph lebih pendek daripada

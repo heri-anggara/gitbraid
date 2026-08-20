@@ -112,18 +112,26 @@ function hideProgress() {
 }
 
 /** Call the main process. Returns data, or null after showing the error. */
+/* Whatever git last complained about, kept whole. The status bar can only hold
+   its first line, and the line that explains a rejected push is rarely the
+   first one. */
+let lastFailure = '';
+
 async function call(channel, ...args) {
   startBusy();
   try {
     const res = await window.gitbraid.invoke(channel, ...args);
     if (!res.ok) {
+      lastFailure = String(res.error || '');
       setStatus(firstLine(res.error), 'error');
       return null;
     }
+    lastFailure = '';
     return res.data;
   } catch (err) {
     // A missing handler rejects rather than answering {ok:false}. Swallow it
     // here so one bad channel cannot abort the caller's whole sequence.
+    lastFailure = String(err?.message || err || '');
     setStatus(firstLine(err?.message || err), 'error');
     return null;
   } finally {
@@ -3499,6 +3507,29 @@ function tbProgress(percent) {
  * Runs one git action with the button as its progress display.
  * `fn` returns null when it failed — call() has already said why.
  */
+/* A command that fails deserves more than a line that the next status message
+   scrolls away. This says what was being attempted, the reason git gave, and —
+   when git said more than one line — all of it, because on a rejected push the
+   line that explains is never the first. */
+function showFailure(verb, text) {
+  const lines = String(text).split(/[\r\n]/).map((l) => l.trimEnd()).filter(Boolean);
+  if (!lines.length) return;
+  modal({
+    // "Finishing release did not finish" — the verb already carries the word.
+    title: `${verb} failed`,
+    /* The line that explains, which is rarely the first: git opens a refused
+       push with "To <url>", and the reason is three lines further down. */
+    description: firstLine(text),
+    // Everything git said, in the order it said it, with nothing removed — the
+    // headline is a highlight, not a replacement for the output.
+    html: lines.length > 1
+      ? `<div class="modal-field"><div class="fail-out">${esc(lines.join('\n'))}</div></div>`
+      : '',
+    confirmLabel: 'Close',
+    hideCancel: true,
+  });
+}
+
 async function gitAction(id, verb, fn, done) {
   if (action) { setStatus('Another Git command is still running', 'error'); return; }
   const label = toolLabel(id);
@@ -3533,6 +3564,10 @@ async function gitAction(id, verb, fn, done) {
     if (activeId === startedOn) await done();
     else setStatus(`${verb} finished in the other tab`, 'ok');
   }
+  // Shown after the toolbar has settled, so the dialog is not fighting a
+  // spinner for attention. Not awaited: the caller still has a refresh to do,
+  // and the repository should be redrawn behind the explanation, not after it.
+  if (!ok && lastFailure && activeId === startedOn) showFailure(verb, lastFailure);
   return ok;
 }
 
