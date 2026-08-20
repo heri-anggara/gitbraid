@@ -2112,6 +2112,44 @@ handle('repo:stashSave', async (repo, message, includeUntracked) => {
   return git(repo, args);
 });
 
+/* Stashing a few files rather than everything. Same guard as discard: an empty
+   pathspec here would take the whole working tree, which is not what a menu
+   entry naming three files may ever do. */
+handle('repo:stashPaths', async (repo, files, message, includeUntracked) => {
+  const list = (Array.isArray(files) ? files : [files])
+    .filter((f) => typeof f === 'string' && f.trim());
+  if (!list.length) throw new Error('Nothing was named to stash.');
+  const args = ['stash', 'push'];
+  if (includeUntracked) args.push('-u');
+  if (message) args.push('-m', message);
+  args.push('--', ...list);
+  return git(repo, args);
+});
+
+/* A patch of whichever files were picked, written where the user says.
+
+   git diff shows tracked changes only, so an untracked file has nothing to
+   report — the caller is told how many were left out rather than the file
+   being written as though it held everything asked for. */
+handle('repo:savePatch', async (repo, files, opts) => {
+  const list = (Array.isArray(files) ? files : [files])
+    .filter((f) => typeof f === 'string' && f.trim());
+  if (!list.length) throw new Error('Nothing was named to save.');
+  const { staged = false, skipped = 0, name = 'changes' } = opts || {};
+  const patch = await git(repo, ['diff', ...(staged ? ['--cached'] : []), '--', ...list]);
+  if (!patch.trim()) return { empty: true, skipped };
+
+  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    title: 'Save as patch',
+    defaultPath: path.join(app.getPath('downloads'), `${name}.patch`),
+    filters: [{ name: 'Patch', extensions: ['patch', 'diff'] }, { name: 'All files', extensions: ['*'] }],
+  });
+  if (canceled || !filePath) return null;
+  fs.writeFileSync(filePath, patch);
+  return { path: filePath, bytes: Buffer.byteLength(patch), skipped };
+});
+
 handle('repo:stashApply', async (repo, ref, pop) =>
   git(repo, ['stash', pop ? 'pop' : 'apply', ref])
 );

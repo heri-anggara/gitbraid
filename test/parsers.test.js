@@ -373,6 +373,34 @@ check('only the first hunk was staged',
     spGaps.length === 2 && spGaps[0] === rowSum[5], spGaps.join('/'));
 }
 
+console.log('\ncommands that take a list of files');
+{
+  /* Every one of these builds a git command ending in `-- <paths>`. Handed an
+     empty list, that pathspec disappears and the command takes the whole
+     working tree instead of the files a menu entry named. The guard is the
+     same shape in each, so it is checked in each. */
+  const guardSrc = mainSrc.match(
+    /const list = \(Array\.isArray\(files\)[\s\S]*?\.filter\(\(f\) => typeof f === 'string' && f\.trim\(\)\);/g
+  ) || [];
+  check('every list-taking command filters its input the same way',
+    guardSrc.length >= 3, guardSrc.length);
+
+  const clean = (files) => (Array.isArray(files) ? files : [files])
+    .filter((f) => typeof f === 'string' && f.trim());
+  check('an empty list stays empty', clean([]).length === 0);
+  check('blank names are not paths', clean(['', '  ', '\t']).length === 0);
+  check('a bare string is not spread into letters',
+    clean('file.txt').length === 1 && clean('file.txt')[0] === 'file.txt');
+  check('anything that is not a string is dropped',
+    clean(['ok.txt', null, 7, {}, undefined]).join(',') === 'ok.txt');
+
+  // And the callers refuse rather than run with nothing named.
+  for (const name of ['discard', 'stash', 'save']) {
+    check(`the ${name} handler refuses an empty list`,
+      new RegExp(`Nothing was named to ${name}`).test(mainSrc));
+  }
+}
+
 console.log('\nrelease notes shown in the update dialog');
 {
   const h = (t) => N.notesHtml(t);
