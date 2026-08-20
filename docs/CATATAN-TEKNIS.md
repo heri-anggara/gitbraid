@@ -482,6 +482,14 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   dari komputer lain, atau yang ref-nya sudah dipangkas, membuatnya menjawab
   "tidak ada" padahal ada. Ditanyakan hanya kalau jawaban lokalnya "tidak" —
   kalau lokal bilang ada, tidak ada yang perlu dipastikan lagi
+- Pertanyaan itu dikirim **sesudah** dialognya tampil, tidak pernah sebelumnya.
+  Satu perjalanan ke remote lewat ssh memakan sekitar **3 detik**, dan dulu
+  waktu itu dihabiskan dengan layar kosong — menunggu tiga detik untuk diberi
+  tahu, hampir selalu, bahwa tidak ada apa-apa di sana. Terukur: dialog muncul
+  dalam **2.930 ms**, sekarang **10 ms**. Centang hapus-remote sudah ada di DOM
+  sejak awal dalam keadaan tersembunyi, lalu muncul sendiri kalau jawabannya
+  "ada"; `collect()` membacanya apa pun keadaannya, jadi kotak yang belum
+  sempat muncul bernilai `false` — sisi yang aman
 - Ada **tiga** kemungkinan jawaban, dan yang ketiga penting: ada, tidak ada, dan
   *tidak bisa ditanyakan*. Saat offline dialognya berkata apa adanya bahwa
   jawabannya tidak diketahui, bukan berpura-pura cabangnya tidak ada. Pertanyaan

@@ -364,8 +364,11 @@ function fieldHtml(f) {
     );
   }
   if (f.type === 'checkbox') {
+    /* `hidden` lets a field exist from the start and appear once something
+       slow enough to be worth not waiting for has answered. collect() reads it
+       either way, so an unrevealed box returns false — the safe answer. */
     return (
-      `<div class="modal-field"><label class="check">` +
+      `<div class="modal-field"${f.hidden ? ' hidden' : ''}><label class="check">` +
       `<input type="checkbox" data-field="${f.name}"${f.value ? ' checked' : ''}> ${esc(f.label)}` +
       `</label></div>`
     );
@@ -2966,6 +2969,28 @@ async function startFlow(kind) {
     async () => { await refresh({ keepSelection: false }); setStatus(`Started ${branch}`, 'ok'); });
 }
 
+/* Which dialog is on screen. An answer that arrives after the reader has moved
+   on belongs to a question nobody is looking at any more. */
+let finishAsk = 0;
+
+async function askRemoteLater(remote, branch) {
+  const mine = ++finishAsk;
+  const res = await window.gitbraid.invoke('repo:remoteHasBranch', repoPath(), remote, branch);
+  if (mine !== finishAsk || $('modal').hidden) return;
+
+  const box = $('modal-fields').querySelector('[data-field="deleteRemote"]');
+  if (!box) return;
+  if (res.ok && res.data === true) {
+    box.checked = true;
+    box.closest('.modal-field').hidden = false;
+    $('modal-desc').textContent += ` It is also on ${remote}.`;
+  } else if (!res.ok || res.data === null) {
+    // Not an answer of "no": say so rather than letting silence stand for it.
+    $('modal-desc').textContent += ` ${remote} could not be reached, so whether the `
+      + 'branch is also there is unknown — remove it there yourself if it is.';
+  }
+}
+
 async function finishFlow(flow) {
   const cfg = state.flow;
   const tagged = flow.kind !== 'feature';
@@ -2984,16 +3009,7 @@ async function finishFlow(flow) {
      say yes there is nothing to gain: the finish tolerates a branch that has
      since been deleted. Offline, the question has no answer at all, which the
      dialog says rather than pretending the branch is not there. */
-  let published = state.remoteRefNames.has(`${remote}/${flow.branch}`);
-  let unreachable = false;
-  if (hasRemote && !published) {
-    setStatus(`Asking ${remote} about ${flow.branch}…`);
-    const res = await window.gitbraid.invoke('repo:remoteHasBranch', repoPath(), remote, flow.branch);
-    const answer = res.ok ? res.data : null;
-    published = answer === true;
-    unreachable = answer === null;
-    setStatus(unreachable ? `${remote} did not answer` : '');
-  }
+  const published = state.remoteRefNames.has(`${remote}/${flow.branch}`);
 
   const fields = tagged
     ? [
@@ -3007,13 +3023,20 @@ async function finishFlow(flow) {
       name: 'push', type: 'checkbox', value: true,
       label: `Push ${landing}${tagged ? ' and the tag' : ''} to ${remote}`,
     });
-    if (published) {
-      fields.push({
-        name: 'deleteRemote', type: 'checkbox', value: true,
-        label: `Delete ${remote}/${flow.branch}`,
-      });
-    }
+    /* Always built, so the answer has somewhere to land. Shown at once when the
+       tracking refs already say the branch is published; otherwise it waits
+       hidden while the server is asked in the background. */
+    fields.push({
+      name: 'deleteRemote', type: 'checkbox', value: published, hidden: !published,
+      label: `Delete ${remote}/${flow.branch}`,
+    });
   }
+
+  /* Asked after the dialog is on screen, never before it. A round trip to a
+     remote over ssh costs about three seconds, and it used to be spent with
+     nothing drawn — three seconds of waiting to be told, almost always, that
+     there is nothing there. */
+  if (hasRemote && !published) askRemoteLater(remote, flow.branch);
 
   const r = await modal({
     title: `Finish ${flow.branch}`,
@@ -3021,11 +3044,7 @@ async function finishFlow(flow) {
       ? `Merges into ${cfg.master}, tags it, merges into ${cfg.develop}, `
       : `Merges into ${cfg.develop}, `) +
       'then deletes the branch here.' +
-      (published ? ` It is also on ${remote}.` : '') +
-      (unreachable
-        ? ` ${remote} could not be reached, so whether the branch is also there `
-          + 'is unknown — remove it there yourself if it is.'
-        : ''),
+      (published ? ` It is also on ${remote}.` : ''),
     fields,
     confirmLabel: 'Finish',
     /* Deleting the published branch without pushing the merge would take those
