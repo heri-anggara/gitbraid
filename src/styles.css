@@ -2204,7 +2204,7 @@ textarea {
      is placed explicitly: a grid child that is hidden stops being a grid item,
      and the rest would silently shuffle up. */
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   background: var(--bg-graph);
   overflow: hidden;
@@ -2212,6 +2212,13 @@ textarea {
 .fv-head { grid-column: 1 / -1; grid-row: 1; }
 .fv-body { grid-column: 1; grid-row: 2; }
 .fv-map  { grid-column: 2; grid-row: 2; }
+
+/* The horizontal scrollbar for the diff, in a row of its own so it is always
+   visible instead of sitting at the bottom of the content. It mirrors the
+   pane's scrollLeft and drives it, so a long unwrapped line can be reached the
+   way every other scrollbar works: drag, trough-click, shift-wheel. */
+.fv-hbar { grid-column: 1; grid-row: 3; overflow-x: auto; overflow-y: hidden; height: 11px; background: var(--bg); }
+.fv-hbar-run { height: 1px; }
 
 /* ── updates ─────────────────────────────────────────────────── */
 /* A dot on the version, and nothing else: an update is worth noticing, not
@@ -2261,7 +2268,13 @@ textarea {
 /* The strip does this pane's scrolling, so the native bar beside it goes: two
    indicators of one position, a few pixels apart, only ever look broken. The
    horizontal one stays — nothing else shows how far a long line runs. */
+/* The pane's own scrollbars are both hidden: the vertical one lives on as the
+   change-map strip, the horizontal one as a bar beneath the pane. A native
+   scrollbar sits at the bottom of its content, which for a diff tens of
+   thousands of lines deep is a mile below where the reader is — the bar under
+   the pane is always in reach. */
 .fv-body::-webkit-scrollbar:vertical { width: 0; }
+.fv-body::-webkit-scrollbar:horizontal { height: 0; }
 .fv-marks { position: absolute; inset: 0; }
 
 /* The part of the file on screen, so the strip answers "where am I" as well as

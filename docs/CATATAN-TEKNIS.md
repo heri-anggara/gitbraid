@@ -359,8 +359,31 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Tajuk hunk dipaksa satu baris. Ia membawa nama fungsi di belakang nomor baris,
   dan pada berkas berbaris sangat panjang itu melipat jadi dua baris — sementara
   jendela mengukur satu tajuk lalu menganggap sisanya sama tinggi
-- **Wrap masih digambar utuh**: tinggi barisnya bergantung pada lebar tempat ia
-  digambar, dan itu bukan sesuatu yang bisa dihitung di depan
+- Mode wrap ikut ber-jendela **selama barisnya seragam**. Ini hampir selalu
+  kasusnya: baris kode biasa lebih pendek dari lebar panel, jadi menyalakan wrap
+  tidak melipat apa pun dan 12.000 baris tetap seragam 20px. Dikecualikan dari
+  jendela selama ini "karena tinggi baris bergantung pada lebar" — padahal kalau
+  tidak ada yang melipat, tingginya tidak bergantung pada apa pun
+- Cara mengetahuinya bukan dengan mengukur lebar huruf (rapuh), melainkan
+  membandingkan **tinggi yang diprediksi model seragam** terhadap **yang
+  benar-benar ditata peramban** sesudah pass penuh pertama. Cocok berarti
+  seragam, lalu jendelanya dipotong. Selisih sistematisnya cuma 1px per hunk dan
+  per berkas (garis batas), yang dikeluarkan sebelum dibandingkan. Terukur pada
+  diff 12.000 baris yang sebenarnya tidak melipat: **58,6 ms turun jadi 7 ms**,
+  74 baris digambar dari 12.001
+- Yang tetap digambar utuh hanyalah diff yang barisnya bercampur tinggi
+  (sebagian melipat, sebagian tidak) — dan itu memang tidak bisa dihitung seragam.
+  Diuji dengan berkas 2.000 baris yang satu dari sepuluh barisnya sepanjang 200
+  karakter: dideteksi tidak-seragam, tinggi barisnya 20px dan 74px bercampur,
+  tetap utuh dan tidak meleset
+
+**Palang gulir horizontal**
+- Mode unified tanpa wrap memakai bilah gulir horizontal yang **selalu terlihat**
+  di bawah panel, bukan bilah bawaan yang menunggu di dasar konten ratusan ribu
+  piksel di bawah. Bilah ini cermin dua arah dari `scrollLeft` panel: seret,
+  klik palung, atau shift-roda, dan panelnya ikut — dan sebaliknya
+- Bilahnya hanya muncul kalau memang ada yang lebih lebar dari panel (di split
+  tidak ada: baris panjang dipotong dengan elipsis)
 
 **Peta perubahan sebagai palang gulir**
 - Strip di kanan panel diff kini satu-satunya penunjuk posisi: palang gulir
