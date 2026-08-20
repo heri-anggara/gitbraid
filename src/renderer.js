@@ -2089,6 +2089,125 @@ function syncViewerToggles() {
   $('fv-body').classList.toggle('wrap', viewer.wrap);
 }
 
+/* ── the diff, a window at a time ──
+   Only the rows on screen are built. A file with a few hundred changed lines is
+   fine either way; one with thousands put tens of thousands of elements in the
+   document, and the browser laid every one of them out on each scroll. */
+let diffView = null;
+
+/* Written by the renderer from what is on screen, because CSS owns these and a
+   window has to be cut in pixels. The first numbers are only a starting guess;
+   the first real render corrects them. */
+const rowSize = { row: 20, head: 27, fileHead: 0 };
+
+/* Rows drawn past each edge, so an ordinary scroll usually redraws nothing. */
+const DIFF_OVERSCAN = 40;
+
+/* Where each hunk's rows begin, in pixels and in row numbers. A hunk header
+   takes space of its own, so a row's offset is not its index times a row
+   height — getting that wrong puts the window a header's worth further up with
+   every hunk passed. */
+function diffLayout() {
+  const hunks = [];
+  let top = 0;
+  let rows = 0;
+  const manyFiles = state.diffFiles.length > 1;
+  for (const f of state.diffFiles) {
+    if (manyFiles) top += rowSize.fileHead;
+    for (const h of f.hunks || []) {
+      top += rowSize.head;
+      hunks.push({ rowStart: rows, rows: h.lines.length, top });
+      rows += h.lines.length;
+      top += h.lines.length * rowSize.row;
+    }
+  }
+  return { hunks, rows, height: top };
+}
+
+/** The row shown at a given pixel offset, and the offset a row sits at. */
+function rowAtPixel(layout, px) {
+  for (const h of layout.hunks) {
+    if (px < h.top) return h.rowStart;
+    if (px < h.top + h.rows * rowSize.row) {
+      return h.rowStart + Math.floor((px - h.top) / rowSize.row);
+    }
+  }
+  return layout.rows;
+}
+
+function pixelAtRow(layout, index) {
+  for (const h of layout.hunks) {
+    if (index < h.rowStart + h.rows) {
+      return h.top + Math.max(0, index - h.rowStart) * rowSize.row;
+    }
+  }
+  return layout.height;
+}
+
+/* Exactly the rows on screen, with no margin. The margin belongs to what gets
+   drawn, not to what is needed: comparing one padded range against another
+   means any movement at all falls outside, and the diff is redrawn on every
+   single frame — which is how this was written the first time. */
+function diffNeed() {
+  const body = $('fv-body');
+  const layout = diffLayout();
+  diffView.layout = layout;
+  return {
+    first: rowAtPixel(layout, body.scrollTop),
+    last: rowAtPixel(layout, body.scrollTop + (body.clientHeight || 900)),
+  };
+}
+
+/* Side-by-side pairs rows, and wrapping makes a row as tall as it needs to be —
+   neither leaves rows countable, and a window has to be counted. Those two draw
+   whole, as they always did. */
+const diffIsWindowed = () =>
+  Boolean(diffView) && !viewer.split && !viewer.wrap && diffView.rows > 600;
+
+function paintDiff() {
+  if (!diffView) return;
+  const body = $('fv-body');
+  let win = { first: 0, last: Infinity };
+  if (diffIsWindowed()) {
+    const need = diffNeed();
+    win = {
+      first: Math.max(0, need.first - DIFF_OVERSCAN),
+      last: Math.min(diffView.rows, need.last + DIFF_OVERSCAN),
+    };
+  }
+  diffView.shown = win;
+
+  body.innerHTML = viewer.split
+    ? window.Diff.renderSplit(state.diffFiles, diffView.actions, diffView.opts)
+    : window.Diff.render(state.diffFiles, diffView.actions,
+        { ...diffView.opts, first: win.first, last: win.last,
+          rowH: rowSize.row, headH: rowSize.head });
+
+  // Measure what was actually drawn, so the next window is cut correctly.
+  const row = body.querySelector('.difftable tr:not(.dl-gap)');
+  const head = body.querySelector('.hunk-head');
+  if (row) rowSize.row = Math.round(row.getBoundingClientRect().height) || rowSize.row;
+  if (head) rowSize.head = Math.round(head.getBoundingClientRect().height) || rowSize.head;
+  const fileHead = body.querySelector('.difffile-head');
+  rowSize.fileHead = fileHead && fileHead.offsetParent
+    ? Math.round(fileHead.getBoundingClientRect().height) : 0;
+}
+
+let diffQueued = false;
+$('fv-body').addEventListener('scroll', () => {
+  if (!diffIsWindowed() || diffQueued) return;
+  diffQueued = true;
+  requestAnimationFrame(() => {
+    diffQueued = false;
+    const need = diffNeed();
+    const have = diffView.shown;
+    // Still covered by what is on the page: the cheapest frame does nothing.
+    if (have && need.first >= have.first && need.last <= have.last) return;
+    paintDiff();
+    paintDiffHere();
+  });
+}, { passive: true });
+
 /* ── jumping between changed blocks ──
    A "difference" is a run of touched rows: consecutive additions and removals
    count as one, which is what makes 1/5 mean five edits rather than five lines. */
@@ -2102,24 +2221,76 @@ function indexBlocks() {
   nav.marks = [];
   nav.at = -1;
   let mark = null;
-  for (const tr of $('fv-body').querySelectorAll('.difftable tr')) {
-    const added = tr.classList.contains('dl-add') || Boolean(tr.querySelector('td.dl-add'));
-    const removed = tr.classList.contains('dl-del') || Boolean(tr.querySelector('td.dl-del'));
-    if (added || removed) {
-      if (!mark) {
-        mark = { last: tr, add: 0, del: 0 };
-        nav.blocks.push(tr);
-        nav.marks.push(mark);
+  const open = (at) => { mark = { last: at, add: 0, del: 0 };
+    nav.blocks.push(at); nav.marks.push(mark); };
+
+  if (diffIsWindowed()) {
+    /* Counted from the parsed diff rather than the document, because with a
+       window only a screenful of rows is in the document and the blocks past
+       its edges are just as real. */
+    let i = 0;
+    for (const f of state.diffFiles) {
+      for (const h of f.hunks || []) {
+        for (const l of h.lines) {
+          if (l.type === 'add' || l.type === 'del') {
+            if (!mark) open(i);
+            mark.last = i;
+            if (l.type === 'add') mark.add += 1; else mark.del += 1;
+          } else {
+            mark = null;
+          }
+          i += 1;
+        }
       }
-      mark.last = tr;
-      if (added) mark.add += 1;
-      if (removed) mark.del += 1;
-    } else {
-      mark = null;
+    }
+  } else {
+    for (const tr of $('fv-body').querySelectorAll('.difftable tr')) {
+      const added = tr.classList.contains('dl-add') || Boolean(tr.querySelector('td.dl-add'));
+      const removed = tr.classList.contains('dl-del') || Boolean(tr.querySelector('td.dl-del'));
+      if (added || removed) {
+        if (!mark) open(tr);
+        mark.last = tr;
+        if (added) mark.add += 1;
+        if (removed) mark.del += 1;
+      } else {
+        mark = null;
+      }
     }
   }
   renderNav();
   renderChangeMap();
+}
+
+/* A block is a row number when the diff is windowed and an element when it is
+   not. Both answer the only question anything here asks of them: how far down
+   the scrolling content they sit. */
+function blockTop(entry) {
+  if (typeof entry === 'number') {
+    return pixelAtRow(diffView?.layout || diffLayout(), entry);
+  }
+  const body = $('fv-body');
+  return entry.getBoundingClientRect().top - (body.getBoundingClientRect().top - body.scrollTop);
+}
+
+function blockBottom(entry) {
+  if (typeof entry === 'number') return blockTop(entry) + rowSize.row;
+  const body = $('fv-body');
+  return entry.getBoundingClientRect().bottom - (body.getBoundingClientRect().top - body.scrollTop);
+}
+
+/** Mark the block being visited, if its row happens to be on screen. */
+function paintDiffHere() {
+  const body = $('fv-body');
+  for (const tr of body.querySelectorAll('tr.dl-here')) tr.classList.remove('dl-here');
+  const entry = nav.blocks[nav.at];
+  if (entry === undefined) return;
+  if (typeof entry !== 'number') { entry.classList.add('dl-here'); return; }
+  const win = diffView?.shown;
+  if (!win || entry < win.first || entry >= win.last) return;
+  // The window's rows are in document order, so the offset into it is the row.
+  const rows = body.querySelectorAll('.difftable tr:not(.dl-gap)');
+  const at = rows[entry - win.first];
+  if (at) at.classList.add('dl-here');
 }
 
 /* The strip beside the scrollbar. It is drawn from the same blocks the counter
@@ -2145,13 +2316,11 @@ function renderChangeMap() {
     return;
   }
 
-  /* Rows are measured against the body's own scroll origin rather than
-     offsetTop, which answers relative to whichever ancestor happens to be
-     positioned — inside a table that is not the one we mean. */
-  const origin = body.getBoundingClientRect().top - body.scrollTop;
+  /* Offsets come from blockTop, which answers for a row number as readily as
+     for an element — with a window, most blocks have no element to measure. */
   map.innerHTML = nav.marks.map((m, i) => {
-    const top = nav.blocks[i].getBoundingClientRect().top - origin;
-    const bottom = m.last.getBoundingClientRect().bottom - origin;
+    const top = blockTop(nav.blocks[i]);
+    const bottom = blockBottom(m.last);
     const kind = m.add && m.del ? 'both' : m.del ? 'del' : 'add';
     const lines = m.add + m.del;
     return `<button type="button" class="fv-mark m-${kind}" data-block="${i}" ` +
@@ -2194,10 +2363,11 @@ function gotoBlock(index) {
   const n = nav.blocks.length;
   if (!n) return;
   nav.at = Math.max(0, Math.min(index, n - 1));
-  for (const tr of $('fv-body').querySelectorAll('tr.dl-here')) tr.classList.remove('dl-here');
-  const row = nav.blocks[nav.at];
-  row.classList.add('dl-here');
-  row.scrollIntoView({ block: 'center' });
+  const body = $('fv-body');
+  const top = blockTop(nav.blocks[nav.at]);
+  body.scrollTop = Math.max(0, top - (body.clientHeight - rowSize.row) / 2);
+  if (diffIsWindowed()) paintDiff();
+  paintDiffHere();
   renderNav();
   paintCurrentMark();
 }
@@ -2321,10 +2491,14 @@ async function showFileDiff() {
   $('fv-discard').hidden = f.kind === 'staged';
 
   syncViewerToggles();
-  const paintOpts = { path: f.path, highlight: viewer.syntax };
-  $('fv-body').innerHTML = viewer.split
-    ? window.Diff.renderSplit(state.diffFiles, actions, paintOpts)
-    : window.Diff.render(state.diffFiles, actions, paintOpts);
+  diffView = {
+    actions,
+    opts: { path: f.path, highlight: viewer.syntax },
+    rows: window.Diff.rowCount(state.diffFiles),
+    shown: null,
+  };
+  $('fv-body').scrollTop = 0;
+  paintDiff();
   indexBlocks();
   $('fv-syntax').disabled = !window.Hl.langOf(f.path);
   $('fv-syntax').title = window.Hl.langOf(f.path)

@@ -173,9 +173,10 @@ Honest ones, not a wish list:
 - **GitHub / GitLab integration.** No pull requests, issues or review.
 - **Blame and file history.**
 - **Submodules and Git LFS.**
-- **Large diffs.** A diff of a few hundred lines is smooth; past about two
-  thousand it slows, and past five thousand it stutters. The commit list is
-  virtualised, the diff is not yet.
+- **Side-by-side and wrapped diffs, when very large.** The ordinary unified view
+  draws only the rows on screen, so a twelve-thousand-line diff scrolls like a
+  small one. Side-by-side pairs rows and wrapping makes each row a different
+  height, and neither leaves rows countable, so those two still draw whole.
 - **A real terminal.** The drawer captures command output rather than providing
   a TTY, so full-screen programs will not run in it.
 - **Sidebar filtering.** Commits, files, repositories and tabs each have a

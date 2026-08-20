@@ -302,6 +302,31 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   Anda sendiri adalah remote yang sah, begitu juga host yang belum pernah didengar
   GitBraid. Yang ditolak hanya URL kosong
 
+**Diff yang sangat besar**
+- Tampilan unified hanya menggambar baris yang terlihat. Diperlukan karena
+  sebuah berkas dengan ribuan baris berubah menaruh puluhan ribu elemen di
+  dokumen, dan browser menata ulang semuanya di tiap gulir. Terukur pada diff
+  12.037 baris: median frame **93–112 ms turun jadi 7,0 ms**, node **168.235
+  jadi 1.168**
+- Baris yang dilewati tetap memakan ruangnya lewat baris penahan, jadi panjang
+  scrollbar tidak berubah dan tidak ada yang bergeser di bawah kursor
+- Ambangnya 600 baris. Di bawah itu menggambar utuh justru lebih murah daripada
+  membukukan jendela — diukur, bukan ditebak: diff nyata dengan 66 hunk hanya
+  529 baris dan sudah 7,1 ms tanpa perlakuan apa pun
+- Yang menghalangi selama ini bukan jumlah node melainkan **tata letak tabel**:
+  mematikan pewarnaan sintaks membuang 58% node dan hanya memperbaiki 9%.
+  `content-visibility` juga bukan jawabannya — pada diff banyak-hunk ia justru
+  memperlambat dari 7,1 ke 12,5 ms
+- Prasyaratnya adalah perbaikan saklar wrap: selama baris bisa membungkus,
+  tingginya bermacam-macam (20/38/56/74/110px) dan sebuah jendela tidak bisa
+  dihitung. Dengan wrap benar-benar mati, semuanya 20px
+- Nomor baris untuk navigasi antar blok dan peta perubahan kini dihitung dari
+  diff yang sudah diurai, bukan dari DOM — dengan jendela, blok di luar layar
+  sama nyatanya tapi tidak punya elemen untuk diukur
+- **Split dan wrap masih digambar utuh.** Split memasangkan baris sehingga
+  hitungannya tidak satu-lawan-satu, dan wrap mengembalikan tinggi yang
+  bermacam-macam
+
 **Saat aksi git gagal**
 - Kegagalan aksi git memunculkan **dialog**, bukan cuma satu baris di status bar
   yang tergeser pesan berikutnya. Judulnya menyebut apa yang sedang dikerjakan,
