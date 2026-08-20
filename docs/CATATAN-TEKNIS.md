@@ -323,9 +323,23 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Nomor baris untuk navigasi antar blok dan peta perubahan kini dihitung dari
   diff yang sudah diurai, bukan dari DOM — dengan jendela, blok di luar layar
   sama nyatanya tapi tidak punya elemen untuk diukur
-- **Split dan wrap masih digambar utuh.** Split memasangkan baris sehingga
-  hitungannya tidak satu-lawan-satu, dan wrap mengembalikan tinggi yang
-  bermacam-macam
+- Split ikut ber-jendela. Sempat dilewati dengan alasan "barisnya tidak bisa
+  dihitung" — padahal bisa: serangkaian penghapusan di samping serangkaian
+  penambahan menghasilkan sebanyak yang lebih panjang, sisanya satu baris untuk
+  satu baris. Terukur pada diff 12.037 baris dalam mode split: **64,1 ms turun
+  jadi 7,9 ms**, 74 baris digambar dari 9.001
+- Karena split menggambar 9.001 baris dari lines yang sama yang di unified jadi
+  12.001, model tata letaknya harus menghitung mode yang sedang tampil. Sebelum
+  ini ia selalu menghitung unified, jadi di split penanda peta perubahan
+  ditaruh pada tinggi 240.049px sementara panelnya cuma 180.049px — meleset
+  makin jauh ke bawah. Sekarang model dan panel sepakat dalam 2px
+- Kolom split dikunci separuh-separuh supaya garis pemisahnya tidak bergeser
+  saat digulir. Kolom terkunci tidak bisa melar, dan baris yang tidak dibungkus
+  tidak melipat — jadi baris panjang menimpa sisi seberangnya. Tabelnya kini
+  dilebarkan sampai baris terpanjang di diff itu (`--split-cols`, dihitung
+  sekali per diff) dan panelnya menggulir ke samping, persis seperti unified
+- **Wrap masih digambar utuh**: tinggi barisnya bergantung pada lebar tempat ia
+  digambar, dan itu bukan sesuatu yang bisa dihitung di depan
 
 **Saat aksi git gagal**
 - Kegagalan aksi git memunculkan **dialog**, bukan cuma satu baris di status bar

@@ -301,7 +301,29 @@
     return rows;
   }
 
-  function splitHunk(file, hunk, fileIndex, hunkIndex, actions) {
+  /* How many rows pairHunk will produce, without building them. Side-by-side
+     was left undrawn-in-a-window because "rows are not countable there" — they
+     are: a run of removals beside a run of additions is as many rows as the
+     longer of the two, and everything else is one row for one line. */
+  function pairCount(hunk) {
+    let n = 0;
+    let dels = 0;
+    let adds = 0;
+    for (const l of hunk.lines) {
+      if (l.type === 'del') dels += 1;
+      else if (l.type === 'add') adds += 1;
+      else { n += Math.max(dels, adds) + 1; dels = 0; adds = 0; }
+    }
+    return n + Math.max(dels, adds);
+  }
+
+  function rowCountSplit(files) {
+    let n = 0;
+    for (const f of files) for (const h of f.hunks || []) n += pairCount(h);
+    return n;
+  }
+
+  function splitHunk(file, hunk, fileIndex, hunkIndex, actions, from = 0, to = Infinity) {
     const cell = (l, side, ctx) => {
       if (!l) return '<td class="dl-num dl-void"></td><td class="dl-text dl-void"></td>';
       const cls = ctx ? 'dl-ctx' : side === 'left' ? 'dl-del' : 'dl-add';
@@ -310,7 +332,11 @@
         `<td class="dl-text ${cls}">${paint(l.text) || '&nbsp;'}</td>`
       );
     };
-    const rows = pairHunk(hunk)
+    const all = pairHunk(hunk);
+    const lo = Math.max(0, from);
+    const hi = Math.min(all.length, to);
+    const rows = all
+      .slice(lo, hi)
       .map((r) => `<tr>${cell(r.left, 'left', r.ctx)}${cell(r.right, 'right', r.ctx)}</tr>`)
       .join('');
 
@@ -326,7 +352,9 @@
       '<div class="hunk">' +
       `<div class="hunk-head"><span class="hunk-range">${esc(hunk.header)}</span>` +
       `<span class="hunk-actions">${buttons}</span></div>` +
-      `<table class="difftable split"><tbody>${rows}</tbody></table>` +
+      '<table class="difftable split"><tbody>' +
+      gapRow(lo * ROW_H) + rows + gapRow((all.length - hi) * ROW_H) +
+      '</tbody></table>' +
       '</div>'
     );
   }
@@ -334,7 +362,12 @@
   /** Side-by-side counterpart of render(): before on the left, after on the right. */
   function renderSplit(files, actions = [], opts = null) {
     setPaint(opts);
+    if (opts && opts.rowH) ROW_H = opts.rowH;
+    if (opts && opts.headH) HEAD_H = opts.headH;
     if (!files.length) return '<div class="empty-note">No textual changes here.</div>';
+    const first = opts && Number.isFinite(opts.first) ? opts.first : 0;
+    const last = opts && Number.isFinite(opts.last) ? opts.last : Infinity;
+    let seen = 0;
     return files
       .map((file, fi) => {
         const title =
@@ -343,7 +376,18 @@
             : esc(file.newPath || file.oldPath);
         const body = file.binary
           ? '<div class="empty-note">Binary file — no preview available.</div>'
-          : file.hunks.map((h, hi) => splitHunk(file, h, fi, hi, actions)).join('');
+          : file.hunks
+              .map((h, hi) => {
+                const start = seen;
+                const n = pairCount(h);
+                seen += n;
+                if (seen <= first || start >= last) {
+                  return `<div class="hunk hunk-gap" style="height:${
+                    n * ROW_H + HEAD_H}px"></div>`;
+                }
+                return splitHunk(file, h, fi, hi, actions, first - start, last - start);
+              })
+              .join('');
         return (
           '<section class="difffile">' +
           `<header class="difffile-head"><span class="difffile-name">${title}</span>` +
@@ -356,5 +400,6 @@
       .join('');
   }
 
-  window.Diff = { parse, render, renderSplit, hunkPatch, esc, rowCount };
+  window.Diff = { parse, render, renderSplit, hunkPatch, esc,
+                  rowCount, rowCountSplit, pairCount, pairRows: pairHunk };
 })();

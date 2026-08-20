@@ -250,6 +250,57 @@ check('only the first hunk was staged',
   stagedDiff[0].hunks[0].lines.some((l) => l.text === 'CHANGED TOP'),
   stagedDiff[0].hunks.length);
 
+/* Side-by-side draws only the rows in the window, and where it cuts comes from
+   pairCount rather than from the rows themselves. If the two ever disagree the
+   pane scrolls to offsets its content does not have, so they are checked
+   against each other on every hunk of a real diff — including the awkward ones:
+   a removal with no partner, an addition with no partner, and an uneven run. */
+{
+  let hunks = 0;
+  let agree = 0;
+  let paired = 0;
+  const seen = new Set();
+  for (const f of files.concat(stagedDiff)) {
+    for (const h of f.hunks || []) {
+      hunks += 1;
+      const rows = Diff.pairRows(h);
+      if (Diff.pairCount(h) === rows.length) agree += 1;
+      for (const r of rows) {
+        if (r.left && r.right && !r.ctx) paired += 1;
+        seen.add(r.left && r.right ? 'both' : r.left ? 'left' : 'right');
+      }
+    }
+  }
+  check('pairCount agrees with the rows pairRows builds, on every hunk',
+    hunks > 0 && agree === hunks, `${agree}/${hunks}`);
+  check('the fixture exercises additions and pairs',
+    seen.has('right') && seen.has('both'), [...seen].join(','));
+
+  /* Constructed rather than found: an uneven run is where a miscount hides, and
+     the fixture happens not to contain one. Four removals against one addition
+     is four rows, three of them with an empty right half. */
+  const uneven = Diff.parse(
+    'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,6 +1,3 @@\n' +
+    ' keep\n-one\n-two\n-three\n-four\n+ONE\n keep2');
+  const un = uneven[0].hunks[0];
+  check('four removals against one addition is four rows, not five',
+    Diff.pairCount(un) === 6 && Diff.pairRows(un).length === 6,
+    Diff.pairCount(un));
+  check('the three unpartnered removals leave the right half empty',
+    Diff.pairRows(un).filter((r) => r.left && !r.right).length === 3,
+    Diff.pairRows(un).filter((r) => r.left && !r.right).length);
+  check('side-by-side and unified count different totals for the same diff',
+    Diff.rowCountSplit(files) < Diff.rowCount(files) || paired === 0,
+    `${Diff.rowCountSplit(files)} vs ${Diff.rowCount(files)}`);
+
+  // A window has to name the same rows the renderer draws.
+  const html = Diff.renderSplit(files, [], { first: 0, last: 3, rowH: 20, headH: 27 });
+  const drawn = (html.match(/<tr>/g) || []).length;
+  check('a three-row window draws at most three rows', drawn <= 3 && drawn > 0, drawn);
+  check('the rows left out keep their height', html.includes('class="dl-gap"') ||
+    html.includes('hunk-gap'));
+}
+
 // And unstage it again with the reverse patch, the way the UI does.
 git(['apply', '--cached', '--reverse', '-'], { input: Diff.hunkPatch(mFile, mFile.hunks[0]) });
 const afterUnstage = P.parseStatus(git(['status', '--porcelain=v2', '--branch', '-z']));

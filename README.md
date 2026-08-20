@@ -173,10 +173,11 @@ Honest ones, not a wish list:
 - **GitHub / GitLab integration.** No pull requests, issues or review.
 - **Blame and file history.**
 - **Submodules and Git LFS.**
-- **Side-by-side and wrapped diffs, when very large.** The ordinary unified view
-  draws only the rows on screen, so a twelve-thousand-line diff scrolls like a
-  small one. Side-by-side pairs rows and wrapping makes each row a different
-  height, and neither leaves rows countable, so those two still draw whole.
+- **Wrapped diffs, when very large.** Unified and side-by-side both draw only
+  the rows on screen, so a twelve-thousand-line diff scrolls like a small one.
+  Wrapping makes each row as tall as it needs to be, and how tall that is
+  depends on the width it is drawn at — so with wrapping on, a very large diff
+  still draws whole and scrolls heavily.
 - **A real terminal.** The drawer captures command output rather than providing
   a TTY, so full-screen programs will not run in it.
 - **Sidebar filtering.** Commits, files, repositories and tabs each have a
