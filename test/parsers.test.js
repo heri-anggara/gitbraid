@@ -301,6 +301,27 @@ check('only the first hunk was staged',
     html.includes('hunk-gap'));
 }
 
+/* A fixed table takes its column widths from whichever row comes first. Once a
+   side-by-side window has scrolled that row is a spacer spanning all four
+   columns, which says nothing about any one of them — so the columns collapsed
+   to equal quarters and the left side slid into the middle of the pane. The
+   widths are declared on the table now, and this is what says so. */
+{
+  const many = ['diff --git a/y b/y', '--- a/y', '+++ b/y', '@@ -1,100 +1,100 @@'];
+  for (let i = 0; i < 100; i++) many.push((i % 5 === 0 ? '-old ' : ' ctx ') + i);
+  const wide = Diff.parse(many.join('\n'));
+  const win = Diff.renderSplit(wide, [], { first: 40, last: 60, rowH: 20, headH: 27 });
+  check('side-by-side declares its columns instead of inferring them',
+    win.includes('<colgroup>') && win.indexOf('<colgroup>') < win.indexOf('<tbody>'));
+  check('four columns are declared, two numbers and two texts',
+    (win.match(/<col class="c-num">/g) || []).length === 2 &&
+    (win.match(/<col class="c-text">/g) || []).length === 2);
+  // The row that used to dictate the widths: a spacer, first inside the body.
+  const body = win.slice(win.indexOf('<tbody>'));
+  check('a scrolled window really does open with a spacer row',
+    body.indexOf('dl-gap') < body.indexOf('<tr>') && body.includes('colspan="4"'));
+}
+
 // And unstage it again with the reverse patch, the way the UI does.
 git(['apply', '--cached', '--reverse', '-'], { input: Diff.hunkPatch(mFile, mFile.hunks[0]) });
 const afterUnstage = P.parseStatus(git(['status', '--porcelain=v2', '--branch', '-z']));

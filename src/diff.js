@@ -323,6 +323,10 @@
     return n;
   }
 
+  const SPLIT_COLS =
+    '<colgroup><col class="c-num"><col class="c-text">' +
+    '<col class="c-num"><col class="c-text"></colgroup>';
+
   function splitHunk(file, hunk, fileIndex, hunkIndex, actions, from = 0, to = Infinity) {
     const cell = (l, side, ctx) => {
       if (!l) return '<td class="dl-num dl-void"></td><td class="dl-text dl-void"></td>';
@@ -352,7 +356,12 @@
       '<div class="hunk">' +
       `<div class="hunk-head"><span class="hunk-range">${esc(hunk.header)}</span>` +
       `<span class="hunk-actions">${buttons}</span></div>` +
-      '<table class="difftable split"><tbody>' +
+      /* The widths are declared here rather than left to the first row. A fixed
+         table takes its columns from whatever row comes first, and once the
+         window has scrolled that is a spacer spanning all four — which says
+         nothing about any single column, so they collapsed to equal quarters
+         and the left side slid into the middle of the pane. */
+      '<table class="difftable split">' + SPLIT_COLS + '<tbody>' +
       gapRow(lo * ROW_H) + rows + gapRow((all.length - hi) * ROW_H) +
       '</tbody></table>' +
       '</div>'

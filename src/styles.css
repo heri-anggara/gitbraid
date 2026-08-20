@@ -2393,6 +2393,22 @@ textarea {
    is cut off at the divider and marked with an ellipsis rather than painted
    across its neighbour. Turning on Wrap long lines shows the rest. */
 .difftable.split { table-layout: fixed; width: 100%; }
+/* Stated on the columns, so they hold whatever row happens to be drawn first. */
+.difftable.split col.c-num { width: 44px; }
+.difftable.split col.c-text { width: calc(50% - 44px); }
+/* Turning the numbers off takes the cell out of the table everywhere else, but
+   a fixed table with declared columns needs its rows to keep the same shape as
+   the declaration — remove two cells from some rows and the halves stop being
+   halves. Here the cell stays and collapses to nothing instead. */
+.app.no-line-numbers .difftable.split col.c-num { width: 0; }
+.app.no-line-numbers .difftable.split col.c-text { width: 50%; }
+.app.no-line-numbers .difftable.split .dl-num {
+  display: table-cell;
+  width: 0;
+  padding: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
 .difftable.split td.dl-text {
   width: calc(50% - 44px);
   overflow: hidden;

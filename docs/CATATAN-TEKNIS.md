@@ -338,6 +338,17 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   membaca diff dengan cara ini. Kolom terkunci tidak bisa melar, dan baris yang
   tidak dibungkus tidak melipat, jadi baris panjang dipotong di pemisah dan
   diberi elipsis. Saklar wrap menampilkan sisanya
+- Lebar kolomnya dinyatakan di `<colgroup>`, bukan diserahkan pada baris
+  pertama. Tabel `table-layout: fixed` mengambil kolomnya dari baris yang
+  kebetulan datang duluan — dan begitu jendelanya bergulir, baris itu adalah
+  baris penahan `colspan="4"` yang tidak menyebut satu kolom pun, jadi keempat
+  kolom jatuh ke seperempat-seperempat (terukur: 160/160/160/160) dan sisi kiri
+  meluncur ke tengah panel. Di puncak berkas baris penahannya tidak ada, jadi
+  gejalanya cuma muncul setelah menggulir
+- Mematikan nomor baris dulu membuang selnya dengan `display: none`. Tabel
+  terkunci dengan kolom yang dinyatakan menuntut semua barisnya berbentuk sama
+  seperti pernyataannya — buang dua sel dari sebagian baris dan paruhnya berhenti
+  jadi paruh. Sekarang selnya tetap ada dan dikempiskan jadi nol
 - Percobaan pertama melebarkan tabelnya sampai baris terpanjang supaya panelnya
   menggulir ke samping seperti unified. **Itu keliru**: sisi seberangnya
   terdorong keluar layar dan sebagian besar baris cuma memandangi kolom kosong —
