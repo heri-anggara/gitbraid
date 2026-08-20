@@ -96,6 +96,20 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.3.1" date="2026-08-19">
+      <description>
+        <p>
+          Small repairs. Letters with tails are no longer clipped in text boxes,
+          dialogs stop marking branch names and URLs as misspelt, and the commit
+          panel shows an author's photograph rather than only initials.
+        </p>
+        <p>
+          The change map keeps quiet when the whole diff is already on screen,
+          Check for Updates has moved into the Help menu, and the buttons in
+          Repository management carry icons and match each other's height.
+        </p>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-08-19">
       <description>
         <p>

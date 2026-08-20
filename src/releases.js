@@ -7,6 +7,44 @@
  */
 window.Releases = [
   {
+    version: '0.3.1',
+    date: '2026-08-19',
+    title: 'Things that were quietly wrong',
+    summary:
+      'Small repairs, most of them found by looking at a screenshot and asking '
+      + 'why something looked odd.',
+    sections: [
+      {
+        heading: 'Text boxes',
+        items: [
+          'Letters with tails — g, y, j — were being clipped in some text boxes and not others. line-height: normal leaves the box height to the font, and the fonts in this stack disagree by two pixels at 13px: Cantarell asks for 16 of a 16-pixel box, Noto Sans asks for 18. Four boxes had no headroom at all, so whether a tail survived came down to which font happened to be installed. They now have room measured against the greediest font in the stack.',
+          'Dialogs no longer mark branch names, URLs and paths as misspelt. They are identifiers, not prose. The commit message keeps its spell check, being the one box here whose words other people read.',
+        ],
+      },
+      {
+        heading: 'Faces and marks',
+        items: [
+          'The commit panel shows the author\u2019s photograph when there is one. It could only ever draw initials before, so it disagreed with the Author column beside it.',
+          'The change map keeps quiet when the whole diff is already on screen. A mark\u2019s height is a share of the diff, so the shorter the diff the bigger each mark: on a +16 \u22121 diff two marks filled 47% of the strip while nothing at all was hidden. A mark is also capped at a quarter of the strip, for a diff that scrolls by only a line or two.',
+        ],
+      },
+      {
+        heading: 'Buttons',
+        items: [
+          'Browse, Clone, Init and Scan a folder each carry an icon, and every button in that row is the same height. The close button beside them had been flattened to half height by a style rule that took over a class it did not own — which cost the release notes\u2019 close button too.',
+          'Help \u25b8 Check for Updates\u2026 asks at any time, rather than the version button in the status bar being the only way in. Asked by hand, an answer of "there is one" now opens the offer instead of only lighting a dot.',
+        ],
+      },
+      {
+        heading: 'Written down correctly',
+        items: [
+          'The README said syntax colouring covered around fifteen languages. It covers eleven, across some thirty file extensions, which is what Preferences had said all along.',
+          'Its screenshots were wrong too: every light-theme picture was of the pane left over from the dark-theme pass, because an open file hides the history behind it. The commit list now leads, at full width, where the columns are readable.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.3.0',
     date: '2026-08-19',
     title: 'It updates itself, and it stops guessing',
