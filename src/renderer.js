@@ -2113,27 +2113,6 @@ const DIFF_OVERSCAN = 40;
 const rowsInHunk = (h) =>
   viewer.split ? window.Diff.pairCount(h) : h.lines.length;
 
-/* The longest line in the diff, in characters, published to the stylesheet so
-   the side-by-side table can be made wide enough for it. Measured once per
-   diff: it does not change with scrolling, and walking every line on each
-   frame would undo the point of drawing only a window. */
-function setSplitWidth() {
-  let max = 0;
-  for (const f of state.diffFiles) {
-    for (const h of f.hunks || []) {
-      for (const l of h.lines) {
-        // A tab occupies a tab stop, not one column.
-        const tabs = (l.text.match(/\t/g) || []).length;
-        const n = l.text.length + tabs * ((prefs.tabSize || 4) - 1);
-        if (n > max) max = n;
-      }
-    }
-  }
-  // A little slack, and a ceiling so one runaway line cannot make the pane
-  // scroll for a mile.
-  $('fv-body').style.setProperty('--split-cols', String(Math.min(max + 2, 4000)));
-}
-
 function diffRowTotal() {
   return viewer.split
     ? window.Diff.rowCountSplit(state.diffFiles)
@@ -2377,16 +2356,43 @@ function renderChangeMap() {
 
 /* Which slice of the file is on screen. Two style writes, so it can run on
    every scroll frame without competing with the diff for the frame. */
-function paintViewport() {
+/* The box cannot be thinner than this or it stops being visible on a long
+   diff, where the screenful it stands for is a pixel or two of strip. */
+const VIEW_MIN = 14;
+
+/* Everything the box needs, in pixels. Per cent was the mistake: the box has a
+   minimum height, and a minimum has to be taken out of the distance it travels.
+   Mapping the full strip while the height was being held at its minimum left
+   the box hanging past the bottom of the strip at the end of a file, which is
+   what put it out of step with the scrollbar next to it. Taken out of the
+   travel, the arithmetic is the one every scrollbar uses — and where the height
+   is not being clamped it reduces to exactly the old per cent. */
+function viewGeometry() {
   const body = $('fv-body');
-  const view = $('fv-view');
+  const strip = $('fv-map').clientHeight;
   const total = body.scrollHeight;
   const seen = body.clientHeight;
+  const h = Math.min(strip, Math.max((seen / total) * strip, VIEW_MIN));
+  return { body, strip, total, seen, h, travel: Math.max(0, strip - h) };
+}
+
+function paintViewport() {
+  const view = $('fv-view');
+  const g = viewGeometry();
   // Nothing to point at when the whole file already fits.
-  if (!nav.marks.length || total <= seen + 1) { view.hidden = true; return; }
+  if (!nav.marks.length || g.total <= g.seen + 1) { view.hidden = true; return; }
   view.hidden = false;
-  view.style.top = `${(body.scrollTop / total * 100).toFixed(3)}%`;
-  view.style.height = `${(seen / total * 100).toFixed(3)}%`;
+  const at = g.body.scrollTop / (g.total - g.seen);
+  view.style.top = `${(at * g.travel).toFixed(1)}px`;
+  view.style.height = `${g.h.toFixed(1)}px`;
+}
+
+/** Bring the box to the pointer, centred on it, the way a scrollbar is dragged. */
+function scrollMapTo(clientY) {
+  const g = viewGeometry();
+  if (g.travel <= 0) return;
+  const y = clientY - $('fv-map').getBoundingClientRect().top - g.h / 2;
+  g.body.scrollTop = Math.max(0, Math.min(1, y / g.travel)) * (g.total - g.seen);
 }
 
 function paintCurrentMark() {
@@ -2421,15 +2427,39 @@ $('fv-body').addEventListener('scroll', () => {
   requestAnimationFrame(() => { viewQueued = false; paintViewport(); });
 }, { passive: true });
 
+/* The strip is the pane's scrollbar as well as its map — the native one beside
+   it is hidden, because two indicators of the same thing standing side by side
+   can only ever agree by accident. So it has to drag like one. */
+let mapDrag = null;
+$('fv-map').addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  const body = $('fv-body');
+  if (body.scrollHeight <= body.clientHeight + 1) return;
+  mapDrag = { id: e.pointerId, from: e.clientY, moved: false };
+  $('fv-map').setPointerCapture(e.pointerId);
+});
+$('fv-map').addEventListener('pointermove', (e) => {
+  if (!mapDrag || e.pointerId !== mapDrag.id) return;
+  // A few pixels of slack, so a click on a mark stays a click.
+  if (!mapDrag.moved && Math.abs(e.clientY - mapDrag.from) < 4) return;
+  mapDrag.moved = true;
+  scrollMapTo(e.clientY);
+});
+for (const done of ['pointerup', 'pointercancel']) {
+  $('fv-map').addEventListener(done, (e) => {
+    if (!mapDrag || e.pointerId !== mapDrag.id) return;
+    $('fv-map').releasePointerCapture(e.pointerId);
+    // Remembered for the click that follows, which must not undo the drag.
+    mapDrag = mapDrag.moved ? 'dragged' : null;
+  });
+}
 $('fv-map').addEventListener('click', (e) => {
+  if (mapDrag === 'dragged') { mapDrag = null; return; }
   const mark = e.target.closest('.fv-mark');
   if (mark) { gotoBlock(Number(mark.dataset.block)); return; }
   // Bare strip: treat the click as a position in the file, the way a scrollbar
   // trough does, so the map is useful even where nothing changed.
-  const body = $('fv-body');
-  const box = $('fv-map').getBoundingClientRect();
-  const at = (e.clientY - box.top) / box.height;
-  body.scrollTop = at * body.scrollHeight - body.clientHeight / 2;
+  scrollMapTo(e.clientY);
 });
 
 /* Every mark is a fraction of a height that changes whenever the pane does —
@@ -2539,7 +2569,6 @@ async function showFileDiff() {
     rows: diffRowTotal(),
     shown: null,
   };
-  setSplitWidth();
   $('fv-body').scrollTop = 0;
   paintDiff();
   indexBlocks();
@@ -5215,7 +5244,6 @@ async function showCompare() {
   syncViewerToggles();
   const opts = { path: '', highlight: false };   // a comparison spans many files
   diffView = null;
-  setSplitWidth();
   $('fv-body').innerHTML = state.diffFiles.length
     ? (viewer.split ? window.Diff.renderSplit(state.diffFiles, [], opts)
                     : window.Diff.render(state.diffFiles, [], opts))
