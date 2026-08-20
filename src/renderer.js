@@ -2119,26 +2119,58 @@ function diffRowTotal() {
     : window.Diff.rowCount(state.diffFiles);
 }
 
+/* Where every row starts, in pixels. Built once per shape rather than per
+   frame, because with wrapped rows it is an array as long as the diff and
+   diffNeed() asks for it on every scroll. */
 function diffLayout() {
+  const key = [rowSize.row, rowSize.head, rowSize.fileHead, diffRowTotal(),
+               viewer.split, viewer.wrap, diffView && diffView.heightsAt].join('|');
+  if (diffView && diffView.layout && diffView.layoutKey === key) return diffView.layout;
+
   const hunks = [];
+  const heights = (diffView && viewer.wrap) ? diffView.heights : null;
   let top = 0;
   let rows = 0;
   const manyFiles = state.diffFiles.length > 1;
+  /* One entry per row plus a closing one, so a row's height is the difference
+     between neighbours and the last entry is the whole height. Only wrapped
+     rows need it; everywhere else a row height is a single number. */
+  const rowTop = heights ? new Float64Array(heights.length + 1) : null;
   for (const f of state.diffFiles) {
     if (manyFiles) top += rowSize.fileHead;
     for (const h of f.hunks || []) {
       top += rowSize.head;
       const n = rowsInHunk(h);
       hunks.push({ rowStart: rows, rows: n, top });
+      if (rowTop) {
+        for (let i = 0; i < n; i++) {
+          rowTop[rows + i] = top;
+          top += heights[rows + i] || rowSize.row;
+        }
+      } else {
+        top += n * rowSize.row;
+      }
       rows += n;
-      top += n * rowSize.row;
     }
   }
-  return { hunks, rows, height: top };
+  if (rowTop) rowTop[rows] = top;
+  const layout = { hunks, rows, height: top, rowTop };
+  if (diffView) { diffView.layout = layout; diffView.layoutKey = key; }
+  return layout;
 }
 
 /** The row shown at a given pixel offset, and the offset a row sits at. */
 function rowAtPixel(layout, px) {
+  if (layout.rowTop) {
+    // The offsets only ever increase, so the row is a bisection away.
+    let lo = 0;
+    let hi = layout.rows;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (layout.rowTop[mid] <= px) lo = mid + 1; else hi = mid;
+    }
+    return Math.max(0, lo - 1);
+  }
   for (const h of layout.hunks) {
     if (px < h.top) return h.rowStart;
     if (px < h.top + h.rows * rowSize.row) {
@@ -2149,6 +2181,9 @@ function rowAtPixel(layout, px) {
 }
 
 function pixelAtRow(layout, index) {
+  if (layout.rowTop) {
+    return layout.rowTop[Math.max(0, Math.min(index, layout.rows))];
+  }
   for (const h of layout.hunks) {
     if (index < h.rowStart + h.rows) {
       return h.top + Math.max(0, index - h.rowStart) * rowSize.row;
@@ -2171,18 +2206,141 @@ function diffNeed() {
   };
 }
 
-/* Wrapping makes a row as tall as it needs to be — unless nothing wraps, or
-   everything wraps to the same height, either of which leaves the rows uniform
-   and therefore countable. Whether that is the case is decided by settleWrap()
-   after the first full draw; until then a wrapping view draws whole. */
+/* Wrapping makes a row as tall as it needs to be, so a window cannot be cut
+   from one row height. It is cut from a measured height per row instead, and a
+   wrapped diff is windowed exactly when those measurements are in hand. */
 const diffIsWindowed = () =>
   Boolean(diffView) && diffView.rows > 600 &&
-  (!viewer.wrap || diffView.wrapUniform === true);
+  (!viewer.wrap || Boolean(diffView.heights));
+
+/* Every wrapped row's height, measured without drawing the diff.
+
+   Reading them back off the rendered table would cost what rendering the table
+   costs, which is the thing being avoided: 786 ms for a 5,848-row diff. The
+   same text laid out in a plain hidden column of the same width, under the same
+   wrapping rules, is one layout pass — 182 ms, and on that diff it agreed with
+   the table on all 5,848 rows to the pixel.
+
+   Two details decide whether it agrees at all. An empty line is drawn as a
+   non-breaking space, so measuring it as an empty div would call it two pixels
+   tall instead of twenty. And in side-by-side a row is as tall as its taller
+   half, so both halves are measured and the larger kept. */
+function measureWrapHeights(cell) {
+  const rows = [];
+  for (const f of state.diffFiles) {
+    for (const h of f.hunks || []) {
+      if (viewer.split) {
+        for (const r of window.Diff.pairRows(h)) {
+          const meta = (r.left || r.right || {}).type === 'meta';
+          rows.push([r.left ? r.left.text : '', r.right ? r.right.text : '', meta]);
+        }
+      } else {
+        for (const l of h.lines) rows.push([l.text, null, l.type === 'meta']);
+      }
+    }
+  }
+  if (!rows.length) return null;
+
+  /* The styles are copied off a real cell rather than restated in the
+     stylesheet. Restating them cost exactly the two pixels of vertical padding
+     that were left out, and every row was two pixels short — which over a diff
+     this long is a window cut in the wrong place. Copying cannot drift. */
+  const cs = getComputedStyle(cell);
+  const probe = document.createElement('div');
+  probe.className = 'wrap-probe';
+  probe.style.width = `${cell.getBoundingClientRect().width}px`;
+  for (const k of ['fontFamily', 'fontSize', 'fontWeight', 'letterSpacing',
+                   'lineHeight', 'tabSize', 'wordSpacing']) {
+    probe.style[k] = cs[k];
+  }
+  probe.style.setProperty('--wp-pad', cs.padding);
+  probe.innerHTML = rows
+    .map(([left, right, meta]) => {
+      const cls = meta ? 'wp-row wp-meta' : 'wp-row';
+      const one = (t) => `<div class="${cls}">${esc(t) || '&nbsp;'}</div>`;
+      return right === null ? one(left) : one(left) + one(right);
+    })
+    .join('');
+  document.body.appendChild(probe);
+  // Read every height in one sweep, so the browser lays the column out once.
+  const kids = probe.children;
+  const flat = new Int32Array(kids.length);
+  for (let i = 0; i < kids.length; i++) flat[i] = kids[i].offsetHeight;
+  probe.remove();
+
+  const out = new Int32Array(rows.length);
+  if (viewer.split) {
+    for (let i = 0; i < rows.length; i++) out[i] = Math.max(flat[i * 2], flat[i * 2 + 1]);
+  } else {
+    out.set(flat.subarray(0, rows.length));
+  }
+  return out;
+}
+
+/* The measurements are only good for the width they were taken at, so the width
+   is remembered with them and they are thrown away when it changes. */
+function prepareWrap() {
+  const body = $('fv-body');
+  diffView.rowSum = null;
+  // A short window first, purely to put a real cell on the page to measure.
+  body.innerHTML = viewer.split
+    ? window.Diff.renderSplit(state.diffFiles, diffView.actions,
+        { ...diffView.opts, first: 0, last: 40, rowH: rowSize.row, headH: rowSize.head })
+    : window.Diff.render(state.diffFiles, diffView.actions,
+        { ...diffView.opts, first: 0, last: 40, rowH: rowSize.row, headH: rowSize.head });
+  measureRowSizes(body);
+  const cell = body.querySelector('td.dl-text');
+  const width = cell ? cell.getBoundingClientRect().width : 0;
+  if (width <= 0) return;
+  diffView.heights = measureWrapHeights(cell);
+  diffView.heightsAt = `${width}|${rowSize.head}`;
+  /* Running totals, so a spacer standing in for rows 40 to 900 can be given the
+     height those rows really occupy. Headers are deliberately not in here: the
+     spacer replaces rows, and the headers around it are drawn either way. */
+  if (diffView.heights) {
+    const sum = new Float64Array(diffView.heights.length + 1);
+    for (let i = 0; i < diffView.heights.length; i++) sum[i + 1] = sum[i] + diffView.heights[i];
+    diffView.rowSum = sum;
+  }
+}
+
+/* A measured height that is wrong puts the window at an offset the pane does
+   not have, and the diff jumps under the pointer as it scrolls. Cheap to check
+   — only the drawn rows need looking at — and if the measurements turn out not
+   to describe the page, they are dropped and the diff goes back to being drawn
+   whole, which is slower and right. */
+function verifyWrapWindow(body) {
+  if (!viewer.wrap || !diffView || !diffView.heights || !diffView.shown) return;
+  const drawn = body.querySelectorAll('.difftable tr:not(.dl-gap)');
+  let worst = 0;
+  for (let i = 0; i < drawn.length; i++) {
+    const want = diffView.heights[diffView.shown.first + i];
+    if (!want) continue;
+    worst = Math.max(worst, Math.abs(drawn[i].getBoundingClientRect().height - want));
+    if (worst > 1) break;
+  }
+  /* And the total, which is the half that was missed the first time: every row
+     drawn can be the right height while the page as a whole is a different
+     height from the model, because the spacers standing in for the rows not
+     drawn are what set it. */
+  const layout = diffLayout();
+  const slack = Math.abs(body.scrollHeight - layout.height);
+  if (worst <= 1 && slack <= layout.hunks.length + state.diffFiles.length + 2) return;
+  console.warn(`GitBraid: wrapped rows are off by ${Math.round(worst)}px and the ` +
+    `page by ${Math.round(slack)}px; drawing the diff whole instead.`);
+  diffView.heights = null;
+  diffView.rowSum = null;
+  diffView.heightsAt = 'off';   // not '' — '' would ask for measuring all over again
+  diffView.wrapOff = true;
+  paintDiff();
+}
 
 function paintDiff() {
   if (!diffView) return;
   const body = $('fv-body');
   diffView.rows = diffRowTotal();
+  // Wrapped and long: the heights have to exist before a window can be cut.
+  if (viewer.wrap && diffView.rows > 600 && !diffView.heights && !diffView.wrapOff) prepareWrap();
   let win = { first: 0, last: Infinity };
   if (diffIsWindowed()) {
     const need = diffNeed();
@@ -2194,22 +2352,30 @@ function paintDiff() {
   diffView.shown = win;
 
   const opts = { ...diffView.opts, first: win.first, last: win.last,
-                 rowH: rowSize.row, headH: rowSize.head };
+                 rowH: rowSize.row, headH: rowSize.head,
+                 rowSum: viewer.wrap ? diffView.rowSum : null };
   body.innerHTML = viewer.split
     ? window.Diff.renderSplit(state.diffFiles, diffView.actions, opts)
     : window.Diff.render(state.diffFiles, diffView.actions, opts);
 
-  // Measure what was actually drawn, so the next window is cut correctly.
+  measureRowSizes(body);
+  verifyWrapWindow(body);
+  syncHBar();
+}
+
+/* Measure what was actually drawn, so the next window is cut correctly. With
+   wrapped rows the first row is no guide to the rest, and the per-row heights
+   answer instead — but the headers between them are still one height each. */
+function measureRowSizes(body) {
   const row = body.querySelector('.difftable tr:not(.dl-gap)');
   const head = body.querySelector('.hunk-head');
-  if (row) rowSize.row = Math.round(row.getBoundingClientRect().height) || rowSize.row;
+  if (row && !viewer.wrap) {
+    rowSize.row = Math.round(row.getBoundingClientRect().height) || rowSize.row;
+  }
   if (head) rowSize.head = Math.round(head.getBoundingClientRect().height) || rowSize.head;
   const fileHead = body.querySelector('.difffile-head');
   rowSize.fileHead = fileHead && fileHead.offsetParent
     ? Math.round(fileHead.getBoundingClientRect().height) : 0;
-
-  syncHBar();
-  settleWrap();
 }
 
 /* The horizontal scrollbar for the pane. It mirrors the pane's scrollLeft and
@@ -2226,24 +2392,6 @@ function syncHBar() {
     $('fv-hbar-run').style.width = body.scrollWidth + 'px';
     bar.scrollLeft = body.scrollLeft;
   }
-}
-
-/* A wrapping view draws whole on its first pass, because a window cannot be cut
-   until the rows are known to be a single height. That pass measures itself:
-   what the uniform model predicted, against what the browser actually laid
-   out. They agree when nothing wraps — or when everything wraps to the same
-   height — and disagree the moment any row is taller than the rest. The 1px
-   per-hunk and per-file borders are the only systematic difference, so they are
-   taken out before the comparison. */
-function settleWrap() {
-  if (!diffView || !viewer.wrap || diffView.rows <= 600) return;
-  if (diffView.wrapUniform !== undefined) return;
-  const layout = diffLayout();
-  const borders = layout.hunks.length + state.diffFiles.length;
-  const extra = $('fv-body').scrollHeight - layout.height - borders;
-  diffView.wrapUniform = Math.abs(extra) <= 2;
-  // Uniform after all: cut the window that was skipped on the first pass.
-  if (diffView.wrapUniform) paintDiff();
 }
 
 /* The bar and the pane are two views of one scrollLeft, so each follows the
@@ -2515,7 +2663,19 @@ $('fv-map').addEventListener('click', (e) => {
    dragging the divider, toggling wrap, resizing the window. One redraw per
    frame at most, and only while a file is open. */
 let mapQueued = false;
+let paneWidth = 0;
 new ResizeObserver(() => {
+  /* Wrapped rows were measured at one width and mean nothing at another, so a
+     narrower pane throws them away and the next paint measures again. Only the
+     width matters: growing taller folds no text differently. */
+  const now = $('fv-body').clientWidth;
+  if (diffView && diffView.heights && now !== paneWidth) {
+    diffView.heights = null;
+    diffView.heightsAt = '';
+    paintDiff();
+    indexBlocks();
+  }
+  paneWidth = now;
   if (mapQueued || !nav.marks.length) return;
   mapQueued = true;
   requestAnimationFrame(() => { mapQueued = false; renderChangeMap(); });
@@ -2617,7 +2777,12 @@ async function showFileDiff() {
     opts: { path: f.path, highlight: viewer.syntax },
     rows: diffRowTotal(),
     shown: null,
-    wrapUniform: undefined,
+    heights: null,
+    heightsAt: '',
+    rowSum: null,
+    wrapOff: false,
+    layout: null,
+    layoutKey: '',
   };
   $('fv-body').scrollTop = 0;
   paintDiff();

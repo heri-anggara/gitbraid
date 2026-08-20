@@ -359,23 +359,32 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Tajuk hunk dipaksa satu baris. Ia membawa nama fungsi di belakang nomor baris,
   dan pada berkas berbaris sangat panjang itu melipat jadi dua baris — sementara
   jendela mengukur satu tajuk lalu menganggap sisanya sama tinggi
-- Mode wrap ikut ber-jendela **selama barisnya seragam**. Ini hampir selalu
-  kasusnya: baris kode biasa lebih pendek dari lebar panel, jadi menyalakan wrap
-  tidak melipat apa pun dan 12.000 baris tetap seragam 20px. Dikecualikan dari
-  jendela selama ini "karena tinggi baris bergantung pada lebar" — padahal kalau
-  tidak ada yang melipat, tingginya tidak bergantung pada apa pun
-- Cara mengetahuinya bukan dengan mengukur lebar huruf (rapuh), melainkan
-  membandingkan **tinggi yang diprediksi model seragam** terhadap **yang
-  benar-benar ditata peramban** sesudah pass penuh pertama. Cocok berarti
-  seragam, lalu jendelanya dipotong. Selisih sistematisnya cuma 1px per hunk dan
-  per berkas (garis batas), yang dikeluarkan sebelum dibandingkan. Terukur pada
-  diff 12.000 baris yang sebenarnya tidak melipat: **58,6 ms turun jadi 7 ms**,
-  74 baris digambar dari 12.001
-- Yang tetap digambar utuh hanyalah diff yang barisnya bercampur tinggi
-  (sebagian melipat, sebagian tidak) — dan itu memang tidak bisa dihitung seragam.
-  Diuji dengan berkas 2.000 baris yang satu dari sepuluh barisnya sepanjang 200
-  karakter: dideteksi tidak-seragam, tinggi barisnya 20px dan 74px bercampur,
-  tetap utuh dan tidak meleset
+- Mode wrap ikut ber-jendela, **termasuk saat tinggi barisnya bercampur**.
+  Jendelanya tidak dipotong dari satu tinggi baris melainkan dari tinggi yang
+  diukur per baris. Terukur pada diff 5.848 baris split+wrap: **35,1 ms jadi
+  7 ms** per frame, 62 baris digambar dari 5.848, node 57.443 jadi 331. Menekan
+  tombol wrap: **786 ms jadi 268 ms**
+- Mengukurnya **tidak** dengan membaca tabel yang sudah digambar — itu berbiaya
+  persis sama dengan menggambarnya (786 ms). Teks yang sama ditata di satu kolom
+  tersembunyi selebar sel yang sama, dengan aturan pelipatan yang sama, sekali
+  tata letak: **182 ms**, dan cocok **5.848 dari 5.848 baris, meleset 0px**
+- Gayanya **disalin dari sel sungguhan** saat mengukur, bukan ditulis ulang di
+  stylesheet. Menulis ulang persis memakan korban: padding tegak 2px terlewat,
+  dan setiap baris jadi 2px pendek
+- Baris kosong digambar sebagai `&nbsp;`, jadi mengukurnya sebagai div kosong
+  memberi 2px alih-alih 20px. Di split sebuah baris setinggi paruh yang lebih
+  tinggi, jadi kedua paruh diukur dan diambil yang terbesar
+- **Baris penahan** ikut memakai tinggi terukur itu lewat jumlah kumulatif.
+  Kekeliruan di sini tidak menyalahgambarkan apa pun yang terlihat — ia membuat
+  halaman berbeda tinggi dari model yang memutuskan apa yang digambar (186.611
+  vs 117.529), dan diff-nya meleset di bawah kursor
+- Verifikasi setelah tiap gambar: tinggi baris **dan** tinggi halaman. Versi
+  pertama cuma memeriksa barisnya — yang memang benar — sementara yang salah
+  justru totalnya. Kalau meleset, ukurannya dibuang dan diff digambar utuh:
+  lebih lambat tapi benar. Diuji dengan sengaja merusak angkanya
+- Ukuran hanya berlaku untuk lebar saat ia diambil, jadi panel yang berubah
+  lebar membuangnya dan mengukur lagi. Diuji 1280→980→1280: model dan halaman
+  tetap sepakat dalam 2px di ketiganya
 
 **Palang gulir horizontal**
 - Mode unified tanpa wrap memakai bilah gulir horizontal yang **selalu terlihat**

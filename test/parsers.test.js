@@ -322,6 +322,45 @@ check('only the first hunk was staged',
     body.indexOf('dl-gap') < body.indexOf('<tr>') && body.includes('colspan="4"'));
 }
 
+/* A wrapped row is not the same height as its neighbour, so the spacers that
+   stand in for the rows outside the window cannot be a row count times one
+   height. They are measured, and passed in as running totals. If the spacers
+   and the model disagree, the page is a different height from the map that
+   decides what to draw, and the diff slides under the pointer as it scrolls. */
+{
+  const src = ['diff --git a/z b/z', '--- a/z', '+++ b/z', '@@ -1,10 +1,10 @@'];
+  for (let i = 0; i < 10; i++) src.push((i === 3 ? '-row ' : ' row ') + i);
+  const one = Diff.parse(src.join('\n'));
+  const n = one[0].hunks[0].lines.length;
+
+  // Rows 0-2 are 20px, rows 3-9 are 60px: a run that is nothing like uniform.
+  const rowSum = new Float64Array(n + 1);
+  for (let i = 0; i < n; i++) rowSum[i + 1] = rowSum[i] + (i < 3 ? 20 : 60);
+
+  const html = Diff.render(one, [], { first: 5, last: 7, rowH: 20, headH: 27, rowSum });
+  const gaps = [...html.matchAll(/class="dl-gap" style="height:(\d+(?:\.\d+)?)px"/g)]
+    .map((m) => Number(m[1]));
+  check('the spacer above the window is as tall as the rows it replaces',
+    gaps[0] === rowSum[5], `${gaps[0]} vs ${rowSum[5]}`);
+  check('the spacer below it covers the rest of the hunk',
+    gaps[1] === rowSum[n] - rowSum[7], `${gaps[1]} vs ${rowSum[n] - rowSum[7]}`);
+  check('the two spacers plus the window account for the whole hunk',
+    gaps[0] + gaps[1] + (rowSum[7] - rowSum[5]) === rowSum[n]);
+
+  // Without measurements it must still fall back to one height per row.
+  const plain = Diff.render(one, [], { first: 5, last: 7, rowH: 20, headH: 27 });
+  const flat = [...plain.matchAll(/class="dl-gap" style="height:(\d+)px"/g)].map((m) => Number(m[1]));
+  check('with nothing measured, spacers go back to a row count times one height',
+    flat[0] === 5 * 20 && flat[1] === (n - 7) * 20, flat.join('/'));
+
+  // Side-by-side takes the same offsets.
+  const sp = Diff.renderSplit(one, [], { first: 5, last: 7, rowH: 20, headH: 27, rowSum });
+  const spGaps = [...sp.matchAll(/class="dl-gap" style="height:(\d+(?:\.\d+)?)px"/g)]
+    .map((m) => Number(m[1]));
+  check('side-by-side spacers use the measured heights too',
+    spGaps.length === 2 && spGaps[0] === rowSum[5], spGaps.join('/'));
+}
+
 // And unstage it again with the reverse patch, the way the UI does.
 git(['apply', '--cached', '--reverse', '-'], { input: Diff.hunkPatch(mFile, mFile.hunks[0]) });
 const afterUnstage = P.parseStatus(git(['status', '--porcelain=v2', '--branch', '-z']));

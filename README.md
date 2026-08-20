@@ -173,10 +173,10 @@ Honest ones, not a wish list:
 - **GitHub / GitLab integration.** No pull requests, issues or review.
 - **Blame and file history.**
 - **Submodules and Git LFS.**
-- **Wrapped diffs whose rows wrap to different heights.** A wrapped diff is
-  windowed like any other once its rows are a single height, which is the common
-  case — most lines are shorter than the pane. Only when some lines wrap and
-  others do not, so the rows stop being uniform, does that diff still draw whole.
+- **The first moment a very large diff is wrapped.** Turning wrapping on
+  measures every row once, which on a six-thousand-row diff takes about a
+  quarter of a second; after that it scrolls like any other. Resizing the pane
+  measures again, for the same reason.
 - **A real terminal.** The drawer captures command output rather than providing
   a TTY, so full-screen programs will not run in it.
 - **Sidebar filtering.** Commits, files, repositories and tabs each have a

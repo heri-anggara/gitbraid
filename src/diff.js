@@ -180,7 +180,19 @@
   const gapRow = (px) =>
     (px > 0 ? `<tr class="dl-gap" style="height:${px}px"><td colspan="4"></td></tr>` : '');
 
-  function renderHunk(file, hunk, fileIndex, hunkIndex, actions, from = 0, to = Infinity) {
+  /* How tall a run of rows is. Rows are one height each until they wrap, and
+     then they are not — so when the caller has measured them it passes the
+     offsets in and the spacers hold the true distance. Getting this wrong does
+     not misdraw anything visible: it makes the page a different height from the
+     model that decides what to draw, and the diff slides under the pointer. */
+  /* Running totals of row heights alone — no hunk headers in them, so the
+     distance between any two row numbers is exactly the rows between them. */
+  let ROW_SUM = null;
+  const spanPx = (from, to) =>
+    (ROW_SUM ? Math.max(0, ROW_SUM[to] - ROW_SUM[from]) : Math.max(0, to - from) * ROW_H);
+
+  function renderHunk(file, hunk, fileIndex, hunkIndex, actions, from = 0, to = Infinity,
+                      base = 0) {
     // Which of this hunk's rows the window actually asks for.
     const lo = Math.max(0, from);
     const hi = Math.min(hunk.lines.length, to);
@@ -220,7 +232,8 @@
       `<div class="hunk-head"><span class="hunk-range">${esc(hunk.header)}</span>` +
       `<span class="hunk-actions">${buttons}</span></div>` +
       '<table class="difftable"><tbody>' +
-      gapRow(lo * ROW_H) + rows + gapRow((hunk.lines.length - hi) * ROW_H) +
+      gapRow(spanPx(base, base + lo)) + rows +
+      gapRow(spanPx(base + hi, base + hunk.lines.length)) +
       '</tbody></table>' +
       '</div>'
     );
@@ -231,6 +244,7 @@
     setPaint(opts);
     if (opts && opts.rowH) ROW_H = opts.rowH;
     if (opts && opts.headH) HEAD_H = opts.headH;
+    ROW_SUM = (opts && opts.rowSum) || null;
     if (!files.length) {
       return '<div class="empty-note">No textual changes here.</div>';
     }
@@ -259,9 +273,9 @@
                 // Wholly outside the window: kept as height, not as elements.
                 if (seen <= first || start >= last) {
                   return `<div class="hunk hunk-gap" style="height:${
-                    h.lines.length * ROW_H + HEAD_H}px"></div>`;
+                    spanPx(start, seen) + HEAD_H}px"></div>`;
                 }
-                return renderHunk(file, h, fi, hi, actions, first - start, last - start);
+                return renderHunk(file, h, fi, hi, actions, first - start, last - start, start);
               })
               .join('');
 
@@ -327,7 +341,8 @@
     '<colgroup><col class="c-num"><col class="c-text">' +
     '<col class="c-num"><col class="c-text"></colgroup>';
 
-  function splitHunk(file, hunk, fileIndex, hunkIndex, actions, from = 0, to = Infinity) {
+  function splitHunk(file, hunk, fileIndex, hunkIndex, actions, from = 0, to = Infinity,
+                     base = 0) {
     const cell = (l, side, ctx) => {
       if (!l) return '<td class="dl-num dl-void"></td><td class="dl-text dl-void"></td>';
       const cls = ctx ? 'dl-ctx' : side === 'left' ? 'dl-del' : 'dl-add';
@@ -362,7 +377,7 @@
          nothing about any single column, so they collapsed to equal quarters
          and the left side slid into the middle of the pane. */
       '<table class="difftable split">' + SPLIT_COLS + '<tbody>' +
-      gapRow(lo * ROW_H) + rows + gapRow((all.length - hi) * ROW_H) +
+      gapRow(spanPx(base, base + lo)) + rows + gapRow(spanPx(base + hi, base + all.length)) +
       '</tbody></table>' +
       '</div>'
     );
@@ -373,6 +388,7 @@
     setPaint(opts);
     if (opts && opts.rowH) ROW_H = opts.rowH;
     if (opts && opts.headH) HEAD_H = opts.headH;
+    ROW_SUM = (opts && opts.rowSum) || null;
     if (!files.length) return '<div class="empty-note">No textual changes here.</div>';
     const first = opts && Number.isFinite(opts.first) ? opts.first : 0;
     const last = opts && Number.isFinite(opts.last) ? opts.last : Infinity;
@@ -392,9 +408,9 @@
                 seen += n;
                 if (seen <= first || start >= last) {
                   return `<div class="hunk hunk-gap" style="height:${
-                    n * ROW_H + HEAD_H}px"></div>`;
+                    spanPx(start, seen) + HEAD_H}px"></div>`;
                 }
-                return splitHunk(file, h, fi, hi, actions, first - start, last - start);
+                return splitHunk(file, h, fi, hi, actions, first - start, last - start, start);
               })
               .join('');
         return (
