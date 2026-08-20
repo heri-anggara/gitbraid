@@ -2372,9 +2372,20 @@ textarea {
 /* Switched on, a long line folds instead of running off the side. */
 .fv-body.wrap .dl-text { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 
-/* Side-by-side: two number/text pairs, with a rule down the middle. */
-.difftable.split { table-layout: fixed; width: 100%; }
-.difftable.split td.dl-text { width: 50%; }
+/* Side-by-side: two number/text pairs, with a rule down the middle.
+
+   The halves are fixed so the rule stays put as you scroll — with automatic
+   widths the divider would shift every time a longer line entered the window.
+   Fixed halves cannot grow, though, and an unwrapped line does not fold, so a
+   long line used to paint straight over the other side. The table is widened to
+   the longest line in the diff instead and the pane scrolls sideways, which is
+   what the unified view has always done. --split-cols is that length in
+   characters, set when the diff is loaded. */
+.difftable.split {
+  table-layout: fixed;
+  width: max(100%, calc(88px + var(--split-cols, 0) * 2ch));
+}
+.difftable.split td.dl-text { width: calc(50% - 44px); }
 .difftable.split td:nth-child(3) { border-left: 1px solid var(--line); }
 .dl-void { background: var(--surface); opacity: .35; }
 

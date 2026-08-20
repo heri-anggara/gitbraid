@@ -2107,6 +2107,39 @@ const DIFF_OVERSCAN = 40;
    takes space of its own, so a row's offset is not its index times a row
    height — getting that wrong puts the window a header's worth further up with
    every hunk passed. */
+/* Side-by-side draws a different number of rows from the same lines, so this
+   has to count the mode on screen. Counting the wrong one put the change map's
+   marks and the window's edges at offsets the pane never had. */
+const rowsInHunk = (h) =>
+  viewer.split ? window.Diff.pairCount(h) : h.lines.length;
+
+/* The longest line in the diff, in characters, published to the stylesheet so
+   the side-by-side table can be made wide enough for it. Measured once per
+   diff: it does not change with scrolling, and walking every line on each
+   frame would undo the point of drawing only a window. */
+function setSplitWidth() {
+  let max = 0;
+  for (const f of state.diffFiles) {
+    for (const h of f.hunks || []) {
+      for (const l of h.lines) {
+        // A tab occupies a tab stop, not one column.
+        const tabs = (l.text.match(/\t/g) || []).length;
+        const n = l.text.length + tabs * ((prefs.tabSize || 4) - 1);
+        if (n > max) max = n;
+      }
+    }
+  }
+  // A little slack, and a ceiling so one runaway line cannot make the pane
+  // scroll for a mile.
+  $('fv-body').style.setProperty('--split-cols', String(Math.min(max + 2, 4000)));
+}
+
+function diffRowTotal() {
+  return viewer.split
+    ? window.Diff.rowCountSplit(state.diffFiles)
+    : window.Diff.rowCount(state.diffFiles);
+}
+
 function diffLayout() {
   const hunks = [];
   let top = 0;
@@ -2116,9 +2149,10 @@ function diffLayout() {
     if (manyFiles) top += rowSize.fileHead;
     for (const h of f.hunks || []) {
       top += rowSize.head;
-      hunks.push({ rowStart: rows, rows: h.lines.length, top });
-      rows += h.lines.length;
-      top += h.lines.length * rowSize.row;
+      const n = rowsInHunk(h);
+      hunks.push({ rowStart: rows, rows: n, top });
+      rows += n;
+      top += n * rowSize.row;
     }
   }
   return { hunks, rows, height: top };
@@ -2158,15 +2192,16 @@ function diffNeed() {
   };
 }
 
-/* Side-by-side pairs rows, and wrapping makes a row as tall as it needs to be —
-   neither leaves rows countable, and a window has to be counted. Those two draw
-   whole, as they always did. */
+/* Wrapping makes a row as tall as it needs to be, and how tall that is depends
+   on the width it is drawn at — not something a window can be counted from. It
+   alone draws whole. */
 const diffIsWindowed = () =>
-  Boolean(diffView) && !viewer.split && !viewer.wrap && diffView.rows > 600;
+  Boolean(diffView) && !viewer.wrap && diffView.rows > 600;
 
 function paintDiff() {
   if (!diffView) return;
   const body = $('fv-body');
+  diffView.rows = diffRowTotal();
   let win = { first: 0, last: Infinity };
   if (diffIsWindowed()) {
     const need = diffNeed();
@@ -2177,11 +2212,11 @@ function paintDiff() {
   }
   diffView.shown = win;
 
+  const opts = { ...diffView.opts, first: win.first, last: win.last,
+                 rowH: rowSize.row, headH: rowSize.head };
   body.innerHTML = viewer.split
-    ? window.Diff.renderSplit(state.diffFiles, diffView.actions, diffView.opts)
-    : window.Diff.render(state.diffFiles, diffView.actions,
-        { ...diffView.opts, first: win.first, last: win.last,
-          rowH: rowSize.row, headH: rowSize.head });
+    ? window.Diff.renderSplit(state.diffFiles, diffView.actions, opts)
+    : window.Diff.render(state.diffFiles, diffView.actions, opts);
 
   // Measure what was actually drawn, so the next window is cut correctly.
   const row = body.querySelector('.difftable tr:not(.dl-gap)');
@@ -2231,11 +2266,18 @@ function indexBlocks() {
     let i = 0;
     for (const f of state.diffFiles) {
       for (const h of f.hunks || []) {
-        for (const l of h.lines) {
-          if (l.type === 'add' || l.type === 'del') {
+        /* Side-by-side puts a removal and the addition that replaced it on one
+           row, so walking the lines would count rows the pane never drew. */
+        const rows = viewer.split
+          ? window.Diff.pairRows(h).map((r) => ({
+              add: Boolean(r.right) && !r.ctx, del: Boolean(r.left) && !r.ctx }))
+          : h.lines.map((l) => ({ add: l.type === 'add', del: l.type === 'del' }));
+        for (const r of rows) {
+          if (r.add || r.del) {
             if (!mark) open(i);
             mark.last = i;
-            if (l.type === 'add') mark.add += 1; else mark.del += 1;
+            if (r.add) mark.add += 1;
+            if (r.del) mark.del += 1;
           } else {
             mark = null;
           }
@@ -2494,9 +2536,10 @@ async function showFileDiff() {
   diffView = {
     actions,
     opts: { path: f.path, highlight: viewer.syntax },
-    rows: window.Diff.rowCount(state.diffFiles),
+    rows: diffRowTotal(),
     shown: null,
   };
+  setSplitWidth();
   $('fv-body').scrollTop = 0;
   paintDiff();
   indexBlocks();
@@ -5171,6 +5214,8 @@ async function showCompare() {
   $('fv-stage-tools').hidden = true;
   syncViewerToggles();
   const opts = { path: '', highlight: false };   // a comparison spans many files
+  diffView = null;
+  setSplitWidth();
   $('fv-body').innerHTML = state.diffFiles.length
     ? (viewer.split ? window.Diff.renderSplit(state.diffFiles, [], opts)
                     : window.Diff.render(state.diffFiles, [], opts))
