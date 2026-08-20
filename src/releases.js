@@ -7,6 +7,44 @@
  */
 window.Releases = [
   {
+    version: '0.4.0',
+    date: '2026-08-20',
+    title: 'The diff pane keeps up',
+    summary:
+      'A large diff now draws only the rows you can see, in every view it has. '
+      + 'And when a git command fails, it says so properly instead of in a line '
+      + 'of status text that the next message wipes away.',
+    sections: [
+      {
+        heading: 'Large diffs',
+        items: [
+          'Only the rows on screen are drawn. A file with thousands of changed lines used to put tens of thousands of elements in the document and the browser laid out every one of them on each scroll: a 12,037-row diff held a median frame of 93 to 112 ms, about nine frames a second. It is 7 ms now, with 1,168 elements in place of 168,235. The rows left out keep their space, so the scrollbar keeps its length and nothing moves under the pointer.',
+          'Side-by-side does the same. It was left out at first on the grounds that its rows are not countable — they are: a run of removals beside a run of additions is as many rows as the longer of the two. That view went from 64.1 ms a frame to 7.9.',
+          'So does wrapping, which is the awkward one, because wrapped rows are not all the same height. Each row is measured once, in a hidden column of the same width under the same folding rules — one layout pass rather than a full draw, 182 ms against 786. On a 5,848-row wrapped side-by-side diff: 35.1 ms a frame down to 7, and pressing the Wrap button 786 ms down to 268.',
+          'Below about six hundred rows nothing changes. That threshold was measured, not guessed: a realistic diff spread over 66 hunks is only 529 rows and already ran at 7.1 ms, where the bookkeeping would cost more than it saves.',
+        ],
+      },
+      {
+        heading: 'When a git command fails',
+        items: [
+          'A failed push, pull, merge or anything else opens a dialog naming what was being attempted, with the line that actually explains why — not the first line, because git opens a rejected push with the remote URL and buries the reason three lines down. The whole of git’s output follows, in its original order with nothing dropped, hints included, and it can be selected and copied.',
+          'Git-Flow refuses a version number that is already tagged before touching anything. It used to fail at the tagging step, after production had already been merged, leaving main moved, no tag, development not updated and the branch still there.',
+          'The Finish dialog opens straight away. It was asking the remote whether the branch existed before showing anything, so on a slow network it sat for about three seconds looking like nothing had happened. It asks after the dialog is up, and fills in the answer when it arrives: 2,930 ms down to 10.',
+        ],
+      },
+      {
+        heading: 'Reading a diff',
+        items: [
+          '"Wrap long lines" does something. Both the rule and the rule it was meant to switch to said the same thing, so lines always wrapped whatever the setting said.',
+          'Side-by-side keeps its two halves the same width and its divider in the middle at every scroll position. It had been taking column widths from whichever row came first, which after scrolling is a spacer, so the columns collapsed to equal quarters and the left half slid into the middle of the pane.',
+          'A line too long for its half is cut off at the divider with an ellipsis rather than painted across the other side. Wrap long lines shows the rest.',
+          'The pane has a horizontal scrollbar of its own beneath it, always in reach. The native one sits at the bottom of the content, which on a long diff is a mile below where you are reading.',
+          'The change map on the right is now the pane’s scrollbar as well as its map, and can be dragged like one. The native scrollbar beside it is gone: two indicators of one position, a few pixels apart, could only ever agree by accident — and the box marking your place had been hanging past the end of the strip, because its minimum height was never taken out of the distance it travels.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.3.1',
     date: '2026-08-19',
     title: 'Things that were quietly wrong',

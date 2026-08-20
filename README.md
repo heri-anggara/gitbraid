@@ -27,13 +27,13 @@ runtime dependencies.
 
 ## Download
 
-Latest release: **v0.3.1**
+Latest release: **v0.4.0**
 
 | Platform | File | Notes |
 |---|---|---|
-| **Debian / Ubuntu** | [`gitbraid_0.3.1_amd64.deb`](https://github.com/heri-anggara/gitbraid/releases/download/v0.3.1/gitbraid_0.3.1_amd64.deb) | Installs into the applications menu |
-| **Any Linux** | [`GitBraid-0.3.1.AppImage`](https://github.com/heri-anggara/gitbraid/releases/download/v0.3.1/GitBraid-0.3.1.AppImage) | One file, no install, updates itself |
-| **Windows** | [`GitBraid Setup 0.3.1.exe`](https://github.com/heri-anggara/gitbraid/releases/download/v0.3.1/GitBraid.Setup.0.3.1.exe) | Unsigned — see the note below |
+| **Debian / Ubuntu** | [`gitbraid_0.4.0_amd64.deb`](https://github.com/heri-anggara/gitbraid/releases/download/v0.4.0/gitbraid_0.4.0_amd64.deb) | Installs into the applications menu |
+| **Any Linux** | [`GitBraid-0.4.0.AppImage`](https://github.com/heri-anggara/gitbraid/releases/download/v0.4.0/GitBraid-0.4.0.AppImage) | One file, no install, updates itself |
+| **Windows** | [`GitBraid Setup 0.4.0.exe`](https://github.com/heri-anggara/gitbraid/releases/download/v0.4.0/GitBraid.Setup.0.4.0.exe) | Unsigned — see the note below |
 
 Older versions and full notes live on the [releases page](https://github.com/heri-anggara/gitbraid/releases).
 
@@ -103,7 +103,7 @@ log of every `git` command it ran, so nothing it does is a mystery.
 **Debian / Ubuntu**
 
 ```bash
-sudo apt install ./gitbraid_0.3.1_amd64.deb
+sudo apt install ./gitbraid_0.4.0_amd64.deb
 ```
 
 Then find GitBraid in your applications menu, or run `gitbraid`.
@@ -111,8 +111,8 @@ Then find GitBraid in your applications menu, or run `gitbraid`.
 **AppImage**
 
 ```bash
-chmod +x GitBraid-0.3.1.AppImage
-./GitBraid-0.3.1.AppImage
+chmod +x GitBraid-0.4.0.AppImage
+./GitBraid-0.4.0.AppImage
 ```
 
 **To remove**
