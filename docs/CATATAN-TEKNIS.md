@@ -334,12 +334,37 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   ditaruh pada tinggi 240.049px sementara panelnya cuma 180.049px — meleset
   makin jauh ke bawah. Sekarang model dan panel sepakat dalam 2px
 - Kolom split dikunci separuh-separuh supaya garis pemisahnya tidak bergeser
-  saat digulir. Kolom terkunci tidak bisa melar, dan baris yang tidak dibungkus
-  tidak melipat — jadi baris panjang menimpa sisi seberangnya. Tabelnya kini
-  dilebarkan sampai baris terpanjang di diff itu (`--split-cols`, dihitung
-  sekali per diff) dan panelnya menggulir ke samping, persis seperti unified
+  saat digulir dan **kedua sisi tetap di layar** — itu seluruh alasan orang
+  membaca diff dengan cara ini. Kolom terkunci tidak bisa melar, dan baris yang
+  tidak dibungkus tidak melipat, jadi baris panjang dipotong di pemisah dan
+  diberi elipsis. Saklar wrap menampilkan sisanya
+- Percobaan pertama melebarkan tabelnya sampai baris terpanjang supaya panelnya
+  menggulir ke samping seperti unified. **Itu keliru**: sisi seberangnya
+  terdorong keluar layar dan sebagian besar baris cuma memandangi kolom kosong —
+  tumpang-tindihnya hilang dengan cara membuang perbandingannya
+- Memotong itu ada harganya: 8,7 ms jadi 14,2 ms per frame di diff 12.000 baris.
+  Elipsisnya sendiri gratis (diukur terpisah: 14,1 ms tanpa elipsis) — yang
+  berbayar `overflow: hidden`-nya. Masih di dalam anggaran 16,7 ms
+- Tajuk hunk dipaksa satu baris. Ia membawa nama fungsi di belakang nomor baris,
+  dan pada berkas berbaris sangat panjang itu melipat jadi dua baris — sementara
+  jendela mengukur satu tajuk lalu menganggap sisanya sama tinggi
 - **Wrap masih digambar utuh**: tinggi barisnya bergantung pada lebar tempat ia
   digambar, dan itu bukan sesuatu yang bisa dihitung di depan
+
+**Peta perubahan sebagai palang gulir**
+- Strip di kanan panel diff kini satu-satunya penunjuk posisi: palang gulir
+  tegak bawaan disembunyikan. Dua penunjuk hal yang sama berdampingan cuma bisa
+  sejajar secara kebetulan, dan memang tidak sejajar
+- Kotak posisinya dulu ditaruh dengan persen (`scrollTop / tinggiIsi`) sementara
+  tingginya dijepit minimum lewat CSS. Sebuah minimum harus diambil dari jarak
+  tempuhnya: di dasar berkas kotak itu menggantung **8px lewat ujung strip**,
+  sedangkan palang gulir di sebelahnya berhenti pas. Sekarang dihitung dalam
+  piksel dengan rumus yang dipakai setiap palang gulir — dan ketika tingginya
+  tidak sedang dijepit, rumus itu menyederhana persis jadi persen yang lama
+- Strip-nya bisa diseret seperti palang gulir sungguhan, dengan kelonggaran 4px
+  supaya klik pada penanda tetap terbaca sebagai klik
+- Penandanya sendiri ternyata **tidak pernah salah** — pada diff uji mereka
+  duduk di 36,6%–44,1% dan 90,5%, persis di mana perubahannya berada
 
 **Saat aksi git gagal**
 - Kegagalan aksi git memunculkan **dialog**, bukan cuma satu baris di status bar

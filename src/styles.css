@@ -2254,7 +2254,14 @@ textarea {
   width: 18px;
   background: var(--bg);
   cursor: pointer;
+  /* It is dragged like a scrollbar, so the pointer must not select anything. */
+  touch-action: none;
 }
+
+/* The strip does this pane's scrolling, so the native bar beside it goes: two
+   indicators of one position, a few pixels apart, only ever look broken. The
+   horizontal one stays — nothing else shows how far a long line runs. */
+.fv-body::-webkit-scrollbar:vertical { width: 0; }
 .fv-marks { position: absolute; inset: 0; }
 
 /* The part of the file on screen, so the strip answers "where am I" as well as
@@ -2263,7 +2270,8 @@ textarea {
   position: absolute;
   left: 1px;
   right: 1px;
-  min-height: 12px;
+  /* Height and offset are both set in pixels from paintViewport: a minimum
+     height has to be taken out of the travel, which per cent cannot do. */
   border-radius: 4px;
   background: var(--row-sel);
   box-shadow: inset 0 0 0 1px var(--line-strong);
@@ -2374,18 +2382,24 @@ textarea {
 
 /* Side-by-side: two number/text pairs, with a rule down the middle.
 
-   The halves are fixed so the rule stays put as you scroll — with automatic
-   widths the divider would shift every time a longer line entered the window.
-   Fixed halves cannot grow, though, and an unwrapped line does not fold, so a
-   long line used to paint straight over the other side. The table is widened to
-   the longest line in the diff instead and the pane scrolls sideways, which is
-   what the unified view has always done. --split-cols is that length in
-   characters, set when the diff is loaded. */
-.difftable.split {
-  table-layout: fixed;
-  width: max(100%, calc(88px + var(--split-cols, 0) * 2ch));
+   The halves are fixed and each takes half the pane, so the rule down the middle
+   stays where it is and both sides stay on screen — which is the entire point of
+   reading a diff this way. Widening the table to the longest line instead, so
+   the pane could scroll sideways, pushed the far side out of view and left most
+   rows staring at a wall of empty column: it fixed the overlap by taking away
+   the comparison.
+
+   A fixed half cannot grow, and an unwrapped line does not fold, so a long line
+   is cut off at the divider and marked with an ellipsis rather than painted
+   across its neighbour. Turning on Wrap long lines shows the rest. */
+.difftable.split { table-layout: fixed; width: 100%; }
+.difftable.split td.dl-text {
+  width: calc(50% - 44px);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.difftable.split td.dl-text { width: calc(50% - 44px); }
+/* Wrapped, there is nothing to cut off and nothing to mark. */
+.fv-body.wrap .difftable.split td.dl-text { overflow: visible; text-overflow: clip; }
 .difftable.split td:nth-child(3) { border-left: 1px solid var(--line); }
 .dl-void { background: var(--surface); opacity: .35; }
 
@@ -3118,7 +3132,21 @@ mark {
   padding: 3px 12px;
   background: rgba(124, 140, 255, .05);
 }
-.hunk-range { font-family: var(--mono); font-size: 11px; color: var(--accent); opacity: .8; }
+/* One line, always. A hunk header carries the enclosing function after the line
+   numbers, and on a file with very long lines that ran to a second line — which
+   would be untidy on its own, but the window that decides which rows to draw
+   measures one header and assumes the rest match, so headers of differing
+   heights would walk the window off its rows. */
+.hunk-range {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  opacity: .8;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .hunk-actions { margin-left: auto; display: flex; gap: 4px; opacity: 0; transition: opacity .1s; }
 .hunk:hover .hunk-actions { opacity: 1; }
 .hunk-btn {
