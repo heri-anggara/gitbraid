@@ -882,6 +882,8 @@ function buildMenu() {
       submenu: [
         { label: 'Keyboard Shortcuts', accelerator: 'CmdOrCtrl+/', click: () => send('shortcuts') },
         { type: 'separator' },
+        // Next to the release notes, since both answer a question about versions.
+        { label: 'Check for Updates…', click: () => send('check-updates') },
         { label: 'View Release Notes', click: () => send('release-notes') },
         ...(IS_MAC ? [] : [{ label: 'About GitBraid', click: () => send('about') }]),
       ],

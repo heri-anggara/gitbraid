@@ -4334,6 +4334,7 @@ const markChecked = () => {
    failures are worth saying out loud. */
 async function checkForUpdates({ quiet = false } = {}) {
   markChecked();
+  if (!quiet) setStatus('Checking for updates…');
   const res = await window.gitbraid.invoke('update:check');
   if (!res.ok) {
     if (!quiet) setStatus(firstLine(res.error), 'error');
@@ -4341,7 +4342,12 @@ async function checkForUpdates({ quiet = false } = {}) {
   }
   update = res.data.newer ? res.data : null;
   paintUpdateFlag();
-  if (!quiet && !update) setStatus(`GitBraid ${res.data.current} is the latest release`, 'ok');
+  /* Asked for by hand, "there is one" has to be the offer itself. Marking the
+     status bar and saying nothing answers a question nobody asked. */
+  if (!quiet) {
+    if (update) offerUpdate();
+    else setStatus(`GitBraid ${res.data.current} is the latest release`, 'ok');
+  }
   return res.data;
 }
 
@@ -4571,6 +4577,7 @@ const MENU_ACTIONS = {
   'repo-manager': () => ($('app').classList.contains('managing')
     ? closeRepoManager() : openRepoManager()),
   about: openAbout,
+  'check-updates': () => (update ? offerUpdate() : checkForUpdates()),
   'release-notes': () => ($('app').classList.contains('reading-notes')
     ? closeNotes() : openNotes()),
   'terminal-panel': toggleTerm,     // the panel inside the window
@@ -4587,7 +4594,7 @@ const MENU_ACTIONS = {
 
 /* Anything that opens a dialog is skipped while one is already up — the
    modal is a single shared element. */
-const DIALOG_ACTIONS = new Set(['clone', 'init', 'shortcuts']);
+const DIALOG_ACTIONS = new Set(['clone', 'init', 'shortcuts', 'check-updates']);
 
 window.gitbraid.on('menu:action', (msg) => {
   if (DIALOG_ACTIONS.has(msg.action) && !$('modal').hidden) return;

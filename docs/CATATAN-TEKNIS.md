@@ -902,7 +902,13 @@ Content Security Policy yang ketat. Semua yang masuk ke DOM lewat innerHTML
 sudah di-escape, termasuk tanda kutip — nama branch dan path file boleh
 mengandungnya, dan keduanya dipakai di dalam atribut.
 
-**Pembaruan dalam aplikasi.** Tombol versi di status bar mendapat titik kalau ada
+**Pembaruan dalam aplikasi.** Ada dua jalan masuk: **Help ▸ Check for Updates…**
+untuk bertanya kapan saja, dan tombol versi di status bar yang mendapat titik
+kalau ada rilis lebih baru. Ditanya lewat menu, jawaban "ada" langsung berupa
+tawarannya — menandai status bar lalu diam adalah menjawab pertanyaan yang tidak
+diajukan siapa pun.
+
+Tombol versi di status bar mendapat titik kalau ada
 rilis lebih baru; mengkliknya menampilkan catatan rilisnya dan satu tombol.
 Pemeriksaannya sekali sehari saat aplikasi dibuka, ada saklarnya di Preferences,
 dan yang diketahui GitHub hanya alamat IP Anda serta fakta bahwa GitBraid
