@@ -71,6 +71,7 @@ vm.runInNewContext(parserSrc + '\nthis.parseStatus=parseStatus; this.parseLog=pa
    markup, so what it refuses to do matters as much as what it does. */
 // Read once here; the path tests further down lift their own functions from it.
 const rendererSrc = fs.readFileSync(path.join(__dirname, '..', 'src/renderer.js'), 'utf8');
+const styleSrc = fs.readFileSync(path.join(__dirname, '..', 'src/styles.css'), 'utf8');
 const notesSrc = rendererSrc.slice(
   rendererSrc.indexOf('function notesHtml(text) {'),
   rendererSrc.indexOf('\n}\n', rendererSrc.indexOf('function notesHtml(text) {')) + 3
@@ -371,6 +372,34 @@ check('only the first hunk was staged',
     .map((m) => Number(m[1]));
   check('side-by-side spacers use the measured heights too',
     spGaps.length === 2 && spGaps[0] === rowSum[5], spGaps.join('/'));
+}
+
+console.log('\nclicking a tab while a panel covers the window');
+{
+  /* Every one of these hides .main. Left open across a tab switch, the switch
+     happens and nothing on screen changes — which reads exactly like a tab that
+     cannot be clicked. */
+  const covering = [...styleSrc.matchAll(/\.app\.([a-z-]+) \.main,/g)].map((m) => m[1]);
+  check('the panels that cover the window are the ones expected',
+    ['managing', 'reading-notes', 'reading-fhist', 'prefs-open']
+      .every((c) => covering.includes(c)), covering.join(','));
+
+  const act = rendererSrc.slice(
+    rendererSrc.indexOf('async function activateTab(id)'),
+    rendererSrc.indexOf('parkTab();', rendererSrc.indexOf('async function activateTab(id)'))
+  );
+  for (const [what, call] of [
+    ['file history', 'closeFileHistory()'],
+    ['release notes', 'closeNotes()'],
+    ['preferences', 'closePrefs()'],
+    ['the repository manager', 'closeRepoManager()'],
+  ]) {
+    check(`switching tabs closes ${what}`, act.includes(call), act.length);
+  }
+  check('file history is closed before the tab is parked, while it is still in front',
+    act.indexOf('closeFileHistory()') < act.length && act.indexOf('closeFileHistory()') >= 0);
+  check('and before any of the others, since it is holding the diff panel',
+    act.indexOf('closeFileHistory()') < act.indexOf('closeNotes()'));
 }
 
 console.log('\ndragging a tab into place');

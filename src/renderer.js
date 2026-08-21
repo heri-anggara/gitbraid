@@ -828,6 +828,21 @@ function renderShell() {
 async function activateTab(id) {
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return;
+  /* Clicking a tab is a request to see that repository, so whatever is covering
+     the window gets out of the way first. Left open, these panels went on
+     showing the old repository while the new tab was already active underneath
+     — the switch happened and nothing on screen changed, which reads exactly
+     like a tab that cannot be clicked.
+
+     File history goes first of all, because closing it hands the diff panel
+     back to the tab it was borrowed from, and that has to happen while that tab
+     is still the one in front. */
+  if (!$('fhist').hidden) closeFileHistory();
+  if (!$('notes').hidden) closeNotes();
+  if (!$('about').hidden) closeAbout();
+  if ($('app').classList.contains('prefs-open')) closePrefs();
+  if ($('app').classList.contains('managing')) closeRepoManager();
+
   if (activeId && activeId !== id) parkTab();
 
   activeId = id;
