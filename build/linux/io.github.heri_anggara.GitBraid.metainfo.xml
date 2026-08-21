@@ -96,6 +96,16 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.5.1" date="2026-08-21">
+      <description>
+        <p>
+          Clicking a tab works from anywhere. With file history, release notes,
+          preferences or the repository manager open over the window, the switch
+          happened but nothing on screen changed — the panel was still covering
+          it, still showing the repository you had left.
+        </p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-08-21">
       <description>
         <p>

@@ -7,6 +7,24 @@
  */
 window.Releases = [
   {
+    version: '0.5.1',
+    date: '2026-08-21',
+    title: 'Clicking a tab works from anywhere',
+    summary:
+      'One fix, for something 0.5.0 introduced the day before: with a panel '
+      + 'open over the window, clicking a tab appeared to do nothing.',
+    sections: [
+      {
+        heading: 'The fix',
+        items: [
+          'File history, release notes, preferences and the repository manager each cover the main view. With one of them open, clicking a tab did switch — the new tab really was active underneath — but nothing on screen moved, because the panel was still there, still showing the repository you had just left. It read exactly like a tab that could not be clicked.',
+          'Clicking a tab is a request to see that repository, so anything covering it now gets out of the way first. File history goes before the rest, because closing it hands the diff panel back to the tab it was borrowed from, and that has to happen while that tab is still in front.',
+          'File history arrived in 0.5.0, which is what made this feel new; the other three panels have behaved this way for as long as they have existed.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.5.0',
     date: '2026-08-21',
     title: 'Work on several files at once, and read where one came from',
