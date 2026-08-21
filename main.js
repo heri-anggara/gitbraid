@@ -1074,6 +1074,21 @@ handle('repos:wip', async (paths) => {
 
 let win = null;
 
+/* The window's own icon, which is what a dock draws before it has worked out
+   which launcher the window belongs to.
+
+   It has to be a real file. Packaged, __dirname is a path *inside* app.asar —
+   an archive, not a directory — and Electron loads this one through native code
+   that reads the filesystem, not through Node. So it found nothing and the
+   window carried no icon at all, measured as an empty _NET_WM_ICON. From source
+   __dirname is a real folder, which is exactly why this never showed in
+   development. The packaged copy is placed beside the archive instead. */
+function windowIcon() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.png')
+    : path.join(__dirname, 'build', 'icons', '256x256.png');
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1440,
@@ -1082,7 +1097,7 @@ function createWindow() {
     minHeight: 600,
     backgroundColor: '#0f1118',
     title: 'GitBraid',
-    icon: path.join(__dirname, 'build', 'icons', '256x256.png'),
+    icon: windowIcon(),
     show: false,   // revealed once the renderer knows which page to draw
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
