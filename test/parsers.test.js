@@ -373,6 +373,27 @@ check('only the first hunk was staged',
     spGaps.length === 2 && spGaps[0] === rowSum[5], spGaps.join('/'));
 }
 
+console.log('\nthe desktop entry');
+{
+  /* The dock matches a window to its launcher by the window's WM_CLASS, and the
+     match is case-sensitive. Electron takes WM_CLASS from the name of the
+     executable, so StartupWMClass has to be that name exactly — it said
+     "GitBraid" while every window reported "gitbraid", and the shell fell back
+     to guessing, which is why the icon arrived late. */
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  const exe = pkg.build.executableName || pkg.name;
+  const desktop = pkg.build.linux.desktop;
+  check('StartupWMClass is exactly the executable name',
+    desktop.StartupWMClass === exe, `${desktop.StartupWMClass} vs ${exe}`);
+  check('and it is spelled the way a window would report it',
+    desktop.StartupWMClass === desktop.StartupWMClass.toLowerCase(),
+    desktop.StartupWMClass);
+  check('the launcher still announces itself as starting',
+    desktop.StartupNotify === 'true');
+  check('the icon is named, so the theme has something to look up',
+    Boolean(pkg.build.linux.icon));
+}
+
 console.log('\nfile history and ignoring');
 {
   /* The name a file had at each commit is read out of --name-status. Asking a

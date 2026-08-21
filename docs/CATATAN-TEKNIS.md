@@ -413,6 +413,19 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   yang sama, jadi tandanya harus beda: yang terbuka berlatar penuh, yang
   terpilih diberi pita di tepi kiri
 
+**Ikon di dock terlambat muncul**
+- Dock mencocokkan jendela dengan peluncurnya lewat `WM_CLASS` jendela itu, dan
+  pencocokannya **peka huruf besar-kecil**
+- Electron mengambil `WM_CLASS` dari nama berkas biner, yaitu `gitbraid` —
+  terukur dengan `xprop`: `WM_CLASS(STRING) = "gitbraid", "gitbraid"`. Berkas
+  desktop-nya menyatakan `StartupWMClass=GitBraid`, jadi cocokan langsungnya
+  gagal dan shell jatuh ke tebakan cadangan (mencocokkan `WM_CLASS` dengan nama
+  berkas desktop). Ikonnya tetap muncul, hanya terlambat — itu persis gejalanya
+- Diuji supaya tidak melenceng lagi: `StartupWMClass` harus sama persis dengan
+  nama biner, dan harus huruf kecil semua
+- Yang **bukan** penyebabnya, sudah diperiksa: berkas ikon lengkap di kedelapan
+  ukuran hicolor, dan tidak ada entri desktop kembar yang bentrok
+
 **Ignore, menyesuaikan keadaan berkas**
 - git **hanya** mengabaikan berkas tak terlacak. Menulis berkas terlacak ke
   `.gitignore` tidak berefek apa pun — jadi menunya menawarkan hal berbeda untuk
