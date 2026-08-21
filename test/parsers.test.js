@@ -373,6 +373,37 @@ check('only the first hunk was staged',
     spGaps.length === 2 && spGaps[0] === rowSum[5], spGaps.join('/'));
 }
 
+console.log('\ndragging a tab into place');
+{
+  /* The order lives in `tabs` and the strip is drawn from it, so a drag moves
+     the element and the array is read back from the document afterwards. One
+     direction only — the two cannot disagree halfway. */
+  const reorder = (arr, domOrder) =>
+    [...arr].sort((a, b) => domOrder.indexOf(a.id) - domOrder.indexOf(b.id)).map((t) => t.id);
+  const four = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }];
+  check('the array follows the strip', reorder(four, ['b', 'c', 'a', 'd']).join('') === 'bcad');
+  check('a tab dragged to the front lands at the front',
+    reorder(four, ['d', 'a', 'b', 'c']).join('') === 'dabc');
+  check('an unchanged strip leaves the order alone',
+    reorder(four, ['a', 'b', 'c', 'd']).join('') === 'abcd');
+
+  /* The faults this cost, both of which stopped the strip answering at all. */
+  check('a stale "just dragged" mark cannot outlive its click',
+    /if \(tabDrag === 'dropped'\) tabDrag = null;/.test(rendererSrc));
+  check('the drag is let go of before anything that can fail',
+    /tabDrag = moved \? 'dropped' : null;[\s\S]{0,200}releasePointerCapture/.test(rendererSrc));
+  check('taking and releasing the pointer are both allowed to fail',
+    (rendererSrc.match(/try \{ tabsStrip\(\)\.(set|release)PointerCapture/g) || []).length === 2);
+  check('redrawing stands aside for a live drag, not for a leftover',
+    /tabDrag !== 'dropped' && tabDrag\.moved/.test(rendererSrc));
+  check('the close button is a button, not a drag handle',
+    /if \(e\.target\.closest\('\[data-close\]'\)\) return;/.test(rendererSrc));
+  check('a click that wanders a few pixels is still a click',
+    /Math\.abs\(dx\) < 5/.test(rendererSrc));
+  check('the new order is written down, not only shown',
+    /const order = \[\.\.\.tabsStrip\(\)[\s\S]{0,200}saveTabs\(\)/.test(rendererSrc));
+}
+
 console.log('\nfinishing an update');
 {
   /* Downloading used to end in app.quit(). Whatever was typed into a commit
