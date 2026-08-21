@@ -96,6 +96,25 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.5.0" date="2026-08-21">
+      <description>
+        <p>
+          Files can be picked in groups and acted on together: staged, discarded,
+          stashed or saved as a patch, with every menu entry naming how many it
+          will touch.
+        </p>
+        <p>
+          Any file can be ignored — adapting to whether git already tracks it —
+          or followed back through its history in a panel of its own, renames
+          included, carrying the whole diff viewer.
+        </p>
+        <p>
+          Tabs can be dragged into the order you want. A finished update asks
+          before restarting rather than taking the window, and a half-written
+          commit message now survives a restart.
+        </p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-08-20">
       <description>
         <p>

@@ -7,6 +7,54 @@
  */
 window.Releases = [
   {
+    version: '0.5.0',
+    date: '2026-08-21',
+    title: 'Work on several files at once, and read where one came from',
+    summary:
+      'Files can be picked in groups and acted on together, any file can be '
+      + 'ignored or followed back through its history, tabs can be dragged into '
+      + 'the order you want them, and an update no longer takes the window away '
+      + 'the moment it finishes downloading.',
+    sections: [
+      {
+        heading: 'Several files at once',
+        items: [
+          'Ctrl or Cmd click adds and removes, Shift click takes a range, Ctrl+A takes the whole list. A plain click still picks one file and opens it; the modified clicks leave the open diff where it is, because picking a second file is not a request to read it.',
+          'Every menu entry says how many files it will touch — "Discard changes" and "Discard 12 files" are not the same offer, and the difference cannot be undone. Right-clicking outside the selection moves it there first, so the menu never describes files that are not under the pointer.',
+          'Three actions are new: discarding several, stashing several, and saving a patch of them. Discarding separates tracked from untracked, because one restores a file and the other deletes it, and the warning says which is which.',
+        ],
+      },
+      {
+        heading: 'Ignoring, and where a file came from',
+        items: [
+          'Ignoring adapts to what git already knows about the file. An untracked file is simply ignored, with a choice of pattern: the file, everything with its extension, or everything in its folder. A file git already tracks is offered "Stop tracking and ignore" instead, because writing a tracked path into .gitignore changes nothing at all. A deleted file gets neither.',
+          'File history opens a panel of its own: the commits that touched the file on the left, the file at the chosen commit on the right. Renames are followed, and called out on the row where they happened.',
+          'That panel carries the whole diff viewer — side-by-side, wrapping, the change map, jumping between differences — rather than a plainer copy of it.',
+        ],
+      },
+      {
+        heading: 'Tabs',
+        items: [
+          'A tab can be pressed and dragged wherever you want it. The others step aside, and the order is kept for next time.',
+        ],
+      },
+      {
+        heading: 'Updates',
+        items: [
+          'A finished download no longer restarts the app. It asks: restart now, or later — and later means the new version goes in when you close the app anyway, which is the moment a restart costs nothing.',
+          'A half-written commit message now survives that restart, and every other one. It was carried between tabs in memory and lost on closing: nothing wrote it down. It is kept per repository, written as it is typed rather than at closing time, and cleared once committed.',
+          'Release notes in the update dialog are rendered rather than printed raw. The 0.4.0 notes opened with a table, which arrived as a wall of pipes and dashes with asterisks around every emphasised word.',
+        ],
+      },
+      {
+        heading: 'Smaller things',
+        items: [
+          'The dock recognises the window as GitBraid straight away. It matches by the window’s WM_CLASS, which is case-sensitive, and the desktop entry claimed "GitBraid" while every window reports "gitbraid" — so the shell fell back to guessing, and the icon arrived late.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.4.0',
     date: '2026-08-20',
     title: 'The diff pane keeps up',
