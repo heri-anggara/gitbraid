@@ -413,6 +413,33 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   yang sama, jadi tandanya harus beda: yang terbuka berlatar penuh, yang
   terpilih diberi pita di tepi kiri
 
+**Menggeser tab**
+- Tab bisa ditekan-tahan lalu digeser ke posisi mana pun; yang lain menyingkir,
+  dan urutannya tersimpan
+- Memakai pointer event, **bukan** drag-and-drop bawaan peramban — yang bawaan
+  memberi gambar bayangan yang tidak bisa digayakan dan sasaran jatuh yang tidak
+  terlihat. Di sini tab-nya sendiri yang mengikuti kursor
+- Satu arah saja: seretan memindahkan **elemen**, dan array `tabs` dibaca ulang
+  dari dokumen saat dilepas. Kalau keduanya sama-sama diubah, mereka bisa
+  berselisih di tengah jalan
+- Saat elemen berpindah di tata letak, titik acuannya digeser sebesar
+  perpindahan itu — kalau tidak, tab-nya melompat lepas dari tangan
+- Kelonggaran 5px: klik selalu sedikit bergoyang, dan tanpa itu setiap klik jadi
+  seretan satu piksel yang menelan klik yang dimaksud
+- **Dua cacat yang sempat saya buat, keduanya membuat strip berhenti menjawab
+  sama sekali**:
+  - `releasePointerCapture` melempar galat untuk pointer yang tidak sedang
+    ditangkap, dan itu menghentikan penangan `pointerup` di tengah — `tabDrag`
+    tertinggal memegang elemen, dan itu membuat `renderTabs()` jadi tidak
+    berbuat apa-apa untuk sisa sesi. Sekarang seretan dilepas **lebih dulu**,
+    baru hal-hal yang bisa gagal dikerjakan, dan keduanya dibungkus
+  - Penanda "baru saja diseret" menunggu klik yang tidak pernah datang (strip
+    digambar ulang saat dilepas, jadi kliknya tidak punya sasaran), lalu ia
+    menelan klik berikutnya — tombol tutup tab jadi mati. Sekarang penanda itu
+    dihapus oleh tekanan berikutnya
+- Dekat tepi, strip ikut menggulir supaya tab bisa dibawa ke tempat yang sedang
+  tidak terlihat
+
 **Menyelesaikan update**
 - Unduhan **tidak lagi berakhir dengan restart**. Dulu ia langsung
   `app.relaunch(); app.quit()` begitu byte terakhir mendarat — dan update tidak

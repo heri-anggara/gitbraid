@@ -288,6 +288,20 @@ textarea {
 }
 .tabs::-webkit-scrollbar { width: 0; height: 0; }
 
+/* ── dragging a tab into place ── */
+/* Lifted while it is being carried, so it reads as held rather than as one of
+   the row it is passing over. */
+.tab.dragging {
+  z-index: 5;
+  cursor: grabbing;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .35);
+  opacity: .96;
+}
+/* The others must not slide about under their own transitions while the strip
+   is re-ordering them, and nothing may be selected by a hand that is dragging. */
+.tabs.dragging { cursor: grabbing; user-select: none; }
+.tabs.dragging .tab { transition: none; }
+
 .tab {
   position: relative;
   display: flex;

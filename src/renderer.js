@@ -895,6 +895,9 @@ async function showWelcome() {
 }
 
 function renderTabs() {
+  // A redraw mid-drag would replace the element being dragged, and the drag
+  // would end holding nothing. The order is drawn when the drag lets go.
+  if (tabDrag && tabDrag !== 'dropped' && tabDrag.moved) return;
   // The strip stays even with no tabs: settings and identity live on its right
   // and must be reachable from the start page too.
   $('tabs').innerHTML = tabs
@@ -3431,7 +3434,105 @@ const CLOSE_ICON =
   '<path d="M3 3 9 9M9 3 3 9" fill="none" stroke="currentColor" ' +
   'stroke-width="1.8" stroke-linecap="round"/></svg>';
 
+/* ── dragging a tab into place ──
+
+   Done with pointer events rather than the browser's own drag-and-drop, which
+   hands you a ghost image you cannot style and a drop target you cannot see.
+   Here the tab itself follows the pointer and its neighbours step aside.
+
+   The order lives in `tabs`, and the strip is drawn from it, so the drag moves
+   the element and the array is read back from the document when it lets go —
+   one direction, no chance of the two disagreeing halfway. */
+let tabDrag = null;
+
+const tabsStrip = () => $('tabs');
+
+$('tabs').addEventListener('pointerdown', (e) => {
+  /* A drag ends by asking the click that follows to be ignored — but the strip
+     is redrawn on drop, so that click often never arrives and the request would
+     wait there to swallow someone else's. Any new press means the moment it was
+     waiting for has passed. */
+  if (tabDrag === 'dropped') tabDrag = null;
+  if (e.button !== 0) return;
+  // The close button is a button, not a handle.
+  if (e.target.closest('[data-close]')) return;
+  const el = e.target.closest('[data-tab]');
+  if (!el) return;
+  tabDrag = { el, id: el.dataset.tab, startX: e.clientX, moved: false, id_: e.pointerId };
+  // Capture keeps the moves coming when the pointer leaves the strip. It is not
+  // worth failing over: without it the drag still works while the pointer stays.
+  try { tabsStrip().setPointerCapture(e.pointerId); } catch { /* no capture, no matter */ }
+});
+
+$('tabs').addEventListener('pointermove', (e) => {
+  if (!tabDrag || e.pointerId !== tabDrag.id_) return;
+  const dx = e.clientX - tabDrag.startX;
+  /* A few pixels of slack: a click wanders, and every click would otherwise
+     become a one-pixel drag that swallows the click that was meant. */
+  if (!tabDrag.moved && Math.abs(dx) < 5) return;
+  if (!tabDrag.moved) {
+    tabDrag.moved = true;
+    tabDrag.el.classList.add('dragging');
+    tabsStrip().classList.add('dragging');
+  }
+  tabDrag.el.style.transform = `translateX(${dx}px)`;
+
+  /* Past a neighbour's middle, swap with it. Moving the element is what makes
+     the others step aside — they are laid out by the strip, not by us. */
+  const box = tabDrag.el.getBoundingClientRect();
+  const mine = { left: box.left, right: box.right };
+  for (const other of tabsStrip().querySelectorAll('[data-tab]')) {
+    if (other === tabDrag.el) continue;
+    const b = other.getBoundingClientRect();
+    const middle = b.left + b.width / 2;
+    const goRight = mine.right > middle && b.left > box.left;
+    const goLeft = mine.left < middle && b.left < box.left;
+    if (!goRight && !goLeft) continue;
+    const before = tabDrag.el.getBoundingClientRect().left;
+    tabsStrip().insertBefore(tabDrag.el, goRight ? other.nextSibling : other);
+    /* The element just moved in the layout, so the offset that was keeping it
+       under the pointer is now measured from somewhere else. Shifting the
+       origin by the same amount keeps it exactly where the hand left it. */
+    tabDrag.startX += tabDrag.el.getBoundingClientRect().left - before;
+    tabDrag.el.style.transform = `translateX(${e.clientX - tabDrag.startX}px)`;
+    break;
+  }
+
+  /* Near an edge the strip scrolls, so a tab can be taken somewhere the strip
+     is not currently showing. */
+  const strip = tabsStrip().getBoundingClientRect();
+  const edge = 48;
+  if (e.clientX > strip.right - edge) tabsStrip().scrollLeft += 12;
+  else if (e.clientX < strip.left + edge) tabsStrip().scrollLeft -= 12;
+});
+
+for (const done of ['pointerup', 'pointercancel']) {
+  $('tabs').addEventListener(done, (e) => {
+    if (!tabDrag || tabDrag === 'dropped' || e.pointerId !== tabDrag.id_) return;
+    /* The drag is let go of first, and only then are things done that might
+       fail. Releasing a capture that was never taken throws, and when that
+       happened halfway through here it left tabDrag holding an element — which
+       makes renderTabs() a no-op for the rest of the session, so the strip
+       stopped answering to anything at all. */
+    const { el, moved } = tabDrag;
+    tabDrag = moved ? 'dropped' : null;   // remembered for the click that follows
+    el.style.transform = '';
+    el.classList.remove('dragging');
+    tabsStrip().classList.remove('dragging');
+    try { tabsStrip().releasePointerCapture(e.pointerId); } catch { /* already gone */ }
+    if (!moved) return;
+
+    // Read the new order back out of the strip, which is the thing the hand moved.
+    const order = [...tabsStrip().querySelectorAll('[data-tab]')].map((n) => n.dataset.tab);
+    tabs.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+    saveTabs();
+    renderTabs();
+  });
+}
+
 $('tabs').addEventListener('click', (e) => {
+  // A drag ends in a click the browser sends anyway; it must not switch tabs.
+  if (tabDrag === 'dropped') { tabDrag = null; e.stopPropagation(); return; }
   const close = e.target.closest('[data-close]');
   if (close) { e.stopPropagation(); closeTab(close.dataset.close); return; }
   const tab = e.target.closest('[data-tab]');
