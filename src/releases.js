@@ -7,6 +7,25 @@
  */
 window.Releases = [
   {
+    version: '0.5.2',
+    date: '2026-08-21',
+    title: 'Pressing a tab selects it',
+    summary:
+      'A tab pressed with a hand that moved even slightly did not change. This '
+      + 'is the fault behind that; 0.5.1 fixed a different one with the same '
+      + 'symptom.',
+    sections: [
+      {
+        heading: 'The fix',
+        items: [
+          'Selecting a tab waited for the click. A press that wandered more than five pixels was read as the beginning of a drag, and the click that would have selected the tab was thrown away with it — so the tab did not change at all. Six pixels is enough, which on a touchpad, or with any ordinary hand, is most presses.',
+          'Pressing a tab now selects it there and then, the way every browser does. The five pixels of slack go back to deciding only when a drag begins. Measured across presses that move 0, 3, 6, 10 and 20 pixels: all five land on the tab that was pressed, where six and up used to land nowhere.',
+          'Dragging a tab still reorders it, and the order is still kept.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.5.1',
     date: '2026-08-21',
     title: 'Clicking a tab works from anywhere',

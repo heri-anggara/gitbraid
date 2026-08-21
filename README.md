@@ -27,13 +27,13 @@ runtime dependencies.
 
 ## Download
 
-Latest release: **v0.5.1**
+Latest release: **v0.5.2**
 
 | Platform | File | Notes |
 |---|---|---|
-| **Debian / Ubuntu** | [`gitbraid_0.5.1_amd64.deb`](https://github.com/heri-anggara/gitbraid/releases/download/v0.5.1/gitbraid_0.5.1_amd64.deb) | Installs into the applications menu |
-| **Any Linux** | [`GitBraid-0.5.1.AppImage`](https://github.com/heri-anggara/gitbraid/releases/download/v0.5.1/GitBraid-0.5.1.AppImage) | One file, no install, updates itself |
-| **Windows** | [`GitBraid Setup 0.5.1.exe`](https://github.com/heri-anggara/gitbraid/releases/download/v0.5.1/GitBraid.Setup.0.5.1.exe) | Unsigned — see the note below |
+| **Debian / Ubuntu** | [`gitbraid_0.5.2_amd64.deb`](https://github.com/heri-anggara/gitbraid/releases/download/v0.5.2/gitbraid_0.5.2_amd64.deb) | Installs into the applications menu |
+| **Any Linux** | [`GitBraid-0.5.2.AppImage`](https://github.com/heri-anggara/gitbraid/releases/download/v0.5.2/GitBraid-0.5.2.AppImage) | One file, no install, updates itself |
+| **Windows** | [`GitBraid Setup 0.5.2.exe`](https://github.com/heri-anggara/gitbraid/releases/download/v0.5.2/GitBraid.Setup.0.5.2.exe) | Unsigned — see the note below |
 
 Older versions and full notes live on the [releases page](https://github.com/heri-anggara/gitbraid/releases).
 
@@ -103,7 +103,7 @@ log of every `git` command it ran, so nothing it does is a mystery.
 **Debian / Ubuntu**
 
 ```bash
-sudo apt install ./gitbraid_0.5.1_amd64.deb
+sudo apt install ./gitbraid_0.5.2_amd64.deb
 ```
 
 Then find GitBraid in your applications menu, or run `gitbraid`.
@@ -111,8 +111,8 @@ Then find GitBraid in your applications menu, or run `gitbraid`.
 **AppImage**
 
 ```bash
-chmod +x GitBraid-0.5.1.AppImage
-./GitBraid-0.5.1.AppImage
+chmod +x GitBraid-0.5.2.AppImage
+./GitBraid-0.5.2.AppImage
 ```
 
 **To remove**
@@ -133,7 +133,7 @@ git clone https://github.com/heri-anggara/gitbraid.git
 cd gitbraid
 npm install
 npm start                 # run it
-npm test                  # 172 checks, no network, no fixtures to download
+npm test                  # 175 checks, no network, no fixtures to download
 npm run dist              # .deb + AppImage into dist/
 npm run dist:win          # Windows installer, cross-built from Linux
 ```
