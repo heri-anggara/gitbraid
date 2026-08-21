@@ -28,6 +28,7 @@ const CHANNELS = new Set([
   'repo:stashList', 'repo:stashSave', 'repo:stashApply', 'repo:stashDrop',
   'repo:stashPaths', 'repo:savePatch',
   'repo:fileLog', 'repo:ignore', 'repo:untrack',
+  'update:later',
   'repo:raw',
   'shell:openPath', 'shell:openExternal', 'shell:openInEditor',
   'git:option', 'git:setOption', 'repos:existing',

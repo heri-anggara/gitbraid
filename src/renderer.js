@@ -404,6 +404,7 @@ function fieldHtml(f) {
 function modal({
   title, description = '', fields = [], confirmLabel = 'Confirm',
   danger = false, onChange = null, html = '', hideCancel = false,
+  cancelLabel = 'Cancel',
 }) {
   return new Promise((resolve) => {
     $('modal-title').textContent = title;
@@ -417,6 +418,9 @@ function modal({
     ok.textContent = confirmLabel;
     ok.classList.toggle('btn-danger', danger);
     $('modal-cancel').hidden = hideCancel;
+    /* Naming it matters when both buttons are real choices: "Later" is a
+       decision, "Cancel" sounds like backing out of one. */
+    $('modal-cancel').textContent = cancelLabel;
     $('modal-note').hidden = true;
     $('modal-note').textContent = '';
     $('modal').hidden = false;
@@ -728,7 +732,76 @@ function parkTab() {
   state.diffContext = null;
 }
 
+/* ── the commit draft, kept across restarts ──
+
+   A half-written commit message is the one thing in this window that exists
+   nowhere else: the history comes back from git, the file list comes back from
+   git, but what you were about to say does not. It was held in memory and
+   carried between tabs, and lost the moment the app closed — which made
+   "restart to update" a way to lose work.
+
+   Kept per repository, because that is what a message belongs to. */
+function draftsAll() {
+  try { return JSON.parse(localStorage.getItem('gitbraid-drafts') || '{}') || {}; }
+  catch { return {}; }
+}
+
+function saveDraft() {
+  const repo = state.repo && state.repo.path;
+  if (!repo) return;
+  const msg = $('commit-msg').value;
+  const body = $('commit-body').value;
+  const amend = $('chk-amend').checked;
+  const all = draftsAll();
+  // An empty draft is not worth a line in storage, and leaving one behind would
+  // resurrect a message the user had already cleared.
+  if (!msg.trim() && !body.trim() && !amend) delete all[repo];
+  else all[repo] = { msg, body, amend };
+  try { localStorage.setItem('gitbraid-drafts', JSON.stringify(all)); }
+  catch { /* private mode */ }
+}
+
+function loadDraft(repo) {
+  const d = draftsAll()[repo];
+  return d && typeof d === 'object'
+    ? { msg: String(d.msg || ''), body: String(d.body || ''), amend: Boolean(d.amend) }
+    : null;
+}
+
+function clearDraft(repo) {
+  const all = draftsAll();
+  if (!(repo in all)) return;
+  delete all[repo];
+  try { localStorage.setItem('gitbraid-drafts', JSON.stringify(all)); }
+  catch { /* private mode */ }
+}
+
+/* Typed text is written down as it is typed, so a crash costs at most a word —
+   waiting for the window to close would lose it to exactly the crash it is
+   meant to survive. */
+let draftTimer = null;
+function noteDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(saveDraft, 400);
+}
+for (const id of ['commit-msg', 'commit-body']) {
+  $(id).addEventListener('input', noteDraft);
+}
+$('chk-amend').addEventListener('change', noteDraft);
+// Closing the window skips the timer, so the last few keystrokes are caught here.
+window.addEventListener('beforeunload', () => { clearTimeout(draftTimer); saveDraft(); });
+
 function restoreTabUi() {
+  /* A tab reopened after a restart has nothing in memory, so the draft written
+     down last time fills it. One already in memory wins: it is the newer of the
+     two, and the stored one is only its own last save. */
+  const repo = state.repo && state.repo.path;
+  const kept = !state.commitMsg && !state.commitBody && repo ? loadDraft(repo) : null;
+  if (kept) {
+    state.commitMsg = kept.msg;
+    state.commitBody = kept.body;
+    state.amend = kept.amend;
+  }
   $('commit-msg').value = state.commitMsg;
   $('commit-body').value = state.commitBody;
   $('chk-amend').checked = state.amend;
@@ -2963,6 +3036,10 @@ async function doCommit() {
   $('commit-msg').value = '';
   $('commit-body').value = '';
   $('chk-amend').checked = false;
+  state.commitMsg = '';
+  state.commitBody = '';
+  state.amend = false;
+  clearDraft(repoPath());
   state.file = null;
   state.selection = null;
   await refresh({ keepSelection: false });
@@ -4910,9 +4987,12 @@ $('sb-brand').addEventListener('click', async (e) => {
       hint: home ? '' : 'Set "homepage" in package.json to link this',
       run: () => call('shell:openExternal', home) },
     '-',
-    { label: update ? `Update to ${update.latest}…` : 'Check for updates',
-      hint: update ? `You have ${update.current}` : '',
-      run: () => (update ? offerUpdate() : checkForUpdates()) },
+    { label: updateReady ? `Restart to finish updating to ${updateReady}`
+        : update ? `Update to ${update.latest}…` : 'Check for updates',
+      hint: updateReady ? 'Downloaded already — otherwise it goes in when you close the app'
+        : update ? `You have ${update.current}` : '',
+      run: () => (updateReady ? restartForUpdate()
+        : update ? offerUpdate() : checkForUpdates()) },
     '-',
     { label: 'Release notes', run: openNotes },
     { label: 'About GitBraid', run: openAbout },
@@ -4954,12 +5034,28 @@ async function checkForUpdates({ quiet = false } = {}) {
   return res.data;
 }
 
-function paintUpdateFlag() {
-  $('sb-brand').classList.toggle('has-update', Boolean(update));
-  $('sb-brand').title = update
-    ? `GitBraid ${update.latest} is available — you have ${update.current}`
-    : 'GitBraid — project page, release notes, about';
+/* Set once an update has been downloaded and put off: the version that will be
+   there next time the app is opened. The file itself is held by the main
+   process, which is what applies it. */
+let updateReady = null;
+let readyFile = null;
+
+/** Take up the deferred update now instead of at closing time. */
+async function restartForUpdate() {
+  if (!readyFile) return;
+  setStatus(`Restarting into ${updateReady}…`);
+  await call('update:install', readyFile);
 }
+
+function paintUpdateFlag() {
+  $('sb-brand').classList.toggle('has-update', Boolean(update) || Boolean(updateReady));
+  $('sb-brand').title = updateReady
+    ? `GitBraid ${updateReady} is downloaded — it will be installed when you close the app`
+    : update
+      ? `GitBraid ${update.latest} is available — you have ${update.current}`
+      : 'GitBraid — project page, release notes, about';
+}
+
 
 /* The whole of it in one dialog: which version, what changed, and one button.
    Progress replaces the note line, because a download of a hundred megabytes
@@ -4994,18 +5090,58 @@ async function offerUpdate() {
     const pct = total ? Math.round((read / total) * 100) : 0;
     setStatus(`Downloading ${update.latest} — ${pct}% of ${mb(total || size)}`);
   });
+  let file;
   try {
-    const file = await call('update:download', update);
-    if (!file) return;
-    setStatus(`Installing ${update.latest}…`);
-    const out = await call('update:install', file);
-    if (!out) return;
-    setStatus(out.restarted
-      ? `Restarting into ${update.latest}…`
-      : `${file.name} handed to your system installer`, 'ok');
+    file = await call('update:download', update);
   } finally {
     stop();
   }
+  if (!file) return;
+  await offerRestart(file);
+}
+
+/* What happens once the download is in.
+
+   Not a restart. An update is never urgent enough to take the window away from
+   someone in the middle of a merge, and this used to close and reopen the app
+   the moment the bytes landed. The new version waits until it is asked for, or
+   until the app is closing anyway. */
+async function offerRestart(file) {
+  const version = update ? update.latest : '';
+  if (file.kind !== 'appimage') {
+    /* A .deb cannot install itself and cannot promise a restart: it goes to the
+       system's package installer, which asks for a password of its own. */
+    const go = await modal({
+      title: `GitBraid ${version} is ready to install`,
+      description: 'It goes to your system package installer, which will ask for '
+        + 'your password. GitBraid keeps running; the new version starts the next '
+        + 'time you open it.',
+      confirmLabel: 'Open the installer',
+    });
+    if (!go) { setStatus(`${file.name} is downloaded — install it when you like`, 'ok'); return; }
+    const out = await call('update:install', file);
+    if (out) setStatus(`${file.name} handed to your system installer`, 'ok');
+    return;
+  }
+
+  const now = await modal({
+    title: `GitBraid ${version} is ready`,
+    description: 'Restarting takes a moment and reopens the repositories you have '
+      + 'open. Anything typed into a commit message is kept either way.',
+    confirmLabel: 'Restart now',
+    cancelLabel: 'Later',
+  });
+  if (now) {
+    setStatus(`Restarting into ${version}…`);
+    await call('update:install', file);
+    return;
+  }
+  // Later means later, not never: it is applied the next time the app closes.
+  const out = await call('update:later', file);
+  updateReady = out && out.staged ? version : null;
+  readyFile = updateReady ? file : null;
+  paintUpdateFlag();
+  setStatus(`GitBraid ${version} will be installed when you close the app`, 'ok');
 }
 
 const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;

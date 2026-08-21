@@ -738,15 +738,43 @@ function sendUpdateProgress(read, total) {
   }
 }
 
+/* Swapping the program for the one just downloaded. By rename, so the change is
+   atomic: a half-written program is worse than an old one. */
+function swapAppImage(file) {
+  const here = process.env.APPIMAGE;
+  if (!here) throw new Error('This is not an AppImage.');
+  fs.copyFileSync(file, `${here}.new`);
+  fs.chmodSync(`${here}.new`, 0o755);
+  fs.renameSync(`${here}.new`, here);
+}
+
+/* An update the user chose to put off. It is applied when the app closes anyway
+   — the moment a restart costs nothing, because the program is stopping either
+   way. Held in memory only: if the session ends some other way the download is
+   simply fetched again, which is cheaper than reasoning about a stale file left
+   behind on disk. */
+let pendingUpdate = null;
+
+handle('update:later', async ({ path: file, kind }) => {
+  if (kind !== 'appimage') return { staged: false };
+  pendingUpdate = file;
+  return { staged: true };
+});
+
+app.on('will-quit', () => {
+  if (!pendingUpdate) return;
+  const file = pendingUpdate;
+  pendingUpdate = null;
+  /* Quitting must not be blocked by this. A failure here leaves the old program
+     in place and the next check offers the update again, which is the right
+     outcome for something the user asked to happen quietly. */
+  try { swapAppImage(file); } catch { /* keep the version that works */ }
+});
+
 handle('update:install', async ({ path: file, kind }) => {
   if (kind === 'appimage') {
-    const here = process.env.APPIMAGE;
-    if (!here) throw new Error('This is not an AppImage.');
-    // Replaced by rename so the swap is atomic: a half-written program is worse
-    // than an old one.
-    fs.copyFileSync(file, `${here}.new`);
-    fs.chmodSync(`${here}.new`, 0o755);
-    fs.renameSync(`${here}.new`, here);
+    swapAppImage(file);
+    pendingUpdate = null;          // it is being applied now, not at quit
     app.relaunch();
     app.quit();
     return { restarted: true };
