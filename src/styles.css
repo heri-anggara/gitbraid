@@ -2462,7 +2462,17 @@ textarea {
 
 /* The block you jumped to gets a rail so the eye lands on it. */
 .difftable tr.dl-here td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
-.fv-body { overflow: auto; }
+/* The diff pane scrolls on a layer of its own.
+
+   The change map sits immediately beside it, and without this the two share a
+   layer: scrolling the pane repaints the strip along with it. Chromium 126 paid
+   a little for that, Chromium 138 paid double — a diff that scrolled at 10.9 ms
+   a frame took 20.3, which is past the 16.7 ms a sixty-frame second allows.
+   Promoting the pane costs one layer and gives both back: measured 22.9 ms to
+   11.6 on a twelve-thousand-row diff under Chromium 138, and 12.7 to 12.3 under
+   126. `contain: paint` alone was not enough — it went to 19.6, where the layer
+   went to 11.6. */
+.fv-body { overflow: auto; will-change: transform; }
 /* Switched on, a long line folds instead of running off the side. */
 .fv-body.wrap .dl-text { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 
