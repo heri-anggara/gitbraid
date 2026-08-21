@@ -48,15 +48,25 @@ const { execFile, spawn } = require('child_process');
 
 const MAX_BUFFER = 1024 * 1024 * 128;
 
-/* Under a Wayland session Electron still defaults to X11, so it runs through
-   XWayland — where Chromium cannot query vsync timing and spams
-   "GetVSyncParametersIfAvailable() failed" at startup. Asking for the native
-   backend also gets us sharp scaling on HiDPI screens. `auto` falls back to
-   X11 by itself on an X11 session, so this is safe to set unconditionally.
-   Must run before the app is ready. */
-if (process.platform === 'linux') {
-  app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
-}
+/* Which windowing backend Chromium uses is decided before this file runs, so
+   it cannot be set from here. There used to be a line that tried:
+
+     app.commandLine.appendSwitch('ozone-platform-hint', 'auto')
+
+   It never did anything. Measured on Electron 37, where the default backend
+   works and the native Wayland one crashes: with that switch appended from
+   JavaScript the window opens as usual, while passing the same value on the
+   command line takes the other path. A switch that had worked would have
+   crashed. It was removed rather than corrected, because there is no value it
+   could hold that would take effect.
+
+   This matters for the version in package.json. Electron 38 and up choose the
+   native Wayland backend by default, and that backend segfaults before a window
+   appears on a GNOME Wayland session — not a graphics fault: it goes down just
+   the same with the GPU off, with software rendering, and with compositing
+   disabled. 37 is the last release that still chooses X11 on its own, and
+   choosing it is what keeps the application launchable without depending on an
+   argument that every launcher would have to remember to pass. */
 
 /* ------------------------------------------------------------------ */
 /* git runner                                                          */
@@ -1103,7 +1113,11 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      /* The preload asks for nothing Node offers — contextBridge, ipcRenderer
+         and webUtils are all it touches, and all three are there in a sandboxed
+         one. So the renderer runs in the sandbox the platform already provides,
+         which costs nothing and is the stricter of the two. */
+      sandbox: true,
     },
   });
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
