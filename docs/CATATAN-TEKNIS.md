@@ -438,8 +438,16 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   berselisih di tengah jalan
 - Saat elemen berpindah di tata letak, titik acuannya digeser sebesar
   perpindahan itu — kalau tidak, tab-nya melompat lepas dari tangan
-- Kelonggaran 5px: klik selalu sedikit bergoyang, dan tanpa itu setiap klik jadi
-  seretan satu piksel yang menelan klik yang dimaksud
+- Kelonggaran 5px menentukan kapan **seretan dimulai** — bukan kapan sebuah tab
+  dipilih
+- **Menekan tab langsung memilihnya**, seperti yang dilakukan setiap peramban.
+  Versi pertama menunggu klik; sebuah tekanan yang bergeser enam piksel terbaca
+  sebagai seretan, dan klik yang seharusnya memilih tab ikut dibuang bersamanya
+  — dan di touchpad, enam piksel itu hampir setiap tekanan. Tab-nya tidak
+  berpindah sama sekali. Terukur: geser 0px dan 3px berhasil, 6px ke atas gagal
+- `activateTab` menggambar ulang strip sebelum ia menunggu apa pun, jadi elemen
+  yang baru dipegang seretan sudah diganti. Elemen penggantinya diambil kembali,
+  kalau tidak seretan membawa sesuatu yang tidak ada lagi di halaman
 - **Dua cacat yang sempat saya buat, keduanya membuat strip berhenti menjawab
   sama sekali**:
   - `releasePointerCapture` melempar galat untuk pointer yang tidak sedang
