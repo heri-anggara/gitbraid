@@ -39,7 +39,7 @@
         "StartupWMClass": "gitbraid",
         "GenericName": "Git Client",
         "Keywords": "git;version control;vcs;commit;diff;merge;",
-        "StartupNotify": "true"
+        "StartupNotify": "false"
       }
     },
     "mac": {
@@ -69,6 +69,10 @@
       {
         "from": "build/linux/io.github.heri_anggara.GitBraid.metainfo.xml",
         "to": "io.github.heri_anggara.GitBraid.metainfo.xml"
+      },
+      {
+        "from": "build/icons/256x256.png",
+        "to": "icon.png"
       }
     ],
     "deb": {

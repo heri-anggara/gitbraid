@@ -514,8 +514,25 @@ console.log('\nthe desktop entry');
   check('and it is spelled the way a window would report it',
     desktop.StartupWMClass === desktop.StartupWMClass.toLowerCase(),
     desktop.StartupWMClass);
-  check('the launcher still announces itself as starting',
-    desktop.StartupNotify === 'true');
+  /* The shell shows a launching cursor until the app reports it is up, which
+     it does by putting the launcher's token on its first window. Electron does
+     not, so the shell waited out its own timeout — about ten seconds of spinner
+     over a window that had been on screen since the second. VS Code, the other
+     Electron app on a normal desktop, says false for the same reason. */
+  check('the launcher is not asked to wait for a signal that never comes',
+    desktop.StartupNotify === 'false', desktop.StartupNotify);
+
+  /* The window's own icon has to be a real file. Packaged, __dirname is a path
+     inside app.asar — an archive, not a directory — and Electron loads this one
+     through native code that reads the filesystem. It found nothing, and the
+     window carried no icon at all. */
+  const extra = pkg.build.extraResources || [];
+  check('a real icon file is shipped beside the archive',
+    extra.some((e) => e.to === 'icon.png'), JSON.stringify(extra.map((e) => e.to)));
+  check('and the window asks for that one when packaged',
+    /app\.isPackaged[\s\S]{0,80}process\.resourcesPath, 'icon\.png'/.test(mainSrc));
+  check('while a run from source still uses the folder it has',
+    /__dirname, 'build', 'icons', '256x256\.png'/.test(mainSrc));
   check('the icon is named, so the theme has something to look up',
     Boolean(pkg.build.linux.icon));
 }
