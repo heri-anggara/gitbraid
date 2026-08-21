@@ -413,6 +413,44 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   yang sama, jadi tandanya harus beda: yang terbuka berlatar penuh, yang
   terpilih diberi pita di tepi kiri
 
+**Menyelesaikan update**
+- Unduhan **tidak lagi berakhir dengan restart**. Dulu ia langsung
+  `app.relaunch(); app.quit()` begitu byte terakhir mendarat — dan update tidak
+  pernah cukup mendesak untuk merebut jendela orang yang sedang di tengah merge
+- Sesudah unduh: tawaran **"Restart now" / "Later"**. Kalau ditunda, pemasangan
+  terjadi saat aplikasi ditutup berikutnya — saat restart tidak berbiaya apa pun
+  karena programnya memang sedang berhenti. Terukur ujung-ke-ujung dengan berkas
+  tiruan: tetap versi lama selama berjalan, tertukar saat keluar, hak akses 755,
+  tanpa sisa `.new`
+- Tombol batalnya diberi nama **"Later"**, bukan "Cancel": keduanya sama-sama
+  keputusan, dan "Cancel" terdengar seperti membatalkan
+- Berkas tertunda disimpan **di memori saja**. Kalau sesi berakhir dengan cara
+  lain, unduhannya diambil lagi — itu lebih murah daripada menalar berkas basi
+  yang tertinggal di disk
+- Keluar tidak pernah terhalang oleh penukaran yang gagal: kalau gagal, versi
+  yang bekerja tetap di tempatnya dan pemeriksaan berikutnya menawarkan lagi
+- **`.deb` tidak bisa ditunda** — ia butuh pemasang paket sistem, bukan rename,
+  dan pemasang itu minta kata sandi sendiri. Kalimatnya berbeda dan tidak
+  menjanjikan restart
+- Titik di tombol versi kini punya dua arti: "ada versi baru" dan "sudah
+  terunduh, akan dipasang saat ditutup"
+
+**Draf pesan commit bertahan melewati restart**
+- Prasyarat bagi semua di atas. Pesan commit setengah jadi adalah satu-satunya
+  hal di jendela ini yang **tidak ada di tempat lain**: riwayat kembali dari
+  git, daftar berkas kembali dari git, tapi apa yang hendak Anda katakan tidak
+- Dulu ia hanya dibawa antar-tab di memori lewat `parkTab()`, dan hilang begitu
+  aplikasi ditutup. Terukur: tidak ada satu kunci pun di penyimpanan yang
+  memuatnya, dan tidak ada kait `before-quit` maupun `beforeunload` sama sekali
+- Disimpan **per repositori**, karena itu yang dimiliki sebuah pesan
+- Ditulis **sambil diketik** (ditunda 400ms), bukan menunggu jendela ditutup —
+  menunggu berarti kehilangannya pada persis kejadian yang ingin ia selamati.
+  Ditambah satu simpanan terakhir di `beforeunload` untuk ketikan terakhir
+- Draf kosong dihapus dari penyimpanan, bukan disimpan sebagai kosong — kalau
+  tidak, pesan yang sudah dibersihkan akan hidup lagi. Spasi saja bukan draf,
+  tapi centang amend sendirian tetap layak diingat
+- Draf di memori menang atas yang tersimpan: ia yang lebih baru
+
 **Ikon di dock terlambat muncul**
 - Dock mencocokkan jendela dengan peluncurnya lewat `WM_CLASS` jendela itu, dan
   pencocokannya **peka huruf besar-kecil**

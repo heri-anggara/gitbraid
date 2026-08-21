@@ -373,6 +373,58 @@ check('only the first hunk was staged',
     spGaps.length === 2 && spGaps[0] === rowSum[5], spGaps.join('/'));
 }
 
+console.log('\nfinishing an update');
+{
+  /* Downloading used to end in app.quit(). Whatever was typed into a commit
+     message went with it, since nothing wrote that down — so the update had to
+     stop restarting on its own, and the draft had to start surviving. */
+  // Sliced to the one function: installing on request is still right, and the
+  // .deb path below does exactly that. What must be gone is installing unasked.
+  const offerSrc = rendererSrc.slice(
+    rendererSrc.indexOf('async function offerUpdate()'),
+    rendererSrc.indexOf('async function offerRestart(')
+  );
+  check('the download no longer ends in an install',
+    offerSrc.length > 0 && !offerSrc.includes("update:install"), offerSrc.length);
+  check('it offers a restart instead', /offerRestart\(file\)/.test(rendererSrc));
+  check('"Later" is a named choice, not a cancel',
+    /cancelLabel: 'Later'/.test(rendererSrc));
+  check('putting it off stages it for quitting time',
+    /update:later/.test(rendererSrc) && /will-quit/.test(mainSrc));
+  check('and the swap is the same one an immediate install does',
+    (mainSrc.match(/swapAppImage/g) || []).length >= 3);
+  check('a .deb cannot be staged — it needs an installer, not a rename',
+    /kind !== 'appimage'\) return \{ staged: false \}/.test(mainSrc));
+  check('quitting is never blocked by a failed swap',
+    /try \{ swapAppImage\(file\); \} catch/.test(mainSrc));
+
+  /* The draft, kept per repository. */
+  const drafts = {};
+  const put = (repo, msg, body, amend) => {
+    if (!msg.trim() && !body.trim() && !amend) delete drafts[repo];
+    else drafts[repo] = { msg, body, amend };
+  };
+  put('/a', 'fix: half written', '', false);
+  check('a draft is stored under its repository', drafts['/a'].msg === 'fix: half written');
+  put('/b', 'other repo', '', false);
+  check('two repositories keep two drafts',
+    drafts['/a'].msg !== drafts['/b'].msg && Object.keys(drafts).length === 2);
+  put('/a', '', '', false);
+  check('clearing the box clears the draft rather than storing an empty one',
+    !('/a' in drafts) && Object.keys(drafts).length === 1);
+  put('/b', '  ', '  ', false);
+  check('whitespace alone is not a draft', !('/b' in drafts));
+  put('/c', '', '', true);
+  check('but a ticked amend box is worth remembering on its own', drafts['/c'].amend === true);
+
+  check('the draft is written as it is typed, not only at closing time',
+    /addEventListener\('input', noteDraft\)/.test(rendererSrc));
+  check('and once more on the way out, for the last few keystrokes',
+    /beforeunload[\s\S]{0,80}saveDraft\(\)/.test(rendererSrc));
+  check('committing clears it, so it cannot come back later',
+    /clearDraft\(repoPath\(\)\)/.test(rendererSrc));
+}
+
 console.log('\nthe desktop entry');
 {
   /* The dock matches a window to its launcher by the window's WM_CLASS, and the
