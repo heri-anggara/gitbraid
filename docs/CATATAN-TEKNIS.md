@@ -413,6 +413,20 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   yang sama, jadi tandanya harus beda: yang terbuka berlatar penuh, yang
   terpilih diberi pita di tepi kiri
 
+**Klik tab tidak berpindah saat ada panel menutupi**
+- Panel yang menutupi seluruh jendela — riwayat berkas, catatan rilis,
+  preferensi, pengelola repositori — semuanya menyembunyikan `.main`. Dibiarkan
+  terbuka saat tab diklik, perpindahannya **tetap terjadi** tapi tidak ada yang
+  berubah di layar: panel lama masih menutupi, dan masih menampilkan repositori
+  yang lama. Terbaca persis seperti tab yang tidak bisa diklik
+- Mengklik tab adalah permintaan untuk melihat repositori itu, jadi apa pun yang
+  menutupinya kini menyingkir lebih dulu
+- **Riwayat berkas ditutup paling awal**, sebelum tab yang lama diparkir:
+  menutupnya mengembalikan panel diff ke tab tempat ia dipinjam, dan itu harus
+  terjadi selagi tab itu masih yang di depan
+- Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
+  panel-panel lain sudah lama berperilaku sama
+
 **Menggeser tab**
 - Tab bisa ditekan-tahan lalu digeser ke posisi mana pun; yang lain menyingkir,
   dan urutannya tersimpan
