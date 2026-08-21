@@ -7,6 +7,26 @@
  */
 window.Releases = [
   {
+    version: '0.5.3',
+    date: '2026-08-21',
+    title: 'It opens without keeping you waiting',
+    summary:
+      'Launching from the dock left a loading cursor spinning for about ten '
+      + 'seconds, and no icon beside it, over a window that had been on screen '
+      + 'since the second.',
+    sections: [
+      {
+        heading: 'The fix',
+        items: [
+          'The desktop entry asked the shell to show a launching cursor until GitBraid reported itself up, which an application does by putting the launcher\u2019s token on its first window. GitBraid never did — nothing carries that token into the process, and nothing put it on the window — so the shell waited out its own timeout instead. Measured: the app is ready at 209 ms, the window is shown at 1,986 ms, and the history is drawn at 2,222 ms. Everything after that was the shell waiting.',
+          'While it waited, it had not yet decided which launcher the window belonged to — and what the dock draws comes from that launcher. So the missing icon and the spinning cursor were one thing, not two.',
+          'The entry no longer asks to be waited for, which is what VS Code does on the same desktop and for the same reason.',
+          'Separately, the window icon path was wrong: packaged, it pointed inside app.asar, which is an archive rather than a directory, so the file it named did not exist. A real copy ships beside the archive now. On this desktop it changes nothing visible — Electron sets no window icon there whichever way it is asked — but a path that cannot exist is worth correcting.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.5.2',
     date: '2026-08-21',
     title: 'Pressing a tab selects it',

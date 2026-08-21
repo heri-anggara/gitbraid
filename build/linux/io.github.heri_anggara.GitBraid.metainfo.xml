@@ -96,6 +96,15 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.5.3" date="2026-08-21">
+      <description>
+        <p>
+          GitBraid opens without keeping you waiting. Launching from the dock
+          left a loading cursor spinning for about ten seconds, and no icon
+          beside it, over a window that had been on screen since the second.
+        </p>
+      </description>
+    </release>
     <release version="0.5.2" date="2026-08-21">
       <description>
         <p>
