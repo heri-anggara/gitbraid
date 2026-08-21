@@ -3473,10 +3473,26 @@ $('tabs').addEventListener('pointerdown', (e) => {
   if (e.target.closest('[data-close]')) return;
   const el = e.target.closest('[data-tab]');
   if (!el) return;
-  tabDrag = { el, id: el.dataset.tab, startX: e.clientX, moved: false, id_: e.pointerId };
+  const id = el.dataset.tab;
+  tabDrag = { el, id, startX: e.clientX, moved: false, id_: e.pointerId };
   // Capture keeps the moves coming when the pointer leaves the strip. It is not
   // worth failing over: without it the drag still works while the pointer stays.
   try { tabsStrip().setPointerCapture(e.pointerId); } catch { /* no capture, no matter */ }
+
+  /* Pressing a tab selects it, there and then, the way every browser does.
+
+     Waiting for the click instead meant a press that wandered a few pixels was
+     read as a drag, and the click that would have selected the tab was thrown
+     away with it. Six pixels was enough — which on a touchpad, or with any
+     ordinary hand, is most presses. The tab simply did not change. */
+  if (id !== activeId) {
+    activateTab(id);
+    /* activateTab redraws the strip before it awaits anything, so the element
+       just taken hold of has already been replaced. Take hold of the new one,
+       or the drag would be carrying something no longer on the page. */
+    const again = tabsStrip().querySelector(`[data-tab="${id}"]`);
+    if (again) tabDrag.el = again;
+  }
 });
 
 $('tabs').addEventListener('pointermove', (e) => {

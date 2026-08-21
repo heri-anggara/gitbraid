@@ -427,7 +427,21 @@ console.log('\ndragging a tab into place');
     /tabDrag !== 'dropped' && tabDrag\.moved/.test(rendererSrc));
   check('the close button is a button, not a drag handle',
     /if \(e\.target\.closest\('\[data-close\]'\)\) return;/.test(rendererSrc));
-  check('a click that wanders a few pixels is still a click',
+  /* Selection cannot wait for the click. A press that wandered six pixels was
+     read as a drag, and the click that would have selected the tab went with
+     it — which on a touchpad is most presses, and the tab simply never changed.
+     Pressing selects, there and then, the way every browser does. */
+  const down = rendererSrc.slice(
+    rendererSrc.indexOf("$('tabs').addEventListener('pointerdown'"),
+    rendererSrc.indexOf("$('tabs').addEventListener('pointermove'")
+  );
+  check('pressing a tab selects it, without waiting for the click',
+    down.includes('activateTab(id)'), down.length);
+  check('and only when it is not the one already in front',
+    /if \(id !== activeId\) \{/.test(down));
+  check('the drag takes hold of the element the redraw left behind',
+    /tabsStrip\(\)\.querySelector\(`\[data-tab="\$\{id\}"\]`\)/.test(down));
+  check('the slack still decides when a drag begins, not when a tab is chosen',
     /Math\.abs\(dx\) < 5/.test(rendererSrc));
   check('the new order is written down, not only shown',
     /const order = \[\.\.\.tabsStrip\(\)[\s\S]{0,200}saveTabs\(\)/.test(rendererSrc));
