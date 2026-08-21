@@ -499,6 +499,23 @@ console.log('\nfinishing an update');
     /clearDraft\(repoPath\(\)\)/.test(rendererSrc));
 }
 
+console.log('\nthe diff pane on its own layer');
+{
+  /* The change map sits immediately beside the diff pane, and without a layer of
+     its own the pane repaints the strip along with itself on every scroll.
+     Chromium 126 paid a little for that; 138 paid double — 10.9 ms a frame
+     became 20.3, past the 16.7 a sixty-frame second allows. */
+  const css = fs.readFileSync(path.join(__dirname, '..', 'src/styles.css'), 'utf8');
+  // Several rules name .fv-body; the one that matters is the one that scrolls.
+  const rules = css.match(/\.fv-body \{[^}]*\}/g) || [];
+  const scroller = rules.find((r) => /overflow:\s*auto/.test(r));
+  check('the pane that scrolls is found at all', Boolean(scroller), rules.join(' | '));
+  check('the diff pane asks for a layer of its own',
+    Boolean(scroller) && /will-change:\s*transform/.test(scroller), scroller);
+  check('the reason is written down beside it, with the measurements',
+    /Chromium 138 paid double|20\.3/.test(css));
+}
+
 console.log('\nthe desktop entry');
 {
   /* The dock matches a window to its launcher by the window's WM_CLASS, and the

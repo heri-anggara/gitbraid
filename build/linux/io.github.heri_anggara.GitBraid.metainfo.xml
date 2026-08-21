@@ -96,6 +96,20 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.6.0" date="2026-08-21">
+      <description>
+        <p>
+          The engine underneath is twelve Chromium releases newer, bringing
+          security fixes GitBraid had been going without, and the renderer now
+          runs sandboxed.
+        </p>
+        <p>
+          The diff pane scrolls on a layer of its own, so it no longer repaints
+          the change map beside it. Twelve thousand rows scroll at 11.6 ms a
+          frame where they took 22.9.
+        </p>
+      </description>
+    </release>
     <release version="0.5.3" date="2026-08-21">
       <description>
         <p>

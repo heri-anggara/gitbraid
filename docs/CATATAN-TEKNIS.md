@@ -427,6 +427,47 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Naik ke Electron 37, dan regresi yang ikut terbawa**
+- Electron 31 sudah lama di luar dukungan; 37 membawa Chromium 126 → 138 dan
+  Node 20 → 22. Kodenya **tidak butuh perubahan sama sekali** — permukaan API
+  yang dipakai kecil dan semuanya inti, dan tidak ada satu pun yang dihapus
+- **Kenapa 37 dan bukan 43.** Electron 38 ke atas memilih backend Wayland natif
+  sebagai bawaan, dan backend itu SIGSEGV sebelum jendela muncul di sesi GNOME
+  Wayland — bukan soal grafis: tetap jatuh dengan GPU mati, render perangkat
+  lunak, dan kompositing dimatikan; juga tetap jatuh di luar confinement snap.
+  Hanya argumen baris perintah yang menghindarinya, dan itu berarti setiap jalur
+  peluncuran harus mengingatnya. 37 adalah rilis terakhir yang memilih X11
+  sendiri. Terukur: 37 jalan, 38/39/41/43 crash
+- **`appendSwitch('ozone-platform-hint', …)` tidak pernah berfungsi.** Platform
+  dipilih sebelum berkas ini dijalankan. Terbukti pada 37, di mana bawaannya
+  jalan dan Wayland crash: dengan saklar itu dipasang dari JavaScript jendelanya
+  tetap terbuka, sedangkan nilai yang sama lewat baris perintah menempuh jalur
+  lain. Baris itu dihapus, bukan diperbaiki — tidak ada nilai yang bisa
+  membuatnya berpengaruh
+- `sandbox: true` dinyalakan. Preload tidak menyentuh apa pun milik Node —
+  hanya `contextBridge`, `ipcRenderer`, dan `webUtils`, dan ketiganya ada di
+  preload ber-sandbox
+
+**Panel diff diberi lapisan komposit sendiri**
+- Naik ke Chromium 138 mula-mula membuat gulir diff **2× lebih lambat**:
+  10,9 ms per frame jadi 20,3 — lewat anggaran 16,7 ms untuk 60fps
+- Yang **bukan** penyebabnya, semua sudah diukur dan dicoret: kode kita sendiri
+  (biaya `paintDiff` setara, 36,2 vs 39,0 ms), jumlah gambar-ulang (sama persis,
+  15 dari 60), `syncHBar`/`paintViewport`/`paintDiffHere` (dimatikan semua,
+  tidak berubah), pewarnaan sintaks (hanya 1,6 vs 2,3 ms), baris penahan
+  setinggi 177.720px (diff kecil tanpa penahan tetap melambat), dan tabel versus
+  grid — di halaman berdiri sendiri kedua versi menggulir sama cepat, yang
+  membuktikan Chromium 138 tidak lebih lambat menggulir tabel
+- Penyebabnya **strip peta perubahan di sebelah panel**: tanpa lapisan sendiri
+  keduanya berbagi lapisan, jadi menggulir panel ikut menggambar ulang strip.
+  Menyembunyikan strip menyembuhkannya (20,3 → 7,1 ms), begitu pula memberi
+  panel lapisannya sendiri
+- `will-change: transform` yang menyembuhkan; `contain: paint` saja tidak cukup
+  (19,6 lawan 11,6). Biayanya satu lapisan komposit
+- Hasilnya: diff 12.000 baris **22,9 → 11,6 ms** di Chromium 138, dan
+  **12,7 → 12,3 ms** di Chromium 126 — jadi Electron 37 dengan perbaikan ini
+  lebih cepat daripada Electron 31 tanpanya
+
 **Menggeser tab**
 - Tab bisa ditekan-tahan lalu digeser ke posisi mana pun; yang lain menyingkir,
   dan urutannya tersimpan

@@ -7,6 +7,34 @@
  */
 window.Releases = [
   {
+    version: '0.6.0',
+    date: '2026-08-21',
+    title: 'A newer Electron, and a diff pane that scrolls on its own layer',
+    summary:
+      'The engine underneath is twelve Chromium releases newer, and the diff '
+      + 'pane now scrolls without dragging the change map along with it \u2014 which '
+      + 'turned out to make it faster on the old engine too.',
+    sections: [
+      {
+        heading: 'A newer Electron',
+        items: [
+          'Electron 31 stopped receiving Chromium security fixes long ago. This is Chromium 126 to 138 and Node 20 to 22. The application itself needed no changes at all: the API surface it uses is small and entirely core, and nothing it calls has been removed.',
+          'The renderer runs sandboxed now. The preload asks for nothing Node offers \u2014 contextBridge, ipcRenderer and webUtils are all it touches, and all three exist in a sandboxed preload \u2014 so the stricter setting costs nothing.',
+          'Not 43, which is the current release. Electron 38 and up choose the native Wayland backend by default, and on a GNOME Wayland session that backend crashes before a window appears \u2014 with the GPU off, with software rendering, with compositing disabled, all the same. Only a command-line argument avoids it, which would mean every way of launching the app having to remember one. 37 is the last release that still chooses X11 on its own.',
+          'A switch that was supposed to control exactly that turned out never to have worked: the windowing backend is chosen before the main script runs, so asking for one from JavaScript is too late. The line was removed rather than corrected, since no value it could hold would take effect.',
+        ],
+      },
+      {
+        heading: 'The diff pane scrolls on its own layer',
+        items: [
+          'The newer Chromium made diff scrolling twice as slow to begin with: 10.9 ms a frame became 20.3, past the 16.7 that sixty frames a second allow.',
+          'It was none of the obvious things, and each was measured out rather than reasoned away \u2014 not GitBraid\u2019s own code, not how often it redraws, not syntax colouring, not the spacer rows that stand in for the parts of a diff not on screen, not tables against grids. In a page of its own both Chromium versions scrolled the same content at the same speed, which is what showed the fault was here rather than upstream.',
+          'It is the change map. The strip sits immediately beside the diff and shared its layer, so scrolling the diff repainted the strip along with it. Given a layer of its own, twelve thousand rows scroll at 11.6 ms where they took 22.9 \u2014 and at 12.3 ms on the old Chromium, where they took 12.7. This release is faster than the last one on both.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.5.3',
     date: '2026-08-21',
     title: 'It opens without keeping you waiting',
