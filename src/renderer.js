@@ -404,6 +404,7 @@ function fieldHtml(f) {
 function modal({
   title, description = '', fields = [], confirmLabel = 'Confirm',
   danger = false, onChange = null, html = '', hideCancel = false,
+  cancelLabel = 'Cancel',
 }) {
   return new Promise((resolve) => {
     $('modal-title').textContent = title;
@@ -417,6 +418,9 @@ function modal({
     ok.textContent = confirmLabel;
     ok.classList.toggle('btn-danger', danger);
     $('modal-cancel').hidden = hideCancel;
+    /* Naming it matters when both buttons are real choices: "Later" is a
+       decision, "Cancel" sounds like backing out of one. */
+    $('modal-cancel').textContent = cancelLabel;
     $('modal-note').hidden = true;
     $('modal-note').textContent = '';
     $('modal').hidden = false;
@@ -728,7 +732,76 @@ function parkTab() {
   state.diffContext = null;
 }
 
+/* ── the commit draft, kept across restarts ──
+
+   A half-written commit message is the one thing in this window that exists
+   nowhere else: the history comes back from git, the file list comes back from
+   git, but what you were about to say does not. It was held in memory and
+   carried between tabs, and lost the moment the app closed — which made
+   "restart to update" a way to lose work.
+
+   Kept per repository, because that is what a message belongs to. */
+function draftsAll() {
+  try { return JSON.parse(localStorage.getItem('gitbraid-drafts') || '{}') || {}; }
+  catch { return {}; }
+}
+
+function saveDraft() {
+  const repo = state.repo && state.repo.path;
+  if (!repo) return;
+  const msg = $('commit-msg').value;
+  const body = $('commit-body').value;
+  const amend = $('chk-amend').checked;
+  const all = draftsAll();
+  // An empty draft is not worth a line in storage, and leaving one behind would
+  // resurrect a message the user had already cleared.
+  if (!msg.trim() && !body.trim() && !amend) delete all[repo];
+  else all[repo] = { msg, body, amend };
+  try { localStorage.setItem('gitbraid-drafts', JSON.stringify(all)); }
+  catch { /* private mode */ }
+}
+
+function loadDraft(repo) {
+  const d = draftsAll()[repo];
+  return d && typeof d === 'object'
+    ? { msg: String(d.msg || ''), body: String(d.body || ''), amend: Boolean(d.amend) }
+    : null;
+}
+
+function clearDraft(repo) {
+  const all = draftsAll();
+  if (!(repo in all)) return;
+  delete all[repo];
+  try { localStorage.setItem('gitbraid-drafts', JSON.stringify(all)); }
+  catch { /* private mode */ }
+}
+
+/* Typed text is written down as it is typed, so a crash costs at most a word —
+   waiting for the window to close would lose it to exactly the crash it is
+   meant to survive. */
+let draftTimer = null;
+function noteDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(saveDraft, 400);
+}
+for (const id of ['commit-msg', 'commit-body']) {
+  $(id).addEventListener('input', noteDraft);
+}
+$('chk-amend').addEventListener('change', noteDraft);
+// Closing the window skips the timer, so the last few keystrokes are caught here.
+window.addEventListener('beforeunload', () => { clearTimeout(draftTimer); saveDraft(); });
+
 function restoreTabUi() {
+  /* A tab reopened after a restart has nothing in memory, so the draft written
+     down last time fills it. One already in memory wins: it is the newer of the
+     two, and the stored one is only its own last save. */
+  const repo = state.repo && state.repo.path;
+  const kept = !state.commitMsg && !state.commitBody && repo ? loadDraft(repo) : null;
+  if (kept) {
+    state.commitMsg = kept.msg;
+    state.commitBody = kept.body;
+    state.amend = kept.amend;
+  }
   $('commit-msg').value = state.commitMsg;
   $('commit-body').value = state.commitBody;
   $('chk-amend').checked = state.amend;
@@ -822,6 +895,9 @@ async function showWelcome() {
 }
 
 function renderTabs() {
+  // A redraw mid-drag would replace the element being dragged, and the drag
+  // would end holding nothing. The order is drawn when the drag lets go.
+  if (tabDrag && tabDrag !== 'dropped' && tabDrag.moved) return;
   // The strip stays even with no tabs: settings and identity live on its right
   // and must be reachable from the start page too.
   $('tabs').innerHTML = tabs
@@ -1750,6 +1826,13 @@ function renderWip() {
     `<li class="empty-row">${wipFilter ? 'No changed file matches' : 'Working tree is clean'}</li>`;
 
   paintViewAs('w-viewas');
+  /* The lists were just replaced wholesale, so the selection has to be put back
+     — and anything staged, discarded or gone from disk drops out of it. */
+  const alive = new Set([...s.conflicted, ...s.staged, ...s.unstaged, ...s.untracked]
+    .map((f) => f.path));
+  for (const p of [...picked.paths]) if (!alive.has(p)) picked.paths.delete(p);
+  if (!picked.paths.size) picked.kind = null;
+  paintPicked();
 
   $('count-staged').textContent = s.staged.length;
   $('count-unstaged').textContent = working.length;
@@ -2828,12 +2911,17 @@ $('fv-discard').addEventListener('click', () =>
 
 const repoPath = () => state.repo.path;
 
+/* Staging moves a file to the other list, so a selection naming it is about a
+   row that is no longer there. It is dropped rather than left pointing at a
+   list the file has left. */
 async function stage(paths) {
   await call('repo:stage', repoPath(), paths);
+  clearPicked();
   await refresh();
 }
 async function unstage(paths) {
   await call('repo:unstage', repoPath(), paths);
+  clearPicked();
   await refresh();
 }
 async function discard(path, untracked) {
@@ -2846,6 +2934,82 @@ async function discard(path, untracked) {
   await call('repo:discard', repoPath(), [path], untracked);
   state.file = null;
   await refresh();
+}
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/* Discarding several. Tracked and untracked go separately because they are two
+   different commands — one restores a file, the other deletes it — and the
+   warning says so, since deleting an untracked file is the one thing here git
+   keeps no copy of anywhere. */
+async function discardMany(paths) {
+  if (!paths.length) return;
+  const gone = paths.filter((p) => isUntracked(p));
+  const kept = paths.filter((p) => !isUntracked(p));
+  if (paths.length === 1) return discard(paths[0], gone.length === 1);
+
+  const ok = await confirmAction(
+    `Discard ${plural(paths.length, 'file')}`,
+    [kept.length ? `${plural(kept.length, 'file')} will go back to the last committed state.` : '',
+     gone.length ? `${plural(gone.length, 'untracked file')} will be deleted.` : '',
+     'This cannot be undone.'].filter(Boolean).join(' '),
+    'Discard'
+  );
+  if (!ok) return;
+  if (kept.length) await call('repo:discard', repoPath(), kept, false);
+  if (gone.length) await call('repo:discard', repoPath(), gone, true);
+  if (paths.includes(state.file?.path)) { state.file = null; closeFile(); }
+  clearPicked();
+  await refresh();
+  setStatus(`Discarded ${plural(paths.length, 'file')}`, 'ok');
+}
+
+async function resolveMany(paths, how) {
+  for (const p of paths) await call('repo:resolve', repoPath(), p, how);
+  clearPicked();
+  await refresh();
+  setStatus(`${plural(paths.length, 'file')} resolved`, 'ok');
+}
+
+/* Stashing part of the working tree. Untracked files need -u or git leaves them
+   where they are without saying so, which would look like the stash had quietly
+   skipped them. */
+async function stashPaths(paths, untrackedCount) {
+  if (!paths.length) return;
+  const r = await modal({
+    title: `Stash ${plural(paths.length, 'file')}`,
+    description: untrackedCount
+      ? `Their changes are set aside and the files go back to their last committed `
+        + `state. ${plural(untrackedCount, 'untracked file')} will be taken along too.`
+      : 'Their changes are set aside and the files go back to their last committed state.',
+    fields: [{ name: 'message', label: 'Message (optional)',
+               placeholder: paths.length === 1 ? paths[0] : `${paths.length} files` }],
+    confirmLabel: 'Stash',
+  });
+  if (!r) return;
+  const out = await call('repo:stashPaths', repoPath(), paths, r.message,
+    untrackedCount > 0);
+  if (out === null) return;
+  if (paths.includes(state.file?.path)) { state.file = null; closeFile(); }
+  clearPicked();
+  await refresh();
+  setStatus(`Stashed ${plural(paths.length, 'file')}`, 'ok');
+}
+
+/* A patch of what was picked, saved wherever the user says. */
+async function savePatch(paths, kind, untrackedCount) {
+  const usable = paths.filter((p) => !isUntracked(p));
+  if (!usable.length) { setStatus('A patch is made from tracked changes', 'warn'); return; }
+  const name = usable.length === 1
+    ? usable[0].split('/').pop().replace(/\.[^.]*$/, '')
+    : `${baseName(repoPath())}-${usable.length}-files`;
+  const out = await call('repo:savePatch', repoPath(), usable,
+    { staged: kind === 'staged', skipped: untrackedCount, name });
+  if (out === null) return;              // cancelled, or the call failed and said so
+  if (out.empty) { setStatus('Those files have no changes to put in a patch', 'warn'); return; }
+  setStatus(
+    `Patch saved to ${out.path}` +
+    (out.skipped ? ` — ${plural(out.skipped, 'untracked file')} left out` : ''), 'ok');
 }
 
 async function applyHunk(fileIndex, hunkIndex, action) {
@@ -2875,6 +3039,10 @@ async function doCommit() {
   $('commit-msg').value = '';
   $('commit-body').value = '';
   $('chk-amend').checked = false;
+  state.commitMsg = '';
+  state.commitBody = '';
+  state.amend = false;
+  clearDraft(repoPath());
   state.file = null;
   state.selection = null;
   await refresh({ keepSelection: false });
@@ -3266,7 +3434,105 @@ const CLOSE_ICON =
   '<path d="M3 3 9 9M9 3 3 9" fill="none" stroke="currentColor" ' +
   'stroke-width="1.8" stroke-linecap="round"/></svg>';
 
+/* ── dragging a tab into place ──
+
+   Done with pointer events rather than the browser's own drag-and-drop, which
+   hands you a ghost image you cannot style and a drop target you cannot see.
+   Here the tab itself follows the pointer and its neighbours step aside.
+
+   The order lives in `tabs`, and the strip is drawn from it, so the drag moves
+   the element and the array is read back from the document when it lets go —
+   one direction, no chance of the two disagreeing halfway. */
+let tabDrag = null;
+
+const tabsStrip = () => $('tabs');
+
+$('tabs').addEventListener('pointerdown', (e) => {
+  /* A drag ends by asking the click that follows to be ignored — but the strip
+     is redrawn on drop, so that click often never arrives and the request would
+     wait there to swallow someone else's. Any new press means the moment it was
+     waiting for has passed. */
+  if (tabDrag === 'dropped') tabDrag = null;
+  if (e.button !== 0) return;
+  // The close button is a button, not a handle.
+  if (e.target.closest('[data-close]')) return;
+  const el = e.target.closest('[data-tab]');
+  if (!el) return;
+  tabDrag = { el, id: el.dataset.tab, startX: e.clientX, moved: false, id_: e.pointerId };
+  // Capture keeps the moves coming when the pointer leaves the strip. It is not
+  // worth failing over: without it the drag still works while the pointer stays.
+  try { tabsStrip().setPointerCapture(e.pointerId); } catch { /* no capture, no matter */ }
+});
+
+$('tabs').addEventListener('pointermove', (e) => {
+  if (!tabDrag || e.pointerId !== tabDrag.id_) return;
+  const dx = e.clientX - tabDrag.startX;
+  /* A few pixels of slack: a click wanders, and every click would otherwise
+     become a one-pixel drag that swallows the click that was meant. */
+  if (!tabDrag.moved && Math.abs(dx) < 5) return;
+  if (!tabDrag.moved) {
+    tabDrag.moved = true;
+    tabDrag.el.classList.add('dragging');
+    tabsStrip().classList.add('dragging');
+  }
+  tabDrag.el.style.transform = `translateX(${dx}px)`;
+
+  /* Past a neighbour's middle, swap with it. Moving the element is what makes
+     the others step aside — they are laid out by the strip, not by us. */
+  const box = tabDrag.el.getBoundingClientRect();
+  const mine = { left: box.left, right: box.right };
+  for (const other of tabsStrip().querySelectorAll('[data-tab]')) {
+    if (other === tabDrag.el) continue;
+    const b = other.getBoundingClientRect();
+    const middle = b.left + b.width / 2;
+    const goRight = mine.right > middle && b.left > box.left;
+    const goLeft = mine.left < middle && b.left < box.left;
+    if (!goRight && !goLeft) continue;
+    const before = tabDrag.el.getBoundingClientRect().left;
+    tabsStrip().insertBefore(tabDrag.el, goRight ? other.nextSibling : other);
+    /* The element just moved in the layout, so the offset that was keeping it
+       under the pointer is now measured from somewhere else. Shifting the
+       origin by the same amount keeps it exactly where the hand left it. */
+    tabDrag.startX += tabDrag.el.getBoundingClientRect().left - before;
+    tabDrag.el.style.transform = `translateX(${e.clientX - tabDrag.startX}px)`;
+    break;
+  }
+
+  /* Near an edge the strip scrolls, so a tab can be taken somewhere the strip
+     is not currently showing. */
+  const strip = tabsStrip().getBoundingClientRect();
+  const edge = 48;
+  if (e.clientX > strip.right - edge) tabsStrip().scrollLeft += 12;
+  else if (e.clientX < strip.left + edge) tabsStrip().scrollLeft -= 12;
+});
+
+for (const done of ['pointerup', 'pointercancel']) {
+  $('tabs').addEventListener(done, (e) => {
+    if (!tabDrag || tabDrag === 'dropped' || e.pointerId !== tabDrag.id_) return;
+    /* The drag is let go of first, and only then are things done that might
+       fail. Releasing a capture that was never taken throws, and when that
+       happened halfway through here it left tabDrag holding an element — which
+       makes renderTabs() a no-op for the rest of the session, so the strip
+       stopped answering to anything at all. */
+    const { el, moved } = tabDrag;
+    tabDrag = moved ? 'dropped' : null;   // remembered for the click that follows
+    el.style.transform = '';
+    el.classList.remove('dragging');
+    tabsStrip().classList.remove('dragging');
+    try { tabsStrip().releasePointerCapture(e.pointerId); } catch { /* already gone */ }
+    if (!moved) return;
+
+    // Read the new order back out of the strip, which is the thing the hand moved.
+    const order = [...tabsStrip().querySelectorAll('[data-tab]')].map((n) => n.dataset.tab);
+    tabs.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+    saveTabs();
+    renderTabs();
+  });
+}
+
 $('tabs').addEventListener('click', (e) => {
+  // A drag ends in a click the browser sends anyway; it must not switch tabs.
+  if (tabDrag === 'dropped') { tabDrag = null; e.stopPropagation(); return; }
   const close = e.target.closest('[data-close]');
   if (close) { e.stopPropagation(); closeTab(close.dataset.close); return; }
   const tab = e.target.closest('[data-tab]');
@@ -4822,9 +5088,12 @@ $('sb-brand').addEventListener('click', async (e) => {
       hint: home ? '' : 'Set "homepage" in package.json to link this',
       run: () => call('shell:openExternal', home) },
     '-',
-    { label: update ? `Update to ${update.latest}…` : 'Check for updates',
-      hint: update ? `You have ${update.current}` : '',
-      run: () => (update ? offerUpdate() : checkForUpdates()) },
+    { label: updateReady ? `Restart to finish updating to ${updateReady}`
+        : update ? `Update to ${update.latest}…` : 'Check for updates',
+      hint: updateReady ? 'Downloaded already — otherwise it goes in when you close the app'
+        : update ? `You have ${update.current}` : '',
+      run: () => (updateReady ? restartForUpdate()
+        : update ? offerUpdate() : checkForUpdates()) },
     '-',
     { label: 'Release notes', run: openNotes },
     { label: 'About GitBraid', run: openAbout },
@@ -4866,12 +5135,28 @@ async function checkForUpdates({ quiet = false } = {}) {
   return res.data;
 }
 
-function paintUpdateFlag() {
-  $('sb-brand').classList.toggle('has-update', Boolean(update));
-  $('sb-brand').title = update
-    ? `GitBraid ${update.latest} is available — you have ${update.current}`
-    : 'GitBraid — project page, release notes, about';
+/* Set once an update has been downloaded and put off: the version that will be
+   there next time the app is opened. The file itself is held by the main
+   process, which is what applies it. */
+let updateReady = null;
+let readyFile = null;
+
+/** Take up the deferred update now instead of at closing time. */
+async function restartForUpdate() {
+  if (!readyFile) return;
+  setStatus(`Restarting into ${updateReady}…`);
+  await call('update:install', readyFile);
 }
+
+function paintUpdateFlag() {
+  $('sb-brand').classList.toggle('has-update', Boolean(update) || Boolean(updateReady));
+  $('sb-brand').title = updateReady
+    ? `GitBraid ${updateReady} is downloaded — it will be installed when you close the app`
+    : update
+      ? `GitBraid ${update.latest} is available — you have ${update.current}`
+      : 'GitBraid — project page, release notes, about';
+}
+
 
 /* The whole of it in one dialog: which version, what changed, and one button.
    Progress replaces the note line, because a download of a hundred megabytes
@@ -4895,7 +5180,7 @@ async function offerUpdate() {
     description: `You have ${update.current}. ${done}`,
     html: '<div class="modal-field up-notes">' +
       `<div class="up-title">${esc(update.title || `Version ${update.latest}`)}</div>` +
-      `<pre class="up-body">${esc(clipNotes(update.notes))}</pre></div>`,
+      `<div class="up-body">${notesHtml(update.notes)}</div></div>`,
     confirmLabel: kind === 'other' ? 'Open the release page' : 'Download and install',
   });
   if (!r) return;
@@ -4906,29 +5191,141 @@ async function offerUpdate() {
     const pct = total ? Math.round((read / total) * 100) : 0;
     setStatus(`Downloading ${update.latest} — ${pct}% of ${mb(total || size)}`);
   });
+  let file;
   try {
-    const file = await call('update:download', update);
-    if (!file) return;
-    setStatus(`Installing ${update.latest}…`);
-    const out = await call('update:install', file);
-    if (!out) return;
-    setStatus(out.restarted
-      ? `Restarting into ${update.latest}…`
-      : `${file.name} handed to your system installer`, 'ok');
+    file = await call('update:download', update);
   } finally {
     stop();
   }
+  if (!file) return;
+  await offerRestart(file);
+}
+
+/* What happens once the download is in.
+
+   Not a restart. An update is never urgent enough to take the window away from
+   someone in the middle of a merge, and this used to close and reopen the app
+   the moment the bytes landed. The new version waits until it is asked for, or
+   until the app is closing anyway. */
+async function offerRestart(file) {
+  const version = update ? update.latest : '';
+  if (file.kind !== 'appimage') {
+    /* A .deb cannot install itself and cannot promise a restart: it goes to the
+       system's package installer, which asks for a password of its own. */
+    const go = await modal({
+      title: `GitBraid ${version} is ready to install`,
+      description: 'It goes to your system package installer, which will ask for '
+        + 'your password. GitBraid keeps running; the new version starts the next '
+        + 'time you open it.',
+      confirmLabel: 'Open the installer',
+    });
+    if (!go) { setStatus(`${file.name} is downloaded — install it when you like`, 'ok'); return; }
+    const out = await call('update:install', file);
+    if (out) setStatus(`${file.name} handed to your system installer`, 'ok');
+    return;
+  }
+
+  const now = await modal({
+    title: `GitBraid ${version} is ready`,
+    description: 'Restarting takes a moment and reopens the repositories you have '
+      + 'open. Anything typed into a commit message is kept either way.',
+    confirmLabel: 'Restart now',
+    cancelLabel: 'Later',
+  });
+  if (now) {
+    setStatus(`Restarting into ${version}…`);
+    await call('update:install', file);
+    return;
+  }
+  // Later means later, not never: it is applied the next time the app closes.
+  const out = await call('update:later', file);
+  updateReady = out && out.staged ? version : null;
+  readyFile = updateReady ? file : null;
+  paintUpdateFlag();
+  setStatus(`GitBraid ${version} will be installed when you close the app`, 'ok');
 }
 
 const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;
 
-/* Release notes are markdown written for a web page; this is a dialog. Long
-   ones are cut rather than turning the dialog into a document. */
-function clipNotes(text) {
+/* A release body is markdown, written to be read on a web page. This dialog
+   used to print it raw, so a table of measurements arrived as a wall of pipes
+   and dashes and every **word** kept its asterisks.
+
+   The subset rendered here is the whole of what these notes use: headings,
+   emphasis, inline code, bullet and numbered lists, rules and tables. Anything
+   it does not know stays as the text it was, which is the right failure for
+   something this far from the point of the program.
+
+   The body is escaped first and matched afterwards, so nothing written in a
+   release — on a page this app does not control the contents of — can put
+   markup into the window. */
+function notesHtml(text) {
   const body = String(text || '').replace(/\r/g, '').trim();
-  if (!body) return 'No notes were written for this release.';
-  const lines = body.split('\n').slice(0, 24);
-  return lines.join('\n') + (body.split('\n').length > 24 ? '\n…' : '');
+  if (!body) return '<p class="up-none">No notes were written for this release.</p>';
+
+  const lines = esc(body).split('\n');
+  const inline = (t) => t
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s.,;:)]|$)/g, '$1<em>$2</em>')
+    // A link cannot be followed here, so it keeps its words and loses its address.
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+
+  const isRow = (l) => /^\s*\|.*\|\s*$/.test(l);
+  const isRule = (l) => /^\s*\|?[\s:|-]*-[\s:|-]*\|[\s:|-]*$/.test(l);
+  const isItem = (l) => /^\s*([-*+]|\d+\.)\s+/.test(l);
+  const isHead = (l) => /^#{1,6}\s+/.test(l);
+  const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+  // Where a paragraph or a list item stops swallowing the lines beneath it.
+  const breaks = (l) => !l.trim() || isItem(l) || isRow(l) || isHead(l);
+
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i += 1; continue; }
+
+    if (isRow(line) && i + 1 < lines.length && isRule(lines[i + 1])) {
+      const head = cells(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && isRow(lines[i])) { rows.push(cells(lines[i])); i += 1; }
+      out.push('<table class="up-table"><thead><tr>' +
+        head.map((c) => `<th>${inline(c)}</th>`).join('') +
+        '</tr></thead><tbody>' +
+        rows.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join('')}</tr>`).join('') +
+        '</tbody></table>');
+      continue;
+    }
+
+    if (isHead(line)) {
+      out.push(`<h4>${inline(line.replace(/^#{1,6}\s+/, ''))}</h4>`);
+      i += 1;
+      continue;
+    }
+
+    if (/^\s*([-*_])\s*\1\s*\1[\s-*_]*$/.test(line)) { out.push('<hr>'); i += 1; continue; }
+
+    if (isItem(line)) {
+      const tag = /^\s*\d+\.\s+/.test(line) ? 'ol' : 'ul';
+      const items = [];
+      while (i < lines.length && isItem(lines[i])) {
+        let item = lines[i].replace(/^\s*([-*+]|\d+\.)\s+/, '');
+        i += 1;
+        // Markdown wraps a long item over several lines; they are one item.
+        while (i < lines.length && !breaks(lines[i])) { item += ` ${lines[i].trim()}`; i += 1; }
+        items.push(`<li>${inline(item)}</li>`);
+      }
+      out.push(`<${tag}>${items.join('')}</${tag}>`);
+      continue;
+    }
+
+    let para = line.trim();
+    i += 1;
+    while (i < lines.length && !breaks(lines[i])) { para += ` ${lines[i].trim()}`; i += 1; }
+    out.push(`<p>${inline(para)}</p>`);
+  }
+  return out.join('');
 }
 
 /* ═════ about ═══════════════════════════════════════════════════ */
@@ -4997,6 +5394,131 @@ function renderNotes() {
     );
   }).join('') || '<p class="nt-empty">No release notes yet.</p>';
 }
+
+/* ═════ file history ════════════════════════════════════════════ */
+
+/* A panel of its own rather than the main list filtered to a path. git's own
+   path-filtered log drops the commits between the ones that touched the file,
+   so the parents the graph draws its lanes from are no longer all present —
+   lanes that lie are worse than no lanes at all. */
+const fhist = { path: '', commits: [], names: {}, at: -1,
+                home: null, next: null, was: null };
+
+/* The diff panel is moved here rather than rebuilt. Everything it can do — the
+   toolbar, the change map, block navigation, wrapping, side-by-side, drawing
+   only the rows on screen — is bound to that one element, and a second copy
+   would be a second place to fix every time. Moving a node keeps its listeners,
+   so it arrives working. */
+function mountViewer() {
+  const fv = $('fileview');
+  if (fhist.home) return;
+  fhist.home = fv.parentNode;
+  fhist.next = fv.nextSibling;
+  $('fh-slot').appendChild(fv);
+  fv.hidden = false;
+}
+
+function unmountViewer() {
+  const fv = $('fileview');
+  if (!fhist.home) return;
+  fhist.home.insertBefore(fv, fhist.next);
+  fhist.home = null;
+  fhist.next = null;
+}
+
+async function openFileHistory(file) {
+  // Whatever the middle pane was showing comes back when this panel closes.
+  if (!fhist.home) fhist.was = { file: state.file, selection: state.selection };
+  fhist.path = file;
+  fhist.commits = [];
+  fhist.names = {};
+  fhist.at = -1;
+
+  $('fh-path').textContent = file;
+  $('fh-path').title = file;
+  $('fh-count').textContent = '';
+  $('fh-list').innerHTML = '<li class="fh-empty">Reading history…</li>';
+  $('app').classList.add('reading-fhist');
+  $('fhist').hidden = false;
+  mountViewer();
+
+  const out = await call('repo:fileLog', repoPath(), file, { limit: 200 });
+  if (out === null) { closeFileHistory(); return; }
+  if (fhist.path !== file) return;        // another file was opened while git ran
+  fhist.commits = out.commits;
+  fhist.names = out.names || {};
+
+  if (!fhist.commits.length) {
+    $('fh-list').innerHTML =
+      '<li class="fh-empty">No commit has touched this file yet.</li>';
+    $('fh-count').textContent = '';
+    return;
+  }
+
+  renderFileHistory();
+  pickFileCommit(0);
+}
+
+function renderFileHistory() {
+  const n = fhist.commits.length;
+  $('fh-count').textContent = `${n} commit${n === 1 ? '' : 's'}`;
+  $('fh-list').innerHTML = fhist.commits.map((c, i) => {
+    /* --follow carries the history across a rename but says nothing about it,
+       so the one place the file changed name is called out where it happened. */
+    const now = fhist.names[c.hash];
+    const before = fhist.names[fhist.commits[i + 1]?.hash];
+    const renamed = now && before && now !== before
+      ? `<div class="fh-renamed">renamed from ${esc(before)}</div>` : '';
+    return `<li class="fh-row${i === fhist.at ? ' on' : ''}" data-i="${i}">` +
+      `<div class="fh-msg">${esc(c.subject || '(no message)')}</div>` +
+      `<div class="fh-meta"><span class="fh-sha">${esc(c.hash.slice(0, 7))}</span>` +
+      `<span>${esc(c.author)}</span><span>${esc(stamp(c.commitDate))}</span></div>` +
+      renamed +
+      '</li>';
+  }).join('');
+}
+
+async function pickFileCommit(i) {
+  const c = fhist.commits[i];
+  if (!c) return;
+  fhist.at = i;
+  for (const li of $('fh-list').querySelectorAll('.fh-row')) {
+    li.classList.toggle('on', Number(li.dataset.i) === i);
+  }
+  /* The name it had at that commit, not the name it has now — asking for
+     today's path at a commit made before the rename returns nothing.
+
+     Handed to the ordinary viewer as a file inside a commit, which is what it
+     is: that path already fetches with repo:diffCommitFile and already puts the
+     staging buttons away, because there is nothing to stage in the past. */
+  state.selection = { kind: 'commit', hash: c.hash };
+  state.file = { path: fhist.names[c.hash] || fhist.path, kind: 'commit',
+                 status: 'M', untracked: false };
+  await showFileDiff();
+}
+
+$('fh-list').addEventListener('click', (e) => {
+  const row = e.target.closest('.fh-row');
+  if (row) pickFileCommit(Number(row.dataset.i));
+});
+
+function closeFileHistory() {
+  unmountViewer();
+  $('app').classList.remove('reading-fhist');
+  $('fhist').hidden = true;
+  fhist.commits = [];
+  fhist.names = {};
+  fhist.at = -1;
+  $('fh-list').innerHTML = '';
+  // Put back whatever the middle pane was showing before this opened.
+  const was = fhist.was || { file: null, selection: null };
+  fhist.was = null;
+  state.file = was.file;
+  state.selection = was.selection;
+  renderViewer();
+}
+
+$('fh-close').addEventListener('click', closeFileHistory);
 
 function openNotes() {
   renderNotes();
@@ -5699,6 +6221,86 @@ $('c-hash').addEventListener('click', () => {
   setStatus('Full SHA copied', 'ok');
 });
 
+/* ── picking more than one file ──
+
+   The lists are redrawn wholesale on every refresh — a stage, a discard, a file
+   changing on disk — so a selection cannot live in the document as a class on a
+   row. It lives here, as paths, and is painted back on after each draw.
+
+   One list at a time holds the selection. Staged and unstaged are not two halves
+   of one list: the actions differ, and a menu offering to stage a file that is
+   already staged is a menu that has stopped meaning anything. */
+const picked = { kind: null, paths: new Set(), anchor: null };
+
+const pickedList = () => (picked.kind === 'conflict' ? 'list-conflicts'
+  : picked.kind === 'staged' ? 'list-staged'
+  : picked.kind === 'unstaged' ? 'list-unstaged'
+  : picked.kind === 'commit' ? 'list-commit-files' : null);
+
+function clearPicked() {
+  picked.kind = null;
+  picked.paths.clear();
+  picked.anchor = null;
+  paintPicked();
+}
+
+/** Put the selection back on the rows after a redraw. */
+function paintPicked() {
+  for (const id of FILE_LISTS) {
+    const list = $(id);
+    if (!list) continue;
+    const mine = id === pickedList();
+    for (const li of list.querySelectorAll('li[data-path]')) {
+      li.classList.toggle('picked', mine && picked.paths.has(li.dataset.path));
+    }
+  }
+  const n = picked.paths.size;
+  $('app').classList.toggle('multi-picked', n > 1);
+}
+
+/** The rows of one list, in the order they are drawn — what a Shift range means. */
+const rowsOf = (id) => [...$(id).querySelectorAll('li[data-path]')].map((li) => li.dataset.path);
+
+function pickOne(kind, path) {
+  picked.kind = kind;
+  picked.paths = new Set([path]);
+  picked.anchor = path;
+  paintPicked();
+}
+
+function pickToggle(id, kind, path) {
+  if (picked.kind !== kind) { pickOne(kind, path); return; }
+  if (picked.paths.has(path)) picked.paths.delete(path);
+  else picked.paths.add(path);
+  picked.anchor = path;
+  if (!picked.paths.size) picked.kind = null;
+  paintPicked();
+}
+
+function pickRange(id, kind, path) {
+  if (picked.kind !== kind || !picked.anchor) { pickOne(kind, path); return; }
+  const rows = rowsOf(id);
+  const a = rows.indexOf(picked.anchor);
+  const b = rows.indexOf(path);
+  if (a < 0 || b < 0) { pickOne(kind, path); return; }
+  const [lo, hi] = a < b ? [a, b] : [b, a];
+  picked.paths = new Set(rows.slice(lo, hi + 1));
+  paintPicked();
+}
+
+/** What the menu and the keys act on: the selection, or just the row under the
+    pointer when that row is not part of it. */
+function pickedFor(kind, path) {
+  if (picked.kind === kind && picked.paths.has(path) && picked.paths.size > 1) {
+    // Drawn order, not click order, so a patch reads the way the list does.
+    const rows = rowsOf(pickedList());
+    return rows.filter((p) => picked.paths.has(p));
+  }
+  return [path];
+}
+
+const FILE_LISTS = ['list-conflicts', 'list-staged', 'list-unstaged', 'list-commit-files'];
+
 /* file lists */
 function wireFileList(id) {
   $(id).addEventListener('click', async (e) => {
@@ -5718,11 +6320,25 @@ function wireFileList(id) {
         return resolveConflict(path, what);
       }
     }
-    state.file = { path, kind: li.dataset.kind, status: li.dataset.status,
+    const kind = li.dataset.kind;
+    /* Ctrl and Shift extend the selection and leave the open diff where it is:
+       picking a second file is not a request to read it, and swapping the pane
+       under the pointer on every Shift-click makes a range impossible to build. */
+    if (e.ctrlKey || e.metaKey) { pickToggle(id, kind, path); return; }
+    if (e.shiftKey) { pickRange(id, kind, path); return; }
+
+    pickOne(kind, path);
+    state.file = { path, kind, status: li.dataset.status,
                    untracked: li.dataset.untracked === '1' };
     $(id).querySelectorAll('li').forEach((n) => n.classList.remove('selected'));
     li.classList.add('selected');
     await showFileDiff();
+  });
+
+  /* A range is built with Shift held, and the browser would select the text of
+     every row between the two clicks while it is. */
+  $(id).addEventListener('mousedown', (e) => {
+    if (e.shiftKey && e.target.closest('li[data-path]')) e.preventDefault();
   });
 }
 ['list-conflicts', 'list-staged', 'list-unstaged', 'list-commit-files'].forEach(wireFileList);
@@ -5765,38 +6381,240 @@ $('btn-discard-all').addEventListener('click', async () => {
   setStatus(`Discarded ${paths.length} file${paths.length === 1 ? '' : 's'}`, 'ok');
 });
 
-/* ── per-file context menu ── */
-for (const id of ['list-conflicts', 'list-staged', 'list-unstaged', 'list-commit-files']) {
+/* ── per-file context menu ──
+   Every entry names how many files it will touch, because "Discard changes" and
+   "Discard 12 files" are not the same offer and the difference is not
+   recoverable. Entries that can only mean one file stay singular and act on the
+   row under the pointer. */
+for (const id of FILE_LISTS) {
   $(id).addEventListener('contextmenu', (e) => {
     const li = e.target.closest('li[data-path]');
     if (!li) return;
     const { path, kind } = li.dataset;
-    const untracked = li.dataset.untracked === '1';
+
+    /* Right-clicking outside the selection moves it, the way every file list
+       behaves — otherwise the menu would describe files that are not under the
+       pointer and look like it had misread the click. */
+    if (picked.kind !== kind || !picked.paths.has(path)) pickOne(kind, path);
+
+    const paths = pickedFor(kind, path);
+    const n = paths.length;
+    const many = n > 1;
+    const these = many ? `${n} files` : 'this file';
+    const untracked = paths.filter((p) => isUntracked(p));
+
     const items = [];
     if (kind === 'conflict') {
-      items.push({ label: 'Keep your version', run: () => resolveConflict(path, 'ours') });
-      items.push({ label: 'Keep their version', run: () => resolveConflict(path, 'theirs') });
-      items.push({ label: 'Mark resolved', run: () => resolveConflict(path, 'mark') });
+      items.push({ label: many ? `Keep your version of ${n} files` : 'Keep your version',
+        run: () => resolveMany(paths, 'ours') });
+      items.push({ label: many ? `Keep their version of ${n} files` : 'Keep their version',
+        run: () => resolveMany(paths, 'theirs') });
+      items.push({ label: many ? `Mark ${n} files resolved` : 'Mark resolved',
+        run: () => resolveMany(paths, 'mark') });
       items.push('-');
     }
-    if (kind === 'unstaged') items.push({ label: 'Stage this file', run: () => stage([path]) });
-    if (kind === 'staged') items.push({ label: 'Unstage this file', run: () => unstage([path]) });
+    if (kind === 'unstaged') {
+      items.push({ label: many ? `Stage ${n} files` : 'Stage this file',
+        accel: 'Enter', run: () => stage(paths) });
+    }
+    if (kind === 'staged') {
+      items.push({ label: many ? `Unstage ${n} files` : 'Unstage this file',
+        accel: 'Enter', run: () => unstage(paths) });
+    }
     if (kind !== 'commit') {
-      items.push({ label: 'Discard changes', danger: true, run: () => discard(path, untracked) });
+      items.push({ label: many ? `Discard ${n} files…` : 'Discard changes…',
+        accel: 'Delete', danger: true, run: () => discardMany(paths) });
+      items.push({ label: many ? `Stash ${n} files…` : 'Stash this file…',
+        run: () => stashPaths(paths, untracked.length) });
       items.push('-');
     }
+    items.push({
+      label: many ? `Save ${n} files as patch…` : 'Save as patch…',
+      hint: untracked.length === n && n > 0
+        ? 'A patch is made from tracked changes, and these are untracked'
+        : untracked.length
+          ? `${untracked.length} untracked file${untracked.length === 1 ? '' : 's'} cannot go in a patch`
+          : '',
+      disabled: untracked.length === n,
+      run: () => savePatch(paths, kind, untracked.length),
+    });
+    items.push('-');
+
+    /* Ignoring means two different things depending on what git already knows
+       about the file, and offering the wrong one is offering something that
+       silently does nothing. Deleted files are left out of both: a path that is
+       gone has nothing to ignore and nothing left to stop tracking. */
+    if (kind !== 'commit') {
+      const deleted = paths.filter((p) => isDeleted(p));
+      const tracked = paths.filter((p) => !isUntracked(p) && !isDeleted(p));
+      const fresh = paths.filter((p) => isUntracked(p));
+
+      if (deleted.length === n) {
+        items.push({ label: 'Add to .gitignore', disabled: true,
+          hint: n === 1 ? 'This file is already deleted'
+            : 'These files are already deleted' });
+      } else if (fresh.length === n) {
+        items.push({ label: many ? `Ignore ${n} files…` : 'Ignore this file…',
+          run: () => ignoreFiles(fresh) });
+      } else if (tracked.length === n) {
+        // .gitignore has no effect on a tracked file, so the honest offer is
+        // the pair: stop tracking it, then ignore it.
+        items.push({ label: many ? `Stop tracking ${n} files and ignore…`
+                                 : 'Stop tracking and ignore…',
+          hint: 'git already tracks this — ignoring alone would do nothing',
+          run: () => untrackAndIgnore(tracked) });
+      } else {
+        // A mixed selection: each half gets the entry that fits it.
+        if (fresh.length) {
+          items.push({ label: `Ignore ${plural(fresh.length, 'untracked file')}…`,
+            run: () => ignoreFiles(fresh) });
+        }
+        if (tracked.length) {
+          items.push({ label: `Stop tracking ${plural(tracked.length, 'tracked file')} and ignore…`,
+            run: () => untrackAndIgnore(tracked) });
+        }
+      }
+      items.push('-');
+    }
+
     items.push(
-      { label: 'Open in editor', run: () => openInEditor(path) },
-      { label: 'Show in file manager',
+      { label: 'File history…', disabled: many || isUntracked(path),
+        hint: many ? 'One file at a time'
+          : isUntracked(path) ? 'This file has never been committed' : '',
+        run: () => openFileHistory(path) },
+      '-',
+      // A deleted file has nothing on disk to open, and its folder may be gone too.
+      { label: 'Open in editor', disabled: many || isDeleted(path),
+        hint: isDeleted(path) && !many ? 'This file is no longer on disk' : '',
+        run: () => openInEditor(path) },
+      { label: 'Show in file manager', disabled: many || isDeleted(path),
         run: () => call('shell:openPath', `${repoPath()}/${path}`.replace(/\/[^/]*$/, '')) },
       '-',
-      { label: 'Copy path', run: () => {
-          navigator.clipboard.writeText(path);
-          setStatus('File path copied', 'ok');
+      { label: many ? `Copy ${n} paths` : 'Copy path', run: () => {
+          navigator.clipboard.writeText(paths.join('\n'));
+          setStatus(many ? `${n} file paths copied` : 'File path copied', 'ok');
         } },
     );
     contextMenu(e, items);
   });
+}
+
+/* The keys the menu advertises. A list only answers them while it has the
+   focus, so Delete in the commit message never reaches a file. */
+for (const id of FILE_LISTS) {
+  $(id).setAttribute('tabindex', '0');
+  $(id).addEventListener('keydown', (e) => {
+    if (e.target.closest('input, textarea')) return;
+    const kind = picked.kind;
+    if (!kind || id !== pickedList() || !picked.paths.size) return;
+    const paths = rowsOf(id).filter((p) => picked.paths.has(p));
+    if (!paths.length) return;
+
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      picked.paths = new Set(rowsOf(id));
+      paintPicked();
+      return;
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (kind === 'unstaged') stage(paths);
+      else if (kind === 'staged') unstage(paths);
+      return;
+    }
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (kind === 'commit') return;
+      e.preventDefault();
+      discardMany(paths);
+      return;
+    }
+    if (e.key === 'Escape' && picked.paths.size > 1) { e.preventDefault(); clearPicked(); }
+  });
+}
+
+/* ── ignoring ──
+   git ignores untracked files only. Writing a tracked path into .gitignore
+   changes nothing at all, which is why the menu offers a different thing for
+   each: an untracked file is simply ignored, a tracked one has to stop being
+   tracked first, and that is a change to the index worth saying out loud. */
+function ignorePatterns(path) {
+  const cut = path.lastIndexOf('/');
+  const dir = cut < 0 ? '' : path.slice(0, cut);
+  const name = cut < 0 ? path : path.slice(cut + 1);
+  const dot = name.lastIndexOf('.');
+  const ext = dot > 0 ? name.slice(dot) : '';
+  const out = [{ value: path, label: `Just this file`, help: path }];
+  if (ext) {
+    out.push({ value: `*${ext}`, label: `Every ${ext} file`,
+      help: `*${ext} — anywhere in the repository` });
+  }
+  if (dir) {
+    out.push({ value: `${dir}/`, label: 'Everything in this folder', help: `${dir}/` });
+  }
+  return out;
+}
+
+async function ignoreFiles(paths) {
+  if (!paths.length) return;
+  const many = paths.length > 1;
+  const r = await modal({
+    title: many ? `Ignore ${plural(paths.length, 'file')}` : 'Ignore this file',
+    description: 'The pattern is added to .gitignore in the top of the repository. '
+      + 'Ignoring only ever applies to files git is not already tracking.',
+    fields: many
+      // One rule per file is the only choice that means the same thing for all
+      // of them; a shared extension or folder is not something to assume.
+      ? [{ name: 'how', type: 'choice', options: [
+          { value: 'each', label: `Each of the ${paths.length} files by name`,
+            help: paths.slice(0, 3).join(', ') + (paths.length > 3 ? `, and ${paths.length - 3} more` : '') },
+        ] }]
+      : [{ name: 'how', type: 'choice', options: ignorePatterns(paths[0]) }],
+    confirmLabel: 'Ignore',
+  });
+  if (!r) return;
+  const patterns = many ? paths : [r.how];
+  const out = await call('repo:ignore', repoPath(), patterns);
+  if (out === null) return;
+  clearPicked();
+  await refresh();
+  setStatus(out.added.length
+    ? `Added ${plural(out.added.length, 'line')} to .gitignore`
+    : 'Already in .gitignore', 'ok');
+}
+
+/* Tracked, and the user wants it gone from the repository but kept on disk.
+   git rm --cached stages the removal; the file itself is untouched. */
+async function untrackAndIgnore(paths) {
+  if (!paths.length) return;
+  const ok = await confirmAction(
+    paths.length === 1 ? 'Stop tracking this file' : `Stop tracking ${plural(paths.length, 'file')}`,
+    `${paths.length === 1 ? 'The file stays' : 'The files stay'} on your disk, but git stops `
+    + `tracking ${paths.length === 1 ? 'it' : 'them'}: the removal is staged, and the next commit `
+    + `takes ${paths.length === 1 ? 'it' : 'them'} out of the repository for everyone. `
+    + `${paths.length === 1 ? 'Its name is' : 'Their names are'} added to .gitignore.`,
+    'Stop tracking'
+  );
+  if (!ok) return;
+  const gone = await call('repo:untrack', repoPath(), paths);
+  if (gone === null) return;
+  await call('repo:ignore', repoPath(), paths);
+  if (paths.includes(state.file?.path)) { state.file = null; closeFile(); }
+  clearPicked();
+  await refresh();
+  setStatus(`Stopped tracking ${plural(paths.length, 'file')}`, 'ok');
+}
+
+/** Whether a path is untracked, read from the row the list drew for it. */
+function isUntracked(path) {
+  const s = state.status;
+  return Boolean(s && s.untracked.some((f) => f.path === path));
+}
+
+/** Deleted in the working tree or staged as deleted — either way, not there. */
+function isDeleted(path) {
+  const s = state.status;
+  if (!s) return false;
+  return [...s.unstaged, ...s.staged].some((f) => f.path === path && f.status === 'D');
 }
 
 $('btn-stage-all').addEventListener('click', async () => {
@@ -5847,6 +6665,7 @@ document.addEventListener('keydown', (e) => {
     if (!$('prefs').hidden) { closePrefs(); return; }
     if (!$('about').hidden) { closeAbout(); return; }
     if (!$('notes').hidden) { closeNotes(); return; }
+    if (!$('fhist').hidden) { closeFileHistory(); return; }
     if ($('app').classList.contains('managing')) { closeRepoManager(); return; }
     if ($('app').classList.contains('viewing-file')) { closeFile(); return; }
   }
@@ -5869,21 +6688,31 @@ document.addEventListener('keydown', (e) => {
 });
 
 /* pane resizing */
+/* Each handle names the pane it drags, which side of it that pane is on, and
+   the custom property that carries the width. Two of them were spelled out in
+   the conditions here; a third would have had to be spelled out again, and one
+   missed condition drags the wrong pane. */
+const RESIZERS = {
+  sidebar: { sel: '.sidebar', grows: 'right', varName: '--sidebar-w' },
+  detail: { sel: '.detail', grows: 'left', varName: '--detail-w' },
+  fhist: { sel: '.fh-list', grows: 'right', varName: '--fhist-w' },
+};
+
 document.querySelectorAll('.drag-handle').forEach((handle) => {
   handle.addEventListener('mousedown', (down) => {
     down.preventDefault();
-    const which = handle.dataset.resize;
+    const spec = RESIZERS[handle.dataset.resize];
+    if (!spec) return;
     const startX = down.clientX;
     const root = document.documentElement;
     // Measure the pane itself: the widths default to clamp(), which
     // getPropertyValue hands back unresolved.
-    const pane = el(which === 'sidebar' ? '.sidebar' : '.detail');
-    const startW = pane.getBoundingClientRect().width;
+    const startW = el(spec.sel).getBoundingClientRect().width;
 
     const onMove = (move) => {
-      const delta = which === 'sidebar' ? move.clientX - startX : startX - move.clientX;
+      const delta = spec.grows === 'right' ? move.clientX - startX : startX - move.clientX;
       const next = Math.min(700, Math.max(160, startW + delta));
-      root.style.setProperty(which === 'sidebar' ? '--sidebar-w' : '--detail-w', next + 'px');
+      root.style.setProperty(spec.varName, next + 'px');
     };
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);

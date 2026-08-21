@@ -227,6 +227,7 @@ textarea {
 .repomgr  { grid-row: 4; }
 .prefs    { grid-row: 4; }
 .notes    { grid-row: 4; }
+.fhist    { grid-row: 4; }
 .term      { grid-row: 5; }
 .statusbar { grid-row: 6; }
 
@@ -244,6 +245,12 @@ textarea {
 .app.reading-notes .main,
 .app.reading-notes .repomgr,
 .app:not(.reading-notes) .notes { display: none; }
+
+/* ── file history ────────────────────────────────────────────── */
+.app.reading-fhist .welcome,
+.app.reading-fhist .main,
+.app.reading-fhist .repomgr,
+.app:not(.reading-fhist) .fhist { display: none; }
 
 .app.prefs-open .welcome,
 .app.prefs-open .main,
@@ -280,6 +287,20 @@ textarea {
   scrollbar-width: none;            /* Firefox */
 }
 .tabs::-webkit-scrollbar { width: 0; height: 0; }
+
+/* ── dragging a tab into place ── */
+/* Lifted while it is being carried, so it reads as held rather than as one of
+   the row it is passing over. */
+.tab.dragging {
+  z-index: 5;
+  cursor: grabbing;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .35);
+  opacity: .96;
+}
+/* The others must not slide about under their own transitions while the strip
+   is re-ordering them, and nothing may be selected by a hand that is dragging. */
+.tabs.dragging { cursor: grabbing; user-select: none; }
+.tabs.dragging .tab { transition: none; }
 
 .tab {
   position: relative;
@@ -2235,21 +2256,73 @@ textarea {
 
 .up-notes { display: grid; gap: 6px; }
 .up-title { font-weight: 650; }
+/* The release notes, rendered rather than printed raw. Prose is set in the
+   window's own face — it is prose — and only code keeps the monospace. */
 .up-body {
-  max-height: 260px;
+  max-height: 300px;
   margin: 0;
-  padding: 9px 10px;
+  padding: 10px 12px;
   overflow: auto;
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  font-family: var(--mono);
-  font-size: 11.5px;
-  line-height: 1.5;
-  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.55;
   color: var(--text-dim);
   user-select: text;
 }
+.up-body > :first-child { margin-top: 0; }
+.up-body > :last-child { margin-bottom: 0; }
+.up-body p { margin: 0 0 8px; }
+.up-body h4 {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.up-body ul, .up-body ol { margin: 0 0 8px; padding-left: 18px; }
+.up-body li { margin: 0 0 4px; }
+.up-body strong { color: var(--text); font-weight: 650; }
+.up-body code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.up-body hr { margin: 12px 0; border: 0; border-top: 1px solid var(--line); }
+.up-none { font-style: italic; color: var(--text-faint); }
+
+/* A table of measurements is the reason any of this is rendered at all: raw, it
+   arrived as a wall of pipes. Numbers line up; the row labels do not wrap away
+   to nothing on a narrow dialog. */
+.up-table {
+  width: 100%;
+  margin: 0 0 10px;
+  border-collapse: collapse;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.up-table th, .up-table td {
+  padding: 4px 8px 4px 0;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line-soft);
+}
+.up-table th {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.up-table td:first-child { color: var(--text); }
+/* A measurement is one thing, so it does not get broken across two lines. The
+   first column holds the label and may wrap as much as it likes. */
+.up-table td:not(:first-child), .up-table th:not(:first-child) { white-space: nowrap; }
+.up-table tr:last-child td { border-bottom: 0; }
 
 /* ── change map ──────────────────────────────────────────────── */
 /* Always present, even with nothing to show: reserving the strip means opening
@@ -2455,6 +2528,102 @@ textarea {
 .fv-body.wrap .difftable.split td.dl-text { overflow: visible; text-overflow: clip; }
 .difftable.split td:nth-child(3) { border-left: 1px solid var(--line); }
 .dl-void { background: var(--surface); opacity: .35; }
+
+/* ── file history ────────────────────────────────────────────── */
+/* A panel of its own rather than the main list filtered: a filtered log breaks
+   the parent links the graph draws its lanes from, and lanes that lie are worse
+   than no lanes. Commits on the left, the file at the chosen one on the right. */
+.fhist {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  background: var(--bg);
+}
+.fh-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.fh-title { min-width: 0; }
+.fh-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.fh-head h1 {
+  margin: 2px 0 0;
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fh-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.fh-count { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+.fh-body {
+  display: grid;
+  grid-template-columns: var(--fhist-w, 380px) 4px minmax(0, 1fr);
+  min-height: 0;
+}
+.fh-list { margin: 0; padding: 6px 0; list-style: none; overflow: auto; border-right: 1px solid var(--line); }
+
+/* Where the real diff panel goes while history is open. It carries
+   `grid-column: 3` for its place in the main layout, which here would invent
+   two columns that do not exist. */
+.fh-slot { display: grid; min-width: 0; min-height: 0; }
+.fh-slot > .fileview { grid-column: 1; grid-row: 1; }
+/* Its own close button would shut the diff and leave an empty half; the panel's
+   close button is the way out of here. */
+.app.reading-fhist #fv-close { display: none; }
+
+.fh-row { padding: 7px 14px; cursor: pointer; border-left: 2px solid transparent; }
+.fh-row:hover { background: var(--surface-2); }
+.fh-row.on { background: var(--row-sel); border-left-color: var(--accent); }
+.fh-msg {
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fh-meta {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.fh-sha { font-family: var(--mono); }
+/* A rename is the one thing --follow hides, so it is called out where it happened. */
+.fh-renamed {
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--accent-text);
+}
+.fh-empty { padding: 28px 18px; text-align: center; color: var(--text-faint); font-size: 12px; }
+
+/* ── picking several files ───────────────────────────────────── */
+/* A picked row and the open row are two different things: one says "the actions
+   will touch this", the other says "this is what the pane is showing". They can
+   be the same row, so they must not be the same mark — the open file keeps its
+   filled background, and a picked row is banded down its left edge. */
+.filelist li.picked {
+  background: var(--row-sel);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.filelist li.picked.selected { box-shadow: inset 2px 0 0 var(--accent); }
+/* Building a range with Shift must not paint the rows it passes as text. */
+.filelist li { user-select: none; }
+.filelist:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* While several are picked, the per-row buttons would act on one of them and
+   read as though they had ignored the rest. */
+.app.multi-picked .filelist li.picked .f-act { visibility: hidden; }
 
 /* ── find in history ────────────────────────────────────────── */
 /* Docked rather than floating: an overlay would sit on top of the very row it
@@ -3311,6 +3480,10 @@ mark {
   border-radius: .75em;
   box-shadow: 0 20px 50px rgba(0, 0, 0, .5);
 }
+/* Release notes are a document, not a question, and they carry a table of
+   measurements. Given a question's width the columns wrap words like "268 ms"
+   onto two lines. */
+.modal-card:has(.up-notes) { width: clamp(460px, 46vw, 720px); }
 .modal-card h3 { margin: 0 0 .25em; font-size: 1.15em; }
 .modal-desc { margin: 0 0 1.1em; color: var(--text-dim); font-size: .92em; }
 .modal-field { margin-bottom: .75em; }

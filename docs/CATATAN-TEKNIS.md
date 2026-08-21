@@ -386,6 +386,204 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   lebar membuangnya dan mengukur lagi. Diuji 1280→980→1280: model dan halaman
   tetap sepakat dalam 2px di ketiganya
 
+**Memilih banyak berkas sekaligus**
+- Ctrl/Cmd+klik menambah-mengurangi, Shift+klik membuat rentang, klik biasa
+  memilih satu sekaligus membuka diff-nya. Ctrl+A memilih seisi daftar
+- Ctrl dan Shift **tidak** mengganti berkas yang terbuka di panel: memilih
+  berkas kedua bukan permintaan untuk membacanya, dan menukar panel di tiap
+  Shift+klik membuat rentang mustahil dibangun
+- Pilihannya **tidak disimpan sebagai kelas di DOM**. Daftar digambar ulang
+  seutuhnya setiap kali ada refresh — stage, discard, berkas berubah di disk —
+  jadi pilihan disimpan sebagai daftar path lalu dicatkan kembali setelah tiap
+  gambar. Path yang sudah tidak ada di status ikut gugur dari pilihan
+- Satu daftar saja yang memegang pilihan. Staged dan unstaged bukan dua paruh
+  dari satu daftar: aksinya berbeda, dan menu yang menawarkan "stage" untuk
+  berkas yang sudah ter-stage adalah menu yang berhenti bermakna
+- Klik kanan di luar pilihan **memindahkan** pilihan ke baris itu, seperti
+  daftar berkas mana pun — kalau tidak, menunya akan menyebut berkas yang tidak
+  ada di bawah kursor dan tampak salah baca
+- Tiap entri menyebut **berapa** berkas yang akan disentuh. "Discard changes"
+  dan "Discard 12 files" bukan tawaran yang sama, dan selisihnya tidak bisa
+  dibatalkan
+- Tombol per-baris disembunyikan pada baris terpilih selama lebih dari satu
+  dipilih: tombol itu akan mengenai satu berkas dan terbaca seolah mengabaikan
+  sisanya
+- Baris terpilih dan baris terbuka dua hal berbeda — yang satu berkata "aksi
+  akan mengenai ini", yang lain "ini yang sedang ditampilkan panel". Bisa baris
+  yang sama, jadi tandanya harus beda: yang terbuka berlatar penuh, yang
+  terpilih diberi pita di tepi kiri
+
+**Menggeser tab**
+- Tab bisa ditekan-tahan lalu digeser ke posisi mana pun; yang lain menyingkir,
+  dan urutannya tersimpan
+- Memakai pointer event, **bukan** drag-and-drop bawaan peramban — yang bawaan
+  memberi gambar bayangan yang tidak bisa digayakan dan sasaran jatuh yang tidak
+  terlihat. Di sini tab-nya sendiri yang mengikuti kursor
+- Satu arah saja: seretan memindahkan **elemen**, dan array `tabs` dibaca ulang
+  dari dokumen saat dilepas. Kalau keduanya sama-sama diubah, mereka bisa
+  berselisih di tengah jalan
+- Saat elemen berpindah di tata letak, titik acuannya digeser sebesar
+  perpindahan itu — kalau tidak, tab-nya melompat lepas dari tangan
+- Kelonggaran 5px: klik selalu sedikit bergoyang, dan tanpa itu setiap klik jadi
+  seretan satu piksel yang menelan klik yang dimaksud
+- **Dua cacat yang sempat saya buat, keduanya membuat strip berhenti menjawab
+  sama sekali**:
+  - `releasePointerCapture` melempar galat untuk pointer yang tidak sedang
+    ditangkap, dan itu menghentikan penangan `pointerup` di tengah — `tabDrag`
+    tertinggal memegang elemen, dan itu membuat `renderTabs()` jadi tidak
+    berbuat apa-apa untuk sisa sesi. Sekarang seretan dilepas **lebih dulu**,
+    baru hal-hal yang bisa gagal dikerjakan, dan keduanya dibungkus
+  - Penanda "baru saja diseret" menunggu klik yang tidak pernah datang (strip
+    digambar ulang saat dilepas, jadi kliknya tidak punya sasaran), lalu ia
+    menelan klik berikutnya — tombol tutup tab jadi mati. Sekarang penanda itu
+    dihapus oleh tekanan berikutnya
+- Dekat tepi, strip ikut menggulir supaya tab bisa dibawa ke tempat yang sedang
+  tidak terlihat
+
+**Menyelesaikan update**
+- Unduhan **tidak lagi berakhir dengan restart**. Dulu ia langsung
+  `app.relaunch(); app.quit()` begitu byte terakhir mendarat — dan update tidak
+  pernah cukup mendesak untuk merebut jendela orang yang sedang di tengah merge
+- Sesudah unduh: tawaran **"Restart now" / "Later"**. Kalau ditunda, pemasangan
+  terjadi saat aplikasi ditutup berikutnya — saat restart tidak berbiaya apa pun
+  karena programnya memang sedang berhenti. Terukur ujung-ke-ujung dengan berkas
+  tiruan: tetap versi lama selama berjalan, tertukar saat keluar, hak akses 755,
+  tanpa sisa `.new`
+- Tombol batalnya diberi nama **"Later"**, bukan "Cancel": keduanya sama-sama
+  keputusan, dan "Cancel" terdengar seperti membatalkan
+- Berkas tertunda disimpan **di memori saja**. Kalau sesi berakhir dengan cara
+  lain, unduhannya diambil lagi — itu lebih murah daripada menalar berkas basi
+  yang tertinggal di disk
+- Keluar tidak pernah terhalang oleh penukaran yang gagal: kalau gagal, versi
+  yang bekerja tetap di tempatnya dan pemeriksaan berikutnya menawarkan lagi
+- **`.deb` tidak bisa ditunda** — ia butuh pemasang paket sistem, bukan rename,
+  dan pemasang itu minta kata sandi sendiri. Kalimatnya berbeda dan tidak
+  menjanjikan restart
+- Titik di tombol versi kini punya dua arti: "ada versi baru" dan "sudah
+  terunduh, akan dipasang saat ditutup"
+
+**Draf pesan commit bertahan melewati restart**
+- Prasyarat bagi semua di atas. Pesan commit setengah jadi adalah satu-satunya
+  hal di jendela ini yang **tidak ada di tempat lain**: riwayat kembali dari
+  git, daftar berkas kembali dari git, tapi apa yang hendak Anda katakan tidak
+- Dulu ia hanya dibawa antar-tab di memori lewat `parkTab()`, dan hilang begitu
+  aplikasi ditutup. Terukur: tidak ada satu kunci pun di penyimpanan yang
+  memuatnya, dan tidak ada kait `before-quit` maupun `beforeunload` sama sekali
+- Disimpan **per repositori**, karena itu yang dimiliki sebuah pesan
+- Ditulis **sambil diketik** (ditunda 400ms), bukan menunggu jendela ditutup —
+  menunggu berarti kehilangannya pada persis kejadian yang ingin ia selamati.
+  Ditambah satu simpanan terakhir di `beforeunload` untuk ketikan terakhir
+- Draf kosong dihapus dari penyimpanan, bukan disimpan sebagai kosong — kalau
+  tidak, pesan yang sudah dibersihkan akan hidup lagi. Spasi saja bukan draf,
+  tapi centang amend sendirian tetap layak diingat
+- Draf di memori menang atas yang tersimpan: ia yang lebih baru
+
+**Ikon di dock terlambat muncul**
+- Dock mencocokkan jendela dengan peluncurnya lewat `WM_CLASS` jendela itu, dan
+  pencocokannya **peka huruf besar-kecil**
+- Electron mengambil `WM_CLASS` dari nama berkas biner, yaitu `gitbraid` —
+  terukur dengan `xprop`: `WM_CLASS(STRING) = "gitbraid", "gitbraid"`. Berkas
+  desktop-nya menyatakan `StartupWMClass=GitBraid`, jadi cocokan langsungnya
+  gagal dan shell jatuh ke tebakan cadangan (mencocokkan `WM_CLASS` dengan nama
+  berkas desktop). Ikonnya tetap muncul, hanya terlambat — itu persis gejalanya
+- Diuji supaya tidak melenceng lagi: `StartupWMClass` harus sama persis dengan
+  nama biner, dan harus huruf kecil semua
+- Yang **bukan** penyebabnya, sudah diperiksa: berkas ikon lengkap di kedelapan
+  ukuran hicolor, dan tidak ada entri desktop kembar yang bentrok
+
+**Ignore, menyesuaikan keadaan berkas**
+- git **hanya** mengabaikan berkas tak terlacak. Menulis berkas terlacak ke
+  `.gitignore` tidak berefek apa pun — jadi menunya menawarkan hal berbeda untuk
+  keadaan yang berbeda, karena menawarkan yang salah sama dengan menawarkan
+  sesuatu yang diam-diam tidak melakukan apa-apa:
+  - **tak terlacak** → "Ignore this file…", dengan pilihan pola: berkas itu
+    saja, semua berkas berekstensi sama, atau seisi foldernya
+  - **terlacak** → "Stop tracking and ignore…" — `git rm --cached` lalu tulis ke
+    `.gitignore`. Berkasnya tetap di disk, tapi penghapusannya ter-stage dan
+    commit berikutnya mengeluarkannya dari repo untuk semua orang. Ada dialog
+    konfirmasi yang menyebut itu
+  - **terhapus** → entrinya mati: path yang sudah hilang tidak punya apa pun
+    untuk diabaikan maupun dihentikan pelacakannya
+  - **campuran** → tiap bagian dapat entrinya sendiri
+- "Open in editor" juga mati untuk berkas terhapus — tidak ada yang bisa dibuka
+- `.gitignore` dibuat kalau belum ada, pola tidak ditulis dua kali, dan berkas
+  yang tidak berakhir dengan baris-baru diberi satu dulu — kalau tidak, pola
+  baru akan menyambung ke baris terakhir
+
+**File history**
+- **Panel tersendiri**, bukan daftar commit utama yang disaring. Log yang
+  disaring per-path menjatuhkan commit di antaranya, jadi induk yang dipakai
+  graph untuk menggambar lajur tidak lagi lengkap — dan lajur yang berbohong
+  lebih buruk daripada tidak ada lajur
+- Kiri daftar commit yang menyentuh berkas itu, kanan diff berkas itu pada
+  commit yang dipilih. Pembatasnya bisa digeser
+- `--follow` membawa riwayat melewati rename — itu justru alasan utama riwayat
+  berkas berguna
+- **Nama berkas di tiap commit harus diambil dari log itu sendiri.** Percobaan
+  pertama menanyakan `git show --follow <hash> -- <path-sekarang>` per commit:
+  untuk commit sebelum rename hasilnya kosong, dan itu terbaca sebagai "commit
+  ini tidak mengubah apa-apa" padahal yang diubahnya berkas bernama lain.
+  `--name-status` melaporkan nama sebagaimana adanya saat itu, dan mengeja
+  rename sebagai `R100 <lama> <baru>` — satu-satunya tempat nama lama muncul
+- `core.quotePath=false` supaya path beraksen atau berspasi datang apa adanya,
+  bukan sebagai escape
+- Rename ditandai di baris tempat ia terjadi, karena `--follow` menyeberanginya
+  tanpa berkata apa-apa
+- **Panel diff-nya dipindahkan ke sini, bukan dibangun ulang.** Semua
+  kemampuannya — toolbar, peta perubahan, navigasi antar blok, wrap,
+  side-by-side, menggambar hanya baris yang terlihat — terikat pada satu elemen
+  itu; salinan kedua berarti tempat kedua yang harus diperbaiki setiap kali.
+  Memindahkan node mempertahankan listener-nya, jadi ia datang dalam keadaan
+  bekerja. Saat panel ditutup, node-nya dikembalikan ke tempat semula dan berkas
+  yang tadinya terbuka dipulihkan
+- Commit yang dipilih diserahkan ke penampil sebagai **berkas di dalam sebuah
+  commit** — memang begitu keadaannya. Jalur itu sudah mengambil lewat
+  `repo:diffCommitFile` dan sudah menyembunyikan tombol stage, karena tidak ada
+  yang bisa di-stage di masa lalu
+- `grid-column: 3` milik penampil itu untuk tempatnya di tata letak utama; di
+  slot riwayat itu akan mengarang dua kolom yang tidak ada, jadi ditimpa
+- Tombol tutup milik penampil disembunyikan di sini: menutup diff akan
+  menyisakan separuh panel kosong. Escape menutup panel riwayatnya
+- Penggeser panel dibuat berbasis tabel. Dua panel sebelumnya dieja satu per
+  satu di dalam kondisi; panel ketiga harus dieja lagi, dan satu kondisi
+  terlewat berarti menggeser panel yang salah
+
+**Aksi atas banyak berkas**
+- Discard memisahkan yang terlacak dari yang tidak, karena itu dua perintah
+  berbeda — satu memulihkan berkas, satu menghapusnya — dan peringatannya
+  menyebutkan keduanya. Menghapus berkas tak terlacak adalah satu-satunya hal
+  di sini yang git tidak menyimpan salinannya di mana pun
+- Stash sebagian memakai `git stash push -- <paths>`. Berkas tak terlacak butuh
+  `-u`, kalau tidak git meninggalkannya tanpa berkata apa-apa — dan itu akan
+  tampak seperti stash yang diam-diam melewatkannya
+- Save as Patch memakai `git diff [--cached] -- <paths>`. `git diff` hanya
+  melaporkan perubahan terlacak, jadi berkas tak terlacak tidak bisa masuk:
+  entrinya dimatikan kalau semuanya tak terlacak, dan jumlah yang ditinggalkan
+  disebutkan setelah berkas tersimpan. Diuji: hasilnya lolos `git apply --check`
+- **Semua perintah ini berakhir dengan `-- <paths>`.** Diberi daftar kosong,
+  pathspec-nya lenyap dan perintahnya mengenai seluruh working tree, bukan
+  berkas yang disebut menu. Ketiganya menolak daftar kosong, string kosong, dan
+  nilai bukan-string; sebuah string telanjang tidak dipecah jadi huruf. Diuji
+  dengan memanggil ketiganya lewat IPC: tiga-tiganya ditolak dan tidak satu
+  berkas pun berubah
+
+**Catatan rilis di dialog update**
+- Isi rilis GitHub itu Markdown yang ditulis untuk halaman web, dan dialognya
+  dulu mencetaknya **mentah** di dalam `<pre>` — jadi tabel pengukuran datang
+  sebagai dinding pipa dan setiap `**kata**` masih membawa tanda bintangnya
+- Sekarang dirender: judul, penekanan, kode sebaris, daftar berbutir dan
+  bernomor, garis, dan tabel. Yang tidak dikenali dibiarkan apa adanya
+- **Di-escape dulu, dicocokkan belakangan.** Isinya berasal dari halaman yang
+  bukan aplikasi ini yang menentukan isinya, jadi tidak boleh ada yang bisa
+  menanam markup ke jendela. Diuji dengan `<img src=x onerror=...>`: nol tag
+  tertanam, skrip tidak berjalan, teksnya tetap terbaca
+- Dialognya dilebarkan (`clamp(460px, 46vw, 720px)`) khusus saat memuat catatan
+  rilis, dan kolom angka tidak boleh terpotong — dengan lebar dialog tanya-jawab
+  biasa, "268 ms" pecah jadi dua baris
+- **Perlu diingat saat menulis catatan rilis:** yang melihat dialog ini selalu
+  memakai versi **lama**. Perbaikan renderer ini baru terasa mulai rilis
+  sesudahnya, jadi isi rilis tetap harus enak dibaca sebagai teks polos
+
 **Palang gulir horizontal**
 - Mode unified tanpa wrap memakai bilah gulir horizontal yang **selalu terlihat**
   di bawah panel, bukan bilah bawaan yang menunggu di dasar konten ratusan ribu

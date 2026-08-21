@@ -738,15 +738,43 @@ function sendUpdateProgress(read, total) {
   }
 }
 
+/* Swapping the program for the one just downloaded. By rename, so the change is
+   atomic: a half-written program is worse than an old one. */
+function swapAppImage(file) {
+  const here = process.env.APPIMAGE;
+  if (!here) throw new Error('This is not an AppImage.');
+  fs.copyFileSync(file, `${here}.new`);
+  fs.chmodSync(`${here}.new`, 0o755);
+  fs.renameSync(`${here}.new`, here);
+}
+
+/* An update the user chose to put off. It is applied when the app closes anyway
+   — the moment a restart costs nothing, because the program is stopping either
+   way. Held in memory only: if the session ends some other way the download is
+   simply fetched again, which is cheaper than reasoning about a stale file left
+   behind on disk. */
+let pendingUpdate = null;
+
+handle('update:later', async ({ path: file, kind }) => {
+  if (kind !== 'appimage') return { staged: false };
+  pendingUpdate = file;
+  return { staged: true };
+});
+
+app.on('will-quit', () => {
+  if (!pendingUpdate) return;
+  const file = pendingUpdate;
+  pendingUpdate = null;
+  /* Quitting must not be blocked by this. A failure here leaves the old program
+     in place and the next check offers the update again, which is the right
+     outcome for something the user asked to happen quietly. */
+  try { swapAppImage(file); } catch { /* keep the version that works */ }
+});
+
 handle('update:install', async ({ path: file, kind }) => {
   if (kind === 'appimage') {
-    const here = process.env.APPIMAGE;
-    if (!here) throw new Error('This is not an AppImage.');
-    // Replaced by rename so the swap is atomic: a half-written program is worse
-    // than an old one.
-    fs.copyFileSync(file, `${here}.new`);
-    fs.chmodSync(`${here}.new`, 0o755);
-    fs.renameSync(`${here}.new`, here);
+    swapAppImage(file);
+    pendingUpdate = null;          // it is being applied now, not at quit
     app.relaunch();
     app.quit();
     return { restarted: true };
@@ -1461,6 +1489,80 @@ handle('repo:log', async (repo, { limit = 400, all = true, skip = 0 } = {}) => {
   }
 });
 
+/* Every commit that touched one path, newest first.
+
+   --follow carries the history across renames, which is the whole reason a file
+   older than its current name has any history worth reading. It only accepts a
+   single path, which is why this takes one rather than a list. */
+handle('repo:fileLog', async (repo, file, { limit = 200 } = {}) => {
+  if (typeof file !== 'string' || !file.trim()) throw new Error('No file was named.');
+  let commits;
+  try {
+    commits = parseLog(await git(repo, ['log', '--follow', '--date-order', '-z',
+      `--pretty=format:${LOG_FORMAT}`, `--max-count=${limit}`, '--', file]));
+  } catch (e) {
+    if (/does not have any commits|unknown revision/i.test(e.message)) return { commits: [], names: {} };
+    throw e;
+  }
+  if (!commits.length) return { commits: [], names: {} };
+
+  /* What the file was called at each of those commits.
+
+     This has to come from the log itself. Asking a commit made before a rename
+     for today's path returns nothing — which read as "this commit changed
+     nothing", when what it changed was a file with another name. --name-status
+     reports the path as it was at each commit, and spells a rename out as
+     "R100 <old> <new>", which is the only place the old name appears at all.
+
+     core.quotePath is turned off so a path with an accent or a space arrives as
+     itself rather than as escapes. */
+  const names = {};
+  const raw = await git(repo, ['-c', 'core.quotePath=false', 'log', '--follow',
+    `--max-count=${limit}`, '--format=%x00%H', '--name-status', '--', file]);
+  for (const chunk of raw.split('\0')) {
+    const lines = chunk.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) continue;
+    const hash = lines[0];
+    const record = lines[1];
+    if (!record) continue;
+    const parts = record.split('\t');
+    // "R100 old new" names both; everything else names one.
+    names[hash] = parts.length >= 3 ? parts[2] : parts[1];
+  }
+  return { commits, names };
+});
+
+/* Adding a line to .gitignore. The file is created if it is missing, the line is
+   not written twice, and a file that does not end in a newline gets one first —
+   otherwise the new pattern would join itself to the last one. */
+handle('repo:ignore', async (repo, patterns) => {
+  const list = (Array.isArray(patterns) ? patterns : [patterns])
+    .filter((p) => typeof p === 'string' && p.trim())
+    .map((p) => p.trim());
+  if (!list.length) throw new Error('Nothing was named to ignore.');
+
+  const file = path.join(repo, '.gitignore');
+  let text = '';
+  try { text = fs.readFileSync(file, 'utf8'); } catch { /* not there yet */ }
+  const have = new Set(text.split(/\r?\n/).map((l) => l.trim()));
+  const add = list.filter((p) => !have.has(p));
+  if (!add.length) return { added: [], already: list };
+
+  const head = text && !text.endsWith('\n') ? '\n' : '';
+  fs.appendFileSync(file, `${head}${add.join('\n')}\n`);
+  return { added: add, already: list.filter((p) => have.has(p)) };
+});
+
+/* Stop tracking a file without deleting it. Writing a tracked file into
+   .gitignore does nothing at all — git ignores untracked files only — so the
+   two go together or the menu entry is a lie. */
+handle('repo:untrack', async (repo, files) => {
+  const list = (Array.isArray(files) ? files : [files])
+    .filter((f) => typeof f === 'string' && f.trim());
+  if (!list.length) throw new Error('Nothing was named to stop tracking.');
+  return git(repo, ['rm', '--cached', '-r', '--', ...list]);
+});
+
 handle('repo:refs', async (repo) => {
   /* An annotated tag is an object in its own right, so %(objectname) is the tag
      rather than the commit it marks, and %(committerdate) is empty because a tag
@@ -2110,6 +2212,44 @@ handle('repo:stashSave', async (repo, message, includeUntracked) => {
   if (includeUntracked) args.push('-u');
   if (message) args.push('-m', message);
   return git(repo, args);
+});
+
+/* Stashing a few files rather than everything. Same guard as discard: an empty
+   pathspec here would take the whole working tree, which is not what a menu
+   entry naming three files may ever do. */
+handle('repo:stashPaths', async (repo, files, message, includeUntracked) => {
+  const list = (Array.isArray(files) ? files : [files])
+    .filter((f) => typeof f === 'string' && f.trim());
+  if (!list.length) throw new Error('Nothing was named to stash.');
+  const args = ['stash', 'push'];
+  if (includeUntracked) args.push('-u');
+  if (message) args.push('-m', message);
+  args.push('--', ...list);
+  return git(repo, args);
+});
+
+/* A patch of whichever files were picked, written where the user says.
+
+   git diff shows tracked changes only, so an untracked file has nothing to
+   report — the caller is told how many were left out rather than the file
+   being written as though it held everything asked for. */
+handle('repo:savePatch', async (repo, files, opts) => {
+  const list = (Array.isArray(files) ? files : [files])
+    .filter((f) => typeof f === 'string' && f.trim());
+  if (!list.length) throw new Error('Nothing was named to save.');
+  const { staged = false, skipped = 0, name = 'changes' } = opts || {};
+  const patch = await git(repo, ['diff', ...(staged ? ['--cached'] : []), '--', ...list]);
+  if (!patch.trim()) return { empty: true, skipped };
+
+  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    title: 'Save as patch',
+    defaultPath: path.join(app.getPath('downloads'), `${name}.patch`),
+    filters: [{ name: 'Patch', extensions: ['patch', 'diff'] }, { name: 'All files', extensions: ['*'] }],
+  });
+  if (canceled || !filePath) return null;
+  fs.writeFileSync(filePath, patch);
+  return { path: filePath, bytes: Buffer.byteLength(patch), skipped };
 });
 
 handle('repo:stashApply', async (repo, ref, pop) =>

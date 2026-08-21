@@ -66,6 +66,18 @@ const parserSrc = mainSrc.slice(
 const P = {};
 vm.runInNewContext(parserSrc + '\nthis.parseStatus=parseStatus; this.parseLog=parseLog;', P);
 
+/* The release-notes renderer, lifted out of the renderer the same way the
+   parsers are lifted out of main.js. It turns text fetched from a web page into
+   markup, so what it refuses to do matters as much as what it does. */
+// Read once here; the path tests further down lift their own functions from it.
+const rendererSrc = fs.readFileSync(path.join(__dirname, '..', 'src/renderer.js'), 'utf8');
+const notesSrc = rendererSrc.slice(
+  rendererSrc.indexOf('function notesHtml(text) {'),
+  rendererSrc.indexOf('\n}\n', rendererSrc.indexOf('function notesHtml(text) {')) + 3
+);
+const N = { esc: (x) => Diff.esc(x) };
+vm.runInNewContext(notesSrc + '\nthis.notesHtml = notesHtml;', N);
+
 let pass = 0, fail = 0;
 const check = (name, cond, extra) => {
   if (cond) { pass++; console.log('  ok   ' + name); }
@@ -361,6 +373,218 @@ check('only the first hunk was staged',
     spGaps.length === 2 && spGaps[0] === rowSum[5], spGaps.join('/'));
 }
 
+console.log('\ndragging a tab into place');
+{
+  /* The order lives in `tabs` and the strip is drawn from it, so a drag moves
+     the element and the array is read back from the document afterwards. One
+     direction only — the two cannot disagree halfway. */
+  const reorder = (arr, domOrder) =>
+    [...arr].sort((a, b) => domOrder.indexOf(a.id) - domOrder.indexOf(b.id)).map((t) => t.id);
+  const four = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }];
+  check('the array follows the strip', reorder(four, ['b', 'c', 'a', 'd']).join('') === 'bcad');
+  check('a tab dragged to the front lands at the front',
+    reorder(four, ['d', 'a', 'b', 'c']).join('') === 'dabc');
+  check('an unchanged strip leaves the order alone',
+    reorder(four, ['a', 'b', 'c', 'd']).join('') === 'abcd');
+
+  /* The faults this cost, both of which stopped the strip answering at all. */
+  check('a stale "just dragged" mark cannot outlive its click',
+    /if \(tabDrag === 'dropped'\) tabDrag = null;/.test(rendererSrc));
+  check('the drag is let go of before anything that can fail',
+    /tabDrag = moved \? 'dropped' : null;[\s\S]{0,200}releasePointerCapture/.test(rendererSrc));
+  check('taking and releasing the pointer are both allowed to fail',
+    (rendererSrc.match(/try \{ tabsStrip\(\)\.(set|release)PointerCapture/g) || []).length === 2);
+  check('redrawing stands aside for a live drag, not for a leftover',
+    /tabDrag !== 'dropped' && tabDrag\.moved/.test(rendererSrc));
+  check('the close button is a button, not a drag handle',
+    /if \(e\.target\.closest\('\[data-close\]'\)\) return;/.test(rendererSrc));
+  check('a click that wanders a few pixels is still a click',
+    /Math\.abs\(dx\) < 5/.test(rendererSrc));
+  check('the new order is written down, not only shown',
+    /const order = \[\.\.\.tabsStrip\(\)[\s\S]{0,200}saveTabs\(\)/.test(rendererSrc));
+}
+
+console.log('\nfinishing an update');
+{
+  /* Downloading used to end in app.quit(). Whatever was typed into a commit
+     message went with it, since nothing wrote that down — so the update had to
+     stop restarting on its own, and the draft had to start surviving. */
+  // Sliced to the one function: installing on request is still right, and the
+  // .deb path below does exactly that. What must be gone is installing unasked.
+  const offerSrc = rendererSrc.slice(
+    rendererSrc.indexOf('async function offerUpdate()'),
+    rendererSrc.indexOf('async function offerRestart(')
+  );
+  check('the download no longer ends in an install',
+    offerSrc.length > 0 && !offerSrc.includes("update:install"), offerSrc.length);
+  check('it offers a restart instead', /offerRestart\(file\)/.test(rendererSrc));
+  check('"Later" is a named choice, not a cancel',
+    /cancelLabel: 'Later'/.test(rendererSrc));
+  check('putting it off stages it for quitting time',
+    /update:later/.test(rendererSrc) && /will-quit/.test(mainSrc));
+  check('and the swap is the same one an immediate install does',
+    (mainSrc.match(/swapAppImage/g) || []).length >= 3);
+  check('a .deb cannot be staged — it needs an installer, not a rename',
+    /kind !== 'appimage'\) return \{ staged: false \}/.test(mainSrc));
+  check('quitting is never blocked by a failed swap',
+    /try \{ swapAppImage\(file\); \} catch/.test(mainSrc));
+
+  /* The draft, kept per repository. */
+  const drafts = {};
+  const put = (repo, msg, body, amend) => {
+    if (!msg.trim() && !body.trim() && !amend) delete drafts[repo];
+    else drafts[repo] = { msg, body, amend };
+  };
+  put('/a', 'fix: half written', '', false);
+  check('a draft is stored under its repository', drafts['/a'].msg === 'fix: half written');
+  put('/b', 'other repo', '', false);
+  check('two repositories keep two drafts',
+    drafts['/a'].msg !== drafts['/b'].msg && Object.keys(drafts).length === 2);
+  put('/a', '', '', false);
+  check('clearing the box clears the draft rather than storing an empty one',
+    !('/a' in drafts) && Object.keys(drafts).length === 1);
+  put('/b', '  ', '  ', false);
+  check('whitespace alone is not a draft', !('/b' in drafts));
+  put('/c', '', '', true);
+  check('but a ticked amend box is worth remembering on its own', drafts['/c'].amend === true);
+
+  check('the draft is written as it is typed, not only at closing time',
+    /addEventListener\('input', noteDraft\)/.test(rendererSrc));
+  check('and once more on the way out, for the last few keystrokes',
+    /beforeunload[\s\S]{0,80}saveDraft\(\)/.test(rendererSrc));
+  check('committing clears it, so it cannot come back later',
+    /clearDraft\(repoPath\(\)\)/.test(rendererSrc));
+}
+
+console.log('\nthe desktop entry');
+{
+  /* The dock matches a window to its launcher by the window's WM_CLASS, and the
+     match is case-sensitive. Electron takes WM_CLASS from the name of the
+     executable, so StartupWMClass has to be that name exactly — it said
+     "GitBraid" while every window reported "gitbraid", and the shell fell back
+     to guessing, which is why the icon arrived late. */
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+  const exe = pkg.build.executableName || pkg.name;
+  const desktop = pkg.build.linux.desktop;
+  check('StartupWMClass is exactly the executable name',
+    desktop.StartupWMClass === exe, `${desktop.StartupWMClass} vs ${exe}`);
+  check('and it is spelled the way a window would report it',
+    desktop.StartupWMClass === desktop.StartupWMClass.toLowerCase(),
+    desktop.StartupWMClass);
+  check('the launcher still announces itself as starting',
+    desktop.StartupNotify === 'true');
+  check('the icon is named, so the theme has something to look up',
+    Boolean(pkg.build.linux.icon));
+}
+
+console.log('\nfile history and ignoring');
+{
+  /* The name a file had at each commit is read out of --name-status. Asking a
+     commit made before a rename for today's path returns nothing, which reads
+     as "this commit changed nothing" when what it changed was a file under
+     another name. A rename line names both; everything else names one. */
+  const nameAt = (record) => {
+    const parts = record.split('\t');
+    return parts.length >= 3 ? parts[2] : parts[1];
+  };
+  check('a modification names the file', nameAt('M\tsrc/app.js') === 'src/app.js');
+  check('an addition names the file', nameAt('A\tsrc/new.js') === 'src/new.js');
+  check('a deletion names the file', nameAt('D\tsrc/gone.js') === 'src/gone.js');
+  check('a rename names the file it became, not the one it was',
+    nameAt('R100\told-name.txt\tnew-name.txt') === 'new-name.txt');
+  check('a partial rename is still a rename',
+    nameAt('R087\tsrc/a.js\tsrc/b.js') === 'src/b.js');
+
+  /* Appending to .gitignore. A file that does not end in a newline would have
+     the next pattern joined onto its last line. */
+  const append = (text, add) => text + (text && !text.endsWith('\n') ? '\n' : '') + add + '\n';
+  check('a pattern is added on its own line', append('*.log\n', 'build/') === '*.log\nbuild/\n');
+  check('a file with no trailing newline gets one first',
+    append('*.log', 'build/') === '*.log\nbuild/\n');
+  check('an empty .gitignore needs no leading newline', append('', 'build/') === 'build/\n');
+
+  const seen = (text) => new Set(text.split(/\r?\n/).map((l) => l.trim()));
+  check('a pattern already there is not written twice', seen('*.log\nbuild/\n').has('build/'));
+  check('and one that is not there is recognised as new', !seen('*.log\n').has('build/'));
+
+  // The same guard as the other list-taking commands.
+  for (const name of ['ignore', 'stop tracking']) {
+    check(`the ${name} handler refuses an empty list`,
+      new RegExp(`Nothing was named to ${name}`).test(mainSrc));
+  }
+  check('file history refuses to run without a file',
+    /No file was named/.test(mainSrc));
+  check('file history follows renames', /'--follow'/.test(mainSrc));
+  check('and asks git not to escape unusual paths',
+    /core\.quotePath=false/.test(mainSrc));
+}
+
+console.log('\ncommands that take a list of files');
+{
+  /* Every one of these builds a git command ending in `-- <paths>`. Handed an
+     empty list, that pathspec disappears and the command takes the whole
+     working tree instead of the files a menu entry named. The guard is the
+     same shape in each, so it is checked in each. */
+  const guardSrc = mainSrc.match(
+    /const list = \(Array\.isArray\(files\)[\s\S]*?\.filter\(\(f\) => typeof f === 'string' && f\.trim\(\)\);/g
+  ) || [];
+  check('every list-taking command filters its input the same way',
+    guardSrc.length >= 3, guardSrc.length);
+
+  const clean = (files) => (Array.isArray(files) ? files : [files])
+    .filter((f) => typeof f === 'string' && f.trim());
+  check('an empty list stays empty', clean([]).length === 0);
+  check('blank names are not paths', clean(['', '  ', '\t']).length === 0);
+  check('a bare string is not spread into letters',
+    clean('file.txt').length === 1 && clean('file.txt')[0] === 'file.txt');
+  check('anything that is not a string is dropped',
+    clean(['ok.txt', null, 7, {}, undefined]).join(',') === 'ok.txt');
+
+  // And the callers refuse rather than run with nothing named.
+  for (const name of ['discard', 'stash', 'save']) {
+    check(`the ${name} handler refuses an empty list`,
+      new RegExp(`Nothing was named to ${name}`).test(mainSrc));
+  }
+}
+
+console.log('\nrelease notes shown in the update dialog');
+{
+  const h = (t) => N.notesHtml(t);
+
+  // What went wrong: the dialog printed the body raw, so this arrived as pipes.
+  const table = h('| diff | before | after |\n|---|---|---|\n| unified | 93 ms | **7 ms** |');
+  check('a markdown table becomes a table',
+    table.includes('<table') && table.includes('<th>diff</th>') &&
+    table.includes('<td>unified</td>'), table.slice(0, 80));
+  check('nothing of the pipes survives into the text',
+    !table.replace(/<[^>]*>/g, '').includes('|'), table.replace(/<[^>]*>/g, ''));
+  check('emphasis inside a cell is emphasis, not asterisks',
+    table.includes('<strong>7 ms</strong>') &&
+    !table.replace(/<[^>]*>/g, '').includes('*'));
+
+  check('a heading becomes a heading', h('### When it fails').includes('<h4>When it fails</h4>'));
+  check('a bullet list becomes a list',
+    h('- one\n- two').includes('<ul><li>one</li><li>two</li></ul>'));
+  check('a wrapped bullet is still one bullet',
+    h('- one that runs\n  over two lines\n- two')
+      .includes('<li>one that runs over two lines</li>'));
+  check('inline code keeps its own face',
+    h('run `git push` first').includes('<code>git push</code>'));
+  check('a link keeps its words and loses its address',
+    h('see [the page](https://example.com/x)') === '<p>see the page</p>',
+    h('see [the page](https://example.com/x)'));
+  check('an empty body says so rather than showing nothing',
+    h('').includes('No notes were written'));
+
+  /* The body comes from a release page, which is not something the app decides
+     the contents of. It must never be able to put markup into the window. */
+  const hostile = h('<img src=x onerror="boom()">\n\n| a | <b>b</b> |\n|---|---|\n| 1 | 2 |');
+  check('markup in a release body is shown, never run',
+    !/<img|<b>|onerror=/.test(hostile.replace(/&lt;|&gt;|&quot;/g, '')) ||
+    hostile.includes('&lt;img'), hostile.slice(0, 90));
+  check('and the table beside it still renders', hostile.includes('<table'));
+}
+
 // And unstage it again with the reverse patch, the way the UI does.
 git(['apply', '--cached', '--reverse', '-'], { input: Diff.hunkPatch(mFile, mFile.hunks[0]) });
 const afterUnstage = P.parseStatus(git(['status', '--porcelain=v2', '--branch', '-z']));
@@ -405,8 +629,6 @@ check('ahead/behind parsed', (() => {
    These cannot be exercised by running the app here, so they are tested as
    pure functions instead: the source is read and evaluated with the platform
    pinned, which is the only honest way to check Windows behaviour on Linux. */
-
-const rendererSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer.js'), 'utf8');
 
 /** Pull one declaration out of a source file and evaluate it in isolation. */
 function lift(src, pattern, names, platform) {

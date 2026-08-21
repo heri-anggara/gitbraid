@@ -1,6 +1,6 @@
 {
   "name": "gitbraid",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Read your Git history as coloured lanes",
   "main": "main.js",
   "author": "Heri Anggara <herianggara2409@gmail.com>",
@@ -36,7 +36,7 @@
       "maintainer": "Heri Anggara <herianggara2409@gmail.com>",
       "icon": "build/icons",
       "desktop": {
-        "StartupWMClass": "GitBraid",
+        "StartupWMClass": "gitbraid",
         "GenericName": "Git Client",
         "Keywords": "git;version control;vcs;commit;diff;merge;",
         "StartupNotify": "true"
