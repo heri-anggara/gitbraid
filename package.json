@@ -36,7 +36,7 @@
       "maintainer": "Heri Anggara <herianggara2409@gmail.com>",
       "icon": "build/icons",
       "desktop": {
-        "StartupWMClass": "GitBraid",
+        "StartupWMClass": "gitbraid",
         "GenericName": "Git Client",
         "Keywords": "git;version control;vcs;commit;diff;merge;",
         "StartupNotify": "true"
