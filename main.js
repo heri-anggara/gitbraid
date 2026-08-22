@@ -1505,12 +1505,54 @@ handle('repo:status', async (repo) =>
   ]))
 );
 
+/* Every stash, and the two commits behind each one that nobody asked for.
+
+   A stash is one action, and git stores it as up to three commits: the stash
+   itself, one holding what was staged, and one holding the untracked files. All
+   three used to be drawn, so stashing once put three rows in the history — two
+   of them plumbing the user never made.
+
+   They are identified by asking git, not by reading their messages: the second
+   parent of a stash is the index commit and the third is the untracked one.
+   A stash made with nothing staged has no third parent, so ^3 is allowed to
+   fail.
+
+   The stashes themselves are added to the walk by hash. `--all` only reaches
+   refs/stash, which is the top of the stack — so with two stashes the older
+   one's rows vanished entirely while the newer one's were drawn. Naming them
+   all is what makes the history say the same thing however many there are. */
+async function stashShape(repo) {
+  const hide = new Set();
+  const marks = new Set();
+  let list = '';
+  try { list = await git(repo, ['stash', 'list', '--format=%H']); } catch { return { hide, marks }; }
+  for (const hash of list.split('\n').map((h) => h.trim()).filter(Boolean)) {
+    marks.add(hash);
+    for (const side of ['^2', '^3']) {
+      try {
+        const h = (await git(repo, ['rev-parse', '--verify', '-q', hash + side])).trim();
+        if (h) hide.add(h);
+      } catch { /* no staged part, or no untracked part */ }
+    }
+  }
+  return { hide, marks };
+}
+
 handle('repo:log', async (repo, { limit = 400, all = true, skip = 0 } = {}) => {
+  const { hide, marks } = all ? await stashShape(repo) : { hide: new Set(), marks: new Set() };
   const args = ['log', '--date-order', '-z', `--pretty=format:${LOG_FORMAT}`,
     `--max-count=${limit}`, `--skip=${skip}`];
-  if (all) args.push('--all');
+  if (all) args.push('--all', ...marks);
   try {
-    return parseLog(await git(repo, args));
+    const commits = parseLog(await git(repo, args));
+    if (!marks.size) return commits;
+    return commits
+      .filter((c) => !hide.has(c.hash))
+      .map((c) => (marks.has(c.hash)
+        /* Its other parents are the two commits just removed, and an edge to a
+           commit that is not in the list leaves a lane hanging open forever. */
+        ? { ...c, parents: c.parents.slice(0, 1), stash: true }
+        : c));
   } catch (e) {
     // Fresh repo with no commits yet.
     if (/does not have any commits|unknown revision/i.test(e.message)) return [];

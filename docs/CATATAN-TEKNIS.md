@@ -427,6 +427,32 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Stash di graph: satu aksi, satu baris**
+- Sebuah stash adalah satu tindakan, tapi git menyimpannya sebagai **sampai tiga
+  commit**: stash-nya sendiri, satu berisi apa yang ter-stage, dan satu berisi
+  berkas tak terlacak. Ketiganya dulu digambar, jadi men-stash sekali menaruh
+  tiga baris di riwayat — dua di antaranya pipa-ledeng yang tidak pernah dibuat
+  pengguna
+- Dikenali dengan **bertanya pada git**, bukan membaca teks pesannya: induk
+  kedua sebuah stash adalah commit index, induk ketiga adalah commit untracked.
+  Stash tanpa berkas tak terlacak tidak punya induk ketiga, jadi `^3` boleh gagal
+- `rev-parse --verify -q` memang tidak mencetak apa-apa, tapi ia juga **keluar
+  dengan status non-nol** — jadi pencariannya dibungkus `try`, karena stash tanpa
+  berkas tak terlacak itu hal biasa, bukan galat
+- **Daftar induknya harus dipangkas, bukan cuma barisnya dibuang.** Sisi lain
+  induk stash adalah dua commit yang baru saja dihapus, dan sebuah tepi menuju
+  commit yang tidak ada di daftar meninggalkan lajur menganga selamanya.
+  Terukur: nol lajur menggantung sesudahnya
+- **Temuan yang tidak diduga:** tampilan lama bukan hanya berisik, tapi juga
+  **tidak konsisten**. `--all` hanya menjangkau `refs/stash`, yaitu stash paling
+  atas — begitu ada stash kedua, seluruh baris milik stash pertama hilang dari
+  graph. Semua stash kini disebut namanya di dalam walk, jadi riwayatnya
+  mengatakan hal yang sama berapa pun jumlah stash-nya
+- Badge-nya sendiri, bergaris putus-putus: stash bukan cabang dan bukan tag, dan
+  hanya yang terbaru yang ditunjuk `refs/stash` — tanpa badge itu, stash lama
+  akan duduk sebagai baris tanpa label bertuliskan "On develop: …", tak
+  terbedakan dari commit biasa
+
 **Naik ke Electron 37, dan regresi yang ikut terbawa**
 - Electron 31 sudah lama di luar dukungan; 37 membawa Chromium 126 → 138 dan
   Node 20 → 22. Kodenya **tidak butuh perubahan sama sekali** — permukaan API
