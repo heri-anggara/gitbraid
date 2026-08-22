@@ -96,6 +96,25 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.7.0" date="2026-08-22">
+      <description>
+        <p>
+          A stash is one row in the history instead of three, drawn so it reads
+          as set-aside work rather than as a commit, and every stash is shown
+          rather than only the newest. Right-clicking one offers the commands
+          that apply to a stash.
+        </p>
+        <p>
+          The sidebar has the search box every other list already had, for
+          branches, tags, remotes and stashes.
+        </p>
+        <p>
+          Four keyboard shortcuts were firing on any modifier combination
+          ending in the same letter, so Ctrl+Shift+P pushed the branch and
+          Ctrl+F fetched every remote. They no longer do.
+        </p>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-08-21">
       <description>
         <p>
