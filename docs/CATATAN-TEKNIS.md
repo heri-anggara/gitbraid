@@ -427,6 +427,35 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Hasil audit menyeluruh**
+- **Saringan sidebar sempat mencemari preferensi lipatan grup.** Saringan
+  membuka grup yang punya kecocokan dan melipat yang tidak — benar di layar,
+  keliru kalau dicatat. Mengklik satu header saat menyaring membuat
+  `saveGroups()` membaca DOM dan menyimpan lipatan buatan saringan itu, sehingga
+  grup yang tidak pernah dilipat siapa pun muncul terlipat di sesi berikutnya.
+  Terukur: mulai dari nol terlipat, sesudahnya penyimpanan berisi
+  `remote,tags,stash`. Sekarang yang diingat saat menyaring adalah catatan
+  sebelum saringan menyentuh apa pun, dan melipat grup dengan tangan saat
+  menyaring ikut memperbarui catatan itu
+- **`repo:raw` dihapus.** Ia menjalankan perintah git apa pun dengan argumen apa
+  pun lewat IPC, dan tidak pernah dipanggil. Seluruh sikap keamanan aplikasi ini
+  bertumpu pada permukaan yang sempit — renderer ber-sandbox, contextIsolation,
+  CSP ketat, daftar saluran terbatas — dan git bisa diminta menjalankan program
+  lain (`core.sshCommand`, `core.pager`). Itu satu-satunya saluran yang akan
+  mengubah renderer yang tertembus menjadi eksekusi perintah bebas
+- `repo:checkout` dan `repo:diffCommit` juga dihapus: keduanya digantikan
+  `repo:checkoutWith` dan `repo:diffCommitFile`, dan tidak pernah dipanggil
+- **Ruby diwarnai memakai tabel Python, PHP memakai tabel JavaScript.** String,
+  angka, dan komentarnya benar; kata kuncinya tidak — dan `end`, `unless`,
+  `elsif` adalah sebagian besar dari rupa Ruby. Keduanya kini punya tabel
+  sendiri, dan PHP menerima `#` maupun `//` sebagai komentar. Bahasa yang
+  dikenali naik 11 → 13, ekstensi 30 → 47
+- Yang **tidak** terbukti bermasalah, semuanya diperiksa: 93 panggilan IPC
+  seluruhnya ada di daftar izin; 207 rujukan `$('id')` seluruhnya ada (10 `pf-*`
+  dibuat dinamis — alarm palsu pemindai); setiap klaim mutlak di teks UI benar;
+  angka versi dan jumlah uji di README cocok; 20 alur fitur berjalan tanpa satu
+  galat pun
+
 **Saringan cabang & tag di sidebar**
 - Satu kotak untuk seluruh sidebar, sama seperti Filter files menyaring staged
   dan unstaged sekaligus — bukan empat kotak untuk empat bagian

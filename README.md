@@ -65,7 +65,7 @@ has more than one answer.
 
 </div>
 
-**Diffs you can read.** Syntax colouring for eleven languages across some thirty
+**Diffs you can read.** Syntax colouring for thirteen languages across some forty-five
 file extensions, written here rather than pulled from a library. Stage, unstage and discard by hunk. A
 strip beside the scrollbar shows where every change is — click one to jump to
 it.
@@ -133,7 +133,7 @@ git clone https://github.com/heri-anggara/gitbraid.git
 cd gitbraid
 npm install
 npm start                 # run it
-npm test                  # 242 checks, no network, no fixtures to download
+npm test                  # 259 checks, no network, no fixtures to download
 npm run dist              # .deb + AppImage into dist/
 npm run dist:win          # Windows installer, cross-built from Linux
 ```

@@ -869,6 +869,58 @@ for (const [name, platform, expect] of [
       t.usesCwd === true || t.dir('/tmp/x').join(' ').includes('/tmp/x')));
 }
 
+console.log('\nwhat the audit turned up');
+{
+  /* The sidebar filter opens groups that hold matches and folds away the ones
+     that do not — which is right on screen and wrong to write down. Clicking a
+     header while filtering used to persist the filter's own doing, so groups
+     nobody had ever folded came back folded next session. */
+  check('what is remembered while filtering is the note, not the document',
+    /refFilter && groupsBeforeFilter\s*\n?\s*\? \[\.\.\.groupsBeforeFilter\]/.test(rendererSrc));
+  check('and folding one by hand while filtering updates that note',
+    /groupsBeforeFilter\.add\(key\)/.test(rendererSrc) &&
+    /groupsBeforeFilter\.delete\(key\)/.test(rendererSrc));
+
+  /* repo:raw ran any git command with any arguments, over IPC, and nothing
+     called it. git can be asked to run other programs — core.sshCommand,
+     core.pager — so it was the one channel that would have turned a renderer
+     compromise into arbitrary execution. */
+  const pre = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  /* Quoted in full: repo:diffCommitFile contains repo:diffCommit, and a loose
+     match reports the live channel as the dead one. */
+  for (const gone of ["'repo:raw'", "'repo:checkout'", "'repo:diffCommit'"]) {
+    check(`${gone} is gone from the main process`, !mainSrc.includes(gone), gone);
+    check(`${gone} is gone from the allowlist`, !pre.includes(gone), gone);
+  }
+  check('while the one it is easily confused with is still there',
+    mainSrc.includes("'repo:diffCommitFile'") && pre.includes("'repo:diffCommitFile'"));
+  check('the channels that remain are all still reachable',
+    !/handle\('repo:raw'/.test(mainSrc) && /handle\('repo:checkoutWith'/.test(mainSrc));
+
+  /* Ruby was coloured by Python's table and PHP by JavaScript's, which got the
+     strings and comments right and the keywords wrong — `end` and `unless` are
+     most of what Ruby looks like. */
+  const hl = { window: {} };
+  vm.createContext(hl);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src/highlight.js'), 'utf8'), hl);
+  const H = hl.window.Hl;
+  const keys = (file, code) => {
+    const out = H.line(code, H.langOf(file));
+    return [...out.matchAll(/class="hl-(key|lit)">([^<]*)</g)].map((m) => m[2]);
+  };
+  check('a .rb file is read as Ruby', H.langOf('a.rb') === 'ruby', H.langOf('a.rb'));
+  check('and its own keywords colour', keys('a.rb', 'class Foo; def x; end; end').join(',')
+    .includes('end'), keys('a.rb', 'class Foo; def x; end; end').join(','));
+  check('nil counts as a literal, not a plain word', keys('a.rb', 'x = nil').includes('nil'));
+  check('a .php file is read as PHP', H.langOf('a.php') === 'php', H.langOf('a.php'));
+  check('and its keywords colour too',
+    keys('a.php', 'function f() { return true; }').join(',').includes('function'));
+  check('# opens a comment in PHP as well as //',
+    /hl-com/.test(H.line('$x = 1; # note', 'php')));
+  check('JavaScript is untouched by any of it',
+    keys('a.js', 'const x = 1').includes('const'));
+}
+
 console.log('\nthe hash a stash carries');
 {
   /* A stash is a commit object, so the SHA in that column is real. It is worth

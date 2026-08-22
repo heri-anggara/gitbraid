@@ -58,6 +58,30 @@
     super trait true type unsafe use where while String Vec Option Result Some
     None Ok Err`);
 
+  /* Ruby and PHP were being coloured by tables meant for other languages —
+     Ruby by Python's, PHP by JavaScript's — which got their strings, numbers and
+     comments right and their keywords wrong. `end`, `unless` and `elsif` are
+     most of what Ruby looks like, and none of them were coloured. */
+  const RB_KEYWORDS = words(`
+    alias and begin break case class def defined? do else elsif end ensure for
+    if in module next not or redo rescue retry return self super then undef
+    unless until when while yield lambda proc require require_relative include
+    extend attr_accessor attr_reader attr_writer raise`);
+  const RB_LITERALS = words('true false nil __FILE__ __LINE__');
+
+  const PHP_KEYWORDS = words(`
+    abstract and array as break callable case catch class clone const continue
+    declare default do echo else elseif empty enddeclare endfor endforeach endif
+    endswitch endwhile enum extends final finally fn for foreach function global
+    goto if implements include include_once instanceof insteadof interface isset
+    list match namespace new or print private protected public readonly require
+    require_once return static switch throw trait try unset use var while xor
+    yield`);
+  const PHP_LITERALS = words('true false null this parent self');
+  const PHP_TYPES = words(`
+    bool int float string object mixed void never iterable callable Closure
+    Exception Throwable ArrayAccess Countable Iterator Generator`);
+
   /* Each entry is tried in order at the current position. `re` must be sticky. */
   const clike = (keywords, literals, types, lineComment) => [
     { cls: 'hl-com', re: new RegExp(`${lineComment}.*`, 'y') },
@@ -76,6 +100,11 @@
 
   const LANGS = {
     js: clike(JS_KEYWORDS, JS_LITERALS, JS_TYPES, '//'),
+    /* Ruby comments with #, and its block form is =begin/=end rather than the
+       C one — but that never appears mid-line, so the C rules cost nothing. */
+    ruby: clike(RB_KEYWORDS, RB_LITERALS, words('Integer String Symbol Hash Array Float Struct Comparable Enumerable'), '#'),
+    // PHP takes both // and #, and $variables fall through as ordinary words.
+    php: clike(PHP_KEYWORDS, PHP_LITERALS, PHP_TYPES, '(?://|#)'),
     json: [
       { cls: 'hl-prop', re: /"(?:\\.|[^"\\])*"(?=\s*:)/y },
       { cls: 'hl-str', re: /"(?:\\.|[^"\\])*"?/y },
@@ -155,7 +184,8 @@
     yml: 'yaml', yaml: 'yaml', toml: 'yaml', ini: 'yaml', conf: 'yaml',
     go: 'go', rs: 'rust',
     c: 'js', h: 'js', cpp: 'js', hpp: 'js', java: 'js', kt: 'js', swift: 'js',
-    php: 'js', rb: 'py', cs: 'js', dart: 'js',
+    php: 'php', phtml: 'php', rb: 'ruby', rake: 'ruby', gemspec: 'ruby',
+    cs: 'js', dart: 'js',
   };
 
   /** Which pattern table fits this path, or null when nothing does. */

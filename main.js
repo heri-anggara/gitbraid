@@ -1840,10 +1840,6 @@ handle('repo:conflictFile', async (repo, file) => {
   }
 });
 
-handle('repo:diffCommit', async (repo, hash) =>
-  git(repo, ['show', '--no-color', '--find-renames', '--format=', hash])
-);
-
 /** One file's changes inside one commit, rather than the whole commit. */
 /** How many parents a commit has, without loading its whole log entry. */
 async function isMerge(repo, hash) {
@@ -2071,8 +2067,6 @@ handle('repo:lastMessage', async (repo) =>
 );
 
 /* --- branches --- */
-
-handle('repo:checkout', async (repo, ref) => git(repo, ['checkout', ref]));
 
 /* Switching branch with uncommitted work is the one routine action that can
    quietly cost you something, so the renderer asks first and passes the answer
@@ -2378,8 +2372,6 @@ handle('repo:stashApply', async (repo, ref, pop) =>
 handle('repo:stashDrop', async (repo, ref) => git(repo, ['stash', 'drop', ref]));
 
 /* --- misc --- */
-
-handle('repo:raw', async (repo, args) => git(repo, args));
 
 handle('shell:openPath', async (p) => shell.openPath(p));
 
