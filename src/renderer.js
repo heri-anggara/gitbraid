@@ -5755,9 +5755,16 @@ window.gitbraid.on('menu:action', (msg) => {
 /* Which group headers are shut. Tags and stashes ship shut (see index.html);
    anything the user changes afterwards wins. */
 function saveGroups() {
-  const shut = [...document.querySelectorAll('.side-group')]
-    .filter((g) => g.classList.contains('collapsed'))
-    .map((g) => g.dataset.group);
+  /* While a filter is on, the document is not the reader's doing: the filter
+     opens groups that hold matches and folds away the ones that do not. Writing
+     that down as a preference meant one search, plus one click on a header, left
+     groups shut for good that nobody had ever shut. What gets remembered while
+     filtering is the note taken before the filter touched anything. */
+  const shut = refFilter && groupsBeforeFilter
+    ? [...groupsBeforeFilter]
+    : [...document.querySelectorAll('.side-group')]
+        .filter((g) => g.classList.contains('collapsed'))
+        .map((g) => g.dataset.group);
   try { localStorage.setItem('gitbraid-groups', JSON.stringify(shut)); } catch { /* ignore */ }
 }
 
@@ -5952,6 +5959,15 @@ $('sidebar').addEventListener('click', (e) => {
   if (head) {
     const group = head.closest('.side-group');
     group.classList.toggle('collapsed');
+    /* Folding a group by hand while a filter is on is still a decision, and it
+       has to survive the filter being cleared — so it goes into the note the
+       filter restores from, not only into the document the filter is about to
+       overwrite. */
+    if (refFilter && groupsBeforeFilter) {
+      const key = group.dataset.group;
+      if (group.classList.contains('collapsed')) groupsBeforeFilter.add(key);
+      else groupsBeforeFilter.delete(key);
+    }
     saveGroups();
     return;
   }
