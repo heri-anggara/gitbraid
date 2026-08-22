@@ -337,7 +337,7 @@ window.Releases = [
         items: [
           'Opening a repository sent one request to gravatar.com for every commit author on screen. That tells the service your address and the hashed email of everyone whose commits you are reading — colleagues included, on a private work repository. It also failed offline and delayed every repository opened.',
           'The graph now draws the plain lane-coloured dot, which says as much without any network at all. Verified by intercepting every request the app makes: none leave the machine.',
-          'If you want the photos, Preferences → UI customization turns them on, and says plainly what switching them on means.',
+          'If you want the photos, Preferences → UI customisation turns them on, and says plainly what switching them on means.',
         ],
       },
     ],
@@ -429,7 +429,7 @@ window.Releases = [
       {
         heading: 'Branches, remotes and Git-Flow',
         items: [
-          'The repository name in the sidebar opens actions for the repository already open — copy its path or remote URL, open it in the file manager, a terminal or a code editor, favorite it — rather than a fourth way to open a different one.',
+          'The repository name in the sidebar opens actions for the repository already open — copy its path or remote URL, open it in the file manager, a terminal or a code editor, favourite it — rather than a fourth way to open a different one.',
           'Context menus for local branches, remote branches and tags: checkout, fast-forward, fetch into, push, merge, rebase, compare, rename, tracking branch, description, delete.',
           'Entries that cannot run stay visible and explain why on hover.',
           'Git-Flow implemented on plain git, writing the same gitflow.* config keys the command line tool uses.',
@@ -447,7 +447,7 @@ window.Releases = [
           'Status bar carrying zoom controls, the version number, and a link to the project page.',
           'Every Git command reports itself on the button that started it: the icon becomes a spinner, the label carries the phase and percentage git reports, a hairline of progress runs along the toolbar, and the result lands as a green tick or a red cross.',
           'Failure messages pick the line that explains the failure, so a rejected push says what was rejected and a conflicted merge names the file, instead of quoting the command back at you.',
-          'Preferences with four pages — General, Profiles, UI customization and Editor — where the default branch name and the external editor are written to your own git config rather than kept privately, so the command line agrees with them.',
+          'Preferences with four pages — General, Profiles, UI customisation and Editor — where the default branch name and the external editor are written to your own git config rather than kept privately, so the command line agrees with them.',
         ],
       },
     ],

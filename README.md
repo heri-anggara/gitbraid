@@ -65,7 +65,7 @@ has more than one answer.
 
 </div>
 
-**Diffs you can read.** Syntax colouring for thirteen languages across some forty-five
+**Diffs you can read.** Syntax colouring for thirteen languages across forty-seven
 file extensions, written here rather than pulled from a library. Stage, unstage and discard by hunk. A
 strip beside the scrollbar shows where every change is — click one to jump to
 it.

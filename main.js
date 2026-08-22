@@ -853,6 +853,10 @@ function buildMenu() {
         { label: 'Open Repo…', accelerator: 'CmdOrCtrl+O', click: () => send('open') },
         { label: 'Clone Repo…', accelerator: 'CmdOrCtrl+N', click: () => send('clone') },
         { label: 'Init Repo…', accelerator: 'CmdOrCtrl+I', click: () => send('init') },
+        // Promised by the toolbar button's tooltip and by the tab context menu,
+        // and until now bound nowhere at all.
+        { label: 'Repository Management…', accelerator: 'CmdOrCtrl+Shift+O',
+          click: () => send('repo-manager') },
         { type: 'separator' },
         {
           label: 'Open Recent',

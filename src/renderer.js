@@ -168,7 +168,7 @@ function relativeTime(ms) {
   return new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-/** Whichever of the two the reader picked in Preferences → UI customization. */
+/** Whichever of the two the reader picked in Preferences → UI customisation. */
 const stamp = (ms) => (prefs.dateStyle === 'relative' ? relativeTime(ms) : absoluteTime(ms));
 
 /** GitKraken's history stamp: 08/14/2026 @ 2:59 PM. */
@@ -994,14 +994,16 @@ function renderToolbar() {
   ahead.hidden = !s?.ahead;
   ahead.textContent = s?.ahead || '';
   ahead.title = s?.ahead
-    ? `${s.ahead} commit${s.ahead === 1 ? '' : 's'} of yours are not on ${s.upstream || 'the remote'} yet`
+    ? `${s.ahead} commit${s.ahead === 1 ? '' : 's'} of yours ${s.ahead === 1 ? 'is' : 'are'} `
+      + `not on ${s.upstream || 'the remote'} yet`
     : '';
 
   const behind = $('badge-behind');
   behind.hidden = !s?.behind;
   behind.textContent = s?.behind || '';
   behind.title = s?.behind
-    ? `${s.behind} commit${s.behind === 1 ? '' : 's'} on ${s.upstream || 'the remote'} are not here yet`
+    ? `${s.behind} commit${s.behind === 1 ? '' : 's'} on ${s.upstream || 'the remote'} `
+      + `${s.behind === 1 ? 'is' : 'are'} not here yet`
     : '';
 
   /* `aria-disabled` rather than `disabled`: a disabled button dispatches no
@@ -4087,7 +4089,7 @@ function renderRepoManager() {
   const groups = [
     { key: 'open', title: 'Open repositories', empty: 'No repository is open',
       rows: [...openPaths].map((p) => byPath.get(p) || { path: p, name: p.split('/').pop() }) },
-    { key: 'favorites', title: 'Favorites', empty: 'Star a repository to keep it here',
+    { key: 'favorites', title: 'Favourites', empty: 'Star a repository to keep it here',
       rows: rm.repos.filter((r) => r.favorite) },
     { key: 'recent', title: 'Recent repositories', empty: 'Nothing opened yet',
       rows: rm.recents.map((p) => byPath.get(p)).filter(Boolean) },
@@ -4138,7 +4140,7 @@ function repoRow(r, openPaths) {
     // The star sits outside the hover-only tools: a control you cannot see is a
     // control nobody finds.
     `<button class="rm-star${r.favorite ? ' on' : ''}" data-fav="${esc(r.path)}" ` +
-    `title="${r.favorite ? 'Remove from favorites' : 'Add to favorites'}">${STAR(r.favorite)}</button>` +
+    `title="${r.favorite ? 'Remove from favourites' : 'Add to favourites'}">${STAR(r.favorite)}</button>` +
     // Owner rides along with the name instead of claiming a column of its own:
     // a separate column leaves a gulf between the two on a wide window.
     '<span class="rm-main">' +
@@ -4616,7 +4618,7 @@ function prefPages() {
     },
     {
       id: 'ui',
-      label: 'UI customization',
+      label: 'UI customisation',
       groups: [
         {
           title: 'Appearance',
@@ -4721,7 +4723,7 @@ function prefPages() {
               get: () => prefs.lineNumbers,
               set: (v) => { prefs.lineNumbers = v; savePrefs(); applyPrefs(); } },
             { kind: 'toggle', label: 'Syntax highlighting',
-              help: `Coloured by GitBraid's own tokenizer for ${Hl.languages()} languages.`,
+              help: `Coloured by GitBraid’s own tokenizer for ${Hl.languages()} languages.`,
               get: () => viewer.syntax,
               set: (v) => { viewer.syntax = v; saveViewer(); syncViewerToggles(); renderViewer(); } },
           ],
@@ -5655,9 +5657,11 @@ const SHORTCUTS = [
     ['Ctrl O', 'Open a repository in a new tab'],
     ['Ctrl N', 'Clone from a URL'],
     ['Ctrl I', 'Create a new repository'],
+    ['Ctrl Shift O', 'Repository management'],
     ['F5 / Ctrl R', 'Refresh'],
   ]],
   ['Tabs and search', [
+    ['Ctrl T', 'New tab'],
     ['Ctrl W', 'Close the current tab'],
     ['Ctrl Tab', 'Next tab'],
     ['Ctrl Shift Tab', 'Previous tab'],
@@ -5670,17 +5674,30 @@ const SHORTCUTS = [
     ['Shift P', 'Push the current branch'],
     ['B', 'New branch'],
     ['Ctrl Enter', 'Commit (from the message box)'],
-    ['Ctrl /', 'This list'],
     ['Alt O', 'Open in file manager'],
     ['Alt T', 'Open an external terminal'],
+  ]],
+  ['Reading a diff', [
+    ['Alt Down', 'Next difference'],
+    ['Alt Up', 'Previous difference'],
+    ['Alt Home', 'First difference'],
+    ['Alt End', 'Last difference'],
+    ['Esc', 'Close the file, or whatever is covering the history'],
   ]],
   ['View', [
     ['Ctrl J', 'Show or hide the left panel'],
     ['Ctrl K', 'Show or hide the commit details panel'],
+    ['Ctrl `', 'Show or hide the terminal'],
     ['Ctrl =', 'Increase zoom'],
     ['Ctrl -', 'Decrease zoom'],
     ['Ctrl 0', 'Reset zoom'],
     ['Ctrl Shift F', 'Toggle full screen'],
+  ]],
+  ['GitBraid', [
+    ['Ctrl ,', 'Preferences'],
+    ['Ctrl /', 'This list'],
+    ['Ctrl Shift R', 'Relaunch GitBraid'],
+    ['Ctrl Q', 'Quit'],
   ]],
 ];
 
@@ -5807,11 +5824,11 @@ $('side-repo').addEventListener('click', async (e) => {
     { label: 'Open in terminal', accel: 'Alt+T', run: MENU_ACTIONS.terminal },
     { label: 'Open in code editor', run: openRepoInEditor },
     '-',
-    { label: 'Favorite this repository', checked: isFavorite,
-      hint: 'Favorites sit at the top of the repository manager',
+    { label: 'Favourite this repository', checked: isFavorite,
+      hint: 'Favourites sit at the top of the repository manager',
       run: async () => {
         await call('repos:favorite', path, !isFavorite);
-        setStatus(isFavorite ? `${state.repo.name} unfavorited` : `${state.repo.name} favorited`, 'ok');
+        setStatus(isFavorite ? `${state.repo.name} unfavourited` : `${state.repo.name} favourited`, 'ok');
       } },
     '-',
     { label: 'Close tab', accel: 'Ctrl+W', run: () => closeTab() },
@@ -6854,6 +6871,10 @@ $('chk-amend').addEventListener('change', async () => {
   }
 });
 
+/* The overlays that own the keyboard while they are up — the same set the
+   Esc chain below backs out of, in the same order. */
+const KEY_BLOCKERS = ['modal', 'ctxmenu', 'logs', 'prefs', 'about', 'notes', 'fhist'];
+
 /* keyboard — Ctrl+O/N/I, the zoom keys, F5 and the panel toggles are all
    menu accelerators now, handled in the main process. */
 document.addEventListener('keydown', (e) => {
@@ -6879,8 +6900,22 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.target.matches('input, textarea')) return;
   if (!state.repo) return;
-  if (e.key === 'r' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); refresh(); }
-  else if (e.key === 'f') $('btn-fetch').click();
+  if (e.key === 'r' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); refresh(); return; }
+
+  /* Everything below is a bare letter, so a modifier means the key belongs to
+     something else and this handler has no business reading it. Matching on
+     e.key alone let Ctrl+F — this application's own Find Commit — fetch every
+     remote as well, let Ctrl+P pull, and let Ctrl+Shift+P, the command palette
+     in every editor people come here from, push the branch. Alt is the menu bar
+     key on Linux and leaked the same way. */
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+  /* An overlay covering the history takes the keyboard with it. Reading the
+     release notes should not be one stray keystroke away from a push. */
+  if (KEY_BLOCKERS.some((id) => !$(id).hidden)) return;
+  if ($('app').classList.contains('managing')) return;
+
+  if (e.key === 'f') $('btn-fetch').click();
   else if (e.key === 'p') $('btn-pull').click();
   else if (e.key === 'P') $('btn-push').click();
   else if (e.key === 'b') newBranch(null);
