@@ -869,6 +869,46 @@ for (const [name, platform, expect] of [
       t.usesCwd === true || t.dir('/tmp/x').join(' ').includes('/tmp/x')));
 }
 
+console.log('\nright-clicking a stash in the history');
+{
+  /* The row used to offer the ordinary commit menu, and nearly every entry on it
+     is wrong done to a stash: checking one out lands you detached on a
+     three-parent merge, cherry-pick and revert need a parent chosen and mean
+     nothing either way, and resetting the branch onto one is a way to lose the
+     branch. */
+  const menu = rendererSrc.slice(
+    rendererSrc.indexOf('const stashRef = stashRefFor(hash);'),
+    rendererSrc.indexOf('  contextMenu(e, [', rendererSrc.indexOf('const stashRef = stashRefFor(hash);') + 200)
+  );
+  check('a stash row is recognised before the commit menu is built',
+    menu.includes('if (stashRef) {'), menu.length);
+  for (const good of ['Apply and keep', 'Apply and drop', 'Drop stash', 'Copy SHA']) {
+    check(`it offers ${good}`, menu.includes(good));
+  }
+  for (const bad of ['Check out', 'Branch from here', 'Cherry-pick', 'Revert this commit',
+                     'Reset branch to here']) {
+    check(`and never ${bad}`, !menu.includes(bad), bad);
+  }
+  check('it stops there rather than falling through to the commit menu',
+    /\]\);\s*\n\s*return;\s*\n\s*\}/.test(menu));
+
+  /* Row and sidebar have to agree: the same stash, right-clicked in two places,
+     must not offer two different sets of things to do to it. */
+  const side = rendererSrc.slice(
+    rendererSrc.indexOf("} else if (kind === 'stash') {"),
+    rendererSrc.indexOf("} else if (kind === 'remote') {")
+  );
+  for (const shared of ['Apply and keep', 'Apply and drop', 'Drop stash']) {
+    check(`the sidebar offers ${shared} too`, side.includes(shared));
+  }
+
+  /* Every stash command wants a stash@{n}; the history row knows a commit. The
+     hash is what joins the two, so the list has to carry it. */
+  check('the stash list carries the commit hash', /%at%x1f%H/.test(mainSrc));
+  check('and the row looks its ref up by that hash',
+    /\(state\.stashes \|\| \[\]\)\.find\(\(s\) => s\.hash === hash\)/.test(rendererSrc));
+}
+
 console.log('\nwhat a stash is holding');
 {
   /* A stash keeps its untracked files in a third parent rather than in its own

@@ -490,6 +490,19 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   lajur, jadi deklarasi itu tidak sah di sini — dan `border` shorthand yang tidak
   sah **membawa serta lebarnya**, menyisakan bawaan `medium`. Sekarang lebar dan
   warnanya disebutkan penuh: 1px, setara pill lain
+- **Klik kanan pada baris stash dulu memberi menu commit biasa**, dan hampir
+  setiap entrinya keliru kalau dikenakan pada stash: *Check out* mendaratkan
+  Anda dalam keadaan detached di atas merge berinduk tiga; *Cherry-pick* dan
+  *Revert* menuntut induk dipilih dan tetap tidak bermakna; *Reset branch to
+  here* memindahkan cabang Anda ke atas stash — cara kehilangan cabang. Sekarang
+  baris stash memberi **Apply and keep / Apply and drop / Drop stash / Copy
+  SHA**, sama persis dengan yang sudah lama ditawarkan sidebar
+- Setiap perintah stash menuntut `stash@{n}`, sementara baris riwayat hanya tahu
+  hash. Karena itu `repo:stashList` ikut membawa `%H` — hash itulah satu-satunya
+  yang menyambungkan keduanya
+- Ada uji yang memastikan menu baris dan menu sidebar menawarkan hal yang sama:
+  stash yang sama, diklik kanan di dua tempat, tidak boleh menawarkan dua
+  perlakuan berbeda
 - Badge-nya sendiri, bergaris putus-putus: stash bukan cabang dan bukan tag, dan
   hanya yang terbaru yang ditunjuk `refs/stash` — tanpa badge itu, stash lama
   akan duduk sebagai baris tanpa label bertuliskan "On develop: …", tak

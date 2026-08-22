@@ -6262,11 +6262,43 @@ $('commit-list').addEventListener('click', (e) => {
   renderDetail();
 });
 
+/** The stash@{n} a commit in the history belongs to, if it is one at all. */
+const stashRefFor = (hash) =>
+  (state.stashes || []).find((s) => s.hash === hash)?.ref || null;
+
 $('commit-list').addEventListener('contextmenu', (e) => {
   const row = e.target.closest('.commit-row[data-hash]');
   if (!row) return;
   const hash = row.dataset.hash;
   const short = hash.slice(0, 7);
+
+  /* A stash is not a commit on the branch, and nearly everything below would be
+     wrong done to one — checking it out lands you detached on a three-parent
+     merge, cherry-picking and reverting need a parent chosen and mean nothing
+     anyway, and resetting the branch onto it is a way to lose the branch. What a
+     stash actually answers to is apply, pop and drop, which is what the sidebar
+     has always offered it. The same three, so the row and the sidebar agree. */
+  const stashRef = stashRefFor(hash);
+  if (stashRef) {
+    contextMenu(e, [
+      { label: 'Apply and keep', run: () => applyStash(stashRef, false) },
+      { label: 'Apply and drop', run: () => applyStash(stashRef, true) },
+      '-',
+      { label: 'Drop stash', danger: true, run: async () => {
+          const ok = await confirmAction('Drop stash', 'This stash cannot be recovered.', 'Drop');
+          if (!ok) return;
+          const res = await call('repo:stashDrop', repoPath(), stashRef);
+          if (res !== null) { await refresh(); setStatus('Dropped stash', 'ok'); }
+        } },
+      '-',
+      { label: 'Copy SHA', run: () => {
+          navigator.clipboard.writeText(hash);
+          setStatus('Full SHA copied', 'ok');
+        } },
+    ]);
+    return;
+  }
+
   contextMenu(e, [
     { label: 'Copy SHA', run: () => navigator.clipboard.writeText(hash) },
     { label: `Check out ${short}`, run: () => checkout(hash) },
