@@ -7,6 +7,59 @@
  */
 window.Releases = [
   {
+    version: '0.7.0',
+    date: '2026-08-22',
+    title: 'Stashes look like stashes, the sidebar has a search box, and four keys stop firing behind your back',
+    summary:
+      'A stash is one row now instead of three, drawn so you can tell it from a '
+      + 'commit and offered the commands that actually apply to it. The sidebar '
+      + 'got the search box every other list already had. And Ctrl+Shift+P no '
+      + 'longer pushes your branch.',
+    sections: [
+      {
+        heading: 'Stashes in the history',
+        items: [
+          'One stash was drawn as three rows. Git stores a stash as up to three commits — the work, the index at the time, and any untracked files — and all three were walking into the graph as though each were a change you had made. One stash is one row.',
+          'Only the newest stash appeared at all. The history walk reached refs/stash and nothing else, so a second stash was simply absent from the graph. Every stash is named in the walk now, and every one of them is drawn.',
+          'A stash dot is a dashed hollow ring in its lane colour, with no author picture, so it reads as set-aside work at a glance rather than as one more commit. The details panel says STASH where it says COMMIT for everything else, and its parent is labelled "taken from" rather than "parent".',
+          'The details panel showed a stash as holding nothing. Untracked files live on a third parent that a plain diff never looks at, so a stash of new files listed no files at all. They are listed now, and opening one diffs it against the empty tree, which is what it is being compared to.',
+          'Right-clicking a stash row offered cherry-pick, revert and reset — commit commands, on something that is not a commit in your history. It offers Apply and keep, Apply and drop, Drop stash and Copy SHA.',
+          'And the SHA it copies is real. A stash has a genuine commit hash, and it is worth more than a commit’s: it is what git stash store takes if you drop a stash by mistake, which is recoverable until garbage collection runs.',
+        ],
+      },
+      {
+        heading: 'Searching the sidebar',
+        items: [
+          'Commits, files, repositories and tabs each had a search box. Branches, tags, remotes and stashes had scrolling, which on a repository with hundreds of tags is not searching. There is a filter above them now, and it opens the groups that hold matches.',
+          'What it opens and folds is its own doing, not yours, so it is no longer written down as your preference. Folding a group by hand while filtering still is.',
+        ],
+      },
+      {
+        heading: 'Keys that fired behind your back',
+        items: [
+          'The single-letter shortcuts — F to fetch, P to pull, Shift+P to push, B for a new branch — read the letter and never looked at the modifiers, so every combination ending in those letters ran them too. Ctrl+F, this application’s own Find Commit accelerator, fetched every remote as well. Ctrl+P pulled. Ctrl+Shift+P, the command palette in every editor people arrive here from, pushed the branch to its remote with no dialog in the way. Alt is the menu bar key on Linux and leaked the same four.',
+          'All of it fired while Preferences, the release notes, About or the activity log were open, so reading this page was one stray keystroke away from a push. An overlay covering the history keeps the keyboard now.',
+          'Ctrl+Shift+O was promised by the repository-manager button and by the tab menu, and bound nowhere at all. It is a File menu item now.',
+        ],
+      },
+      {
+        heading: 'A narrower surface, and more languages',
+        items: [
+          'An IPC channel that ran any git command with any arguments has been removed, along with two handlers nothing called. This application’s security rests on a narrow surface — sandboxed renderer, context isolation, a strict CSP, a short list of channels — and git can be asked to run other programs through its own config. That channel was the one thing that would have turned a compromised renderer into arbitrary execution, and nothing used it.',
+          'Ruby was being coloured by Python’s keyword table and PHP by JavaScript’s. Strings, numbers and comments came out right and the keywords did not — and end, unless and elsif are most of what Ruby looks like. Both have their own tables now, and PHP takes # as well as // for comments. Thirteen languages across forty-seven extensions.',
+        ],
+      },
+      {
+        heading: 'Smaller things',
+        items: [
+          'The two badges you see most often disagreed with themselves: "1 commit of yours are not on origin/main yet". The noun was pluralised and the verb was not.',
+          'The keyboard shortcut list went from 23 rows to 34. It had been leaving out the terminal toggle its own tooltip advertises, along with Preferences, Quit, Relaunch, the Alt+arrow diff navigation and Esc.',
+          'The stash badge in the details panel no longer takes a line to itself, and its dashed border is a hairline rather than the three pixels an invalid CSS shorthand had been falling back to.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.6.0',
     date: '2026-08-21',
     title: 'A newer Electron, and a diff pane that scrolls on its own layer',
