@@ -1,3 +1,9 @@
+# Kept in step with the deb and the AppImage, which electron-builder writes
+# from the "desktop" block in package.json. StartupNotify is false in all three
+# for the reason found in v0.5.3: the shell shows a loading cursor until the
+# application reports itself up by putting the launcher's token on its first
+# window, and Electron never does — so the shell waited out its own ten-second
+# timeout over a window that had been on screen since the second.
 [Desktop Entry]
 Type=Application
 Name=GitBraid
@@ -8,5 +14,5 @@ Icon=io.github.heri_anggara.GitBraid
 Terminal=false
 Categories=Development;RevisionControl;
 Keywords=git;version control;vcs;commit;diff;merge;
-StartupNotify=true
-StartupWMClass=GitBraid
+StartupNotify=false
+StartupWMClass=gitbraid

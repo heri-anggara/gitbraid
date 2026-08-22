@@ -6,7 +6,7 @@
   <!-- The name of the desktop file as it is actually installed. The .deb and
        AppImage ship gitbraid.desktop; a Flatpak renames it to match <id>, and
        this line has to be changed with it. -->
-  <launchable type="desktop-id">gitbraid.desktop</launchable>
+  <launchable type="desktop-id">io.github.heri_anggara.GitBraid.desktop</launchable>
 
   <name>GitBraid</name>
   <summary>Read your Git history as coloured lanes</summary>
@@ -96,6 +96,22 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.8.0" date="2026-08-22">
+      <description>
+        <p>
+          Naming a repository on the command line now opens it — gitbraid
+          followed by a path, or a folder handed over by a file manager. The
+          desktop file had been promising that since the first release and
+          nothing read the argument. A second one raises the window already
+          open and adds a tab.
+        </p>
+        <p>
+          There is a Flatpak manifest, built and run rather than merely
+          written. It builds git into the sandbox, because the runtime does not
+          ship it and every operation here is a git command.
+        </p>
+      </description>
+    </release>
     <release version="0.7.0" date="2026-08-22">
       <description>
         <p>
