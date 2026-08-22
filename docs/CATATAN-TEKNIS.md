@@ -490,6 +490,21 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   lajur, jadi deklarasi itu tidak sah di sini — dan `border` shorthand yang tidak
   sah **membawa serta lebarnya**, menyisakan bawaan `medium`. Sekarang lebar dan
   warnanya disebutkan penuh: 1px, setara pill lain
+- **Hash di kolom SHA itu nyata, dan justru lebih berharga daripada milik
+  commit.** Sebuah commit masih bisa ditemukan lewat cabang; stash yang sudah
+  dibuang tidak bisa ditemukan lewat apa pun **kecuali hash-nya**. Diuji: setelah
+  `git stash drop`, daftarnya kosong tapi objeknya masih commit, isinya masih
+  terbaca, dan `git stash store <hash>` mengembalikannya
+- Karena itu peringatan lama saya — *"This stash cannot be recovered"* — **tidak
+  benar**, dan lebih buruk lagi: ia membujuk orang menjauh dari satu-satunya hal
+  yang bisa menyelamatkan mereka. Sekarang peringatannya menyebutkan bahwa
+  pekerjaannya bertahan di repositori di bawah hash-nya sampai git membersihkan
+  yang tak tertunjuk, dan menyarankan menyalin SHA lebih dulu. Peringatan
+  *discard changes* tetap berbunyi "tidak bisa dipulihkan", karena di sana itu
+  memang benar
+- Sel SHA pada baris stash membawa keterangan: lokal, tidak pernah di-push, dan
+  satu-satunya jalan pulang kalau stash dibuang. Hanya pada baris stash
+
 - **Klik kanan pada baris stash dulu memberi menu commit biasa**, dan hampir
   setiap entrinya keliru kalau dikenakan pada stash: *Check out* mendaratkan
   Anda dalam keadaan detached di atas merge berinduk tiga; *Cherry-pick* dan

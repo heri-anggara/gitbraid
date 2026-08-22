@@ -1781,7 +1781,13 @@ function renderRows() {
           author: `<span class="c-author">${authorChip(c)}${highlight(c.author, q)}</span>`,
           adate: `<span class="c-adate">${stamp(c.authorDate)}</span>`,
           cdate: `<span class="c-date">${stamp(c.commitDate)}</span>`,
-          sha: `<span class="c-sha">${c.hash.slice(0, 7)}</span>`,
+          /* A stash has a real hash, and it is worth more here than a commit's:
+             a commit can be found again through a branch, a dropped stash
+             through nothing else at all. It is also local and never pushed, so
+             it says both. */
+          sha: `<span class="c-sha"${c.stash
+            ? ' title="Local to this machine — and the only way back to this work if the stash is dropped"'
+            : ''}>${c.hash.slice(0, 7)}</span>`,
         }) + '</li>'
       );
     })
@@ -6192,7 +6198,11 @@ $('sidebar').addEventListener('contextmenu', (e) => {
       { label: 'Apply and drop', run: () => applyStash(ref, true) },
       '-',
       { label: 'Drop stash', danger: true, run: async () => {
-          const ok = await confirmAction('Drop stash', 'This stash cannot be recovered.', 'Drop');
+          const ok = await confirmAction('Drop stash',
+            'It leaves the list, and nothing in GitBraid brings it back. The work '
+            + 'survives in the repository under its own hash until git next collects '
+            + 'what nothing points at — copy the SHA first if you want that way back.',
+            'Drop');
           if (!ok) return;
           const res = await call('repo:stashDrop', repoPath(), ref);
           if (res !== null) { await refresh(); setStatus('Dropped stash', 'ok'); }
@@ -6285,7 +6295,11 @@ $('commit-list').addEventListener('contextmenu', (e) => {
       { label: 'Apply and drop', run: () => applyStash(stashRef, true) },
       '-',
       { label: 'Drop stash', danger: true, run: async () => {
-          const ok = await confirmAction('Drop stash', 'This stash cannot be recovered.', 'Drop');
+          const ok = await confirmAction('Drop stash',
+            'It leaves the list, and nothing in GitBraid brings it back. The work '
+            + 'survives in the repository under its own hash until git next collects '
+            + 'what nothing points at — copy the SHA first if you want that way back.',
+            'Drop');
           if (!ok) return;
           const res = await call('repo:stashDrop', repoPath(), stashRef);
           if (res !== null) { await refresh(); setStatus('Dropped stash', 'ok'); }
