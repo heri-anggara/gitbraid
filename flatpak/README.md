@@ -10,6 +10,12 @@ flatpak-builder --user --install --force-clean build flatpak/io.github.heri_angg
 flatpak run io.github.heri_anggara.GitBraid
 ```
 
+`zypak-wrapper` in the launcher is not optional either. Chromium's own SUID
+sandbox helper has to be owned by root with mode 4755, which nothing inside a
+Flatpak can be, and Chromium aborts rather than run unsandboxed. Zypak stands in
+for it using the sandbox Flatpak already provides, and the helper is deleted at
+build time rather than shipped unusable.
+
 ## Three things that make this manifest unusual
 
 **It builds git.** The freedesktop runtime does not ship it — measured, not

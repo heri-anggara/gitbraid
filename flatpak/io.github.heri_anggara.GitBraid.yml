@@ -19,8 +19,14 @@ separate-locales: false
 
 finish-args:
   - --share=ipc
-  - --socket=wayland
-  - --socket=fallback-x11
+  # X11 outright rather than the usual wayland + fallback-x11 pair, and the
+  # launcher forces the X11 backend to match. Measured here, on Electron 43
+  # inside this sandbox: the Wayland backend dies with SIGSEGV before a window
+  # appears, every time, exactly as it does outside one. fallback-x11 grants
+  # nothing while a Wayland socket is also granted, so the pair leaves the
+  # application with no working backend at all — `DISPLAY` comes through empty
+  # and Chromium exits with "Missing X server". Under XWayland it runs.
+  - --socket=x11
   - --device=dri
   # Fetch, pull and push.
   - --share=network
@@ -46,8 +52,15 @@ modules:
   # application calls: it stages hunks by handing its own patch to
   # `git apply --cached`. Leaving them out keeps the sandbox from depending on
   # interpreters the Platform runtime does not have either.
+  #
+  # NO_RUST because 2.55 builds a Rust libgitcore by default and the SDK carries
+  # no cargo — the build stops at `cargo: command not found`. The Makefile calls
+  # Rust optional for now and compiles the same subsystems from C instead, which
+  # is what every git before 2.53 shipped. Git 3.0 makes Rust mandatory, and
+  # this line becomes an org.freedesktop.Sdk.Extension.rust-stable then.
   - name: git
     make-args:
+      - NO_RUST=1
       - NO_PERL=1
       - NO_TCLTK=1
       - NO_GETTEXT=1
@@ -55,6 +68,7 @@ modules:
       - INSTALL_SYMLINKS=1
       - prefix=/app
     make-install-args:
+      - NO_RUST=1
       - NO_PERL=1
       - NO_TCLTK=1
       - NO_GETTEXT=1
@@ -74,18 +88,28 @@ modules:
 
   # ── Electron ─────────────────────────────────────────────────────
   # The official prebuilt binary, pinned by hash. 43 rather than the 37 the deb
-  # and the AppImage carry: those are pinned to 37 because Electron 38 and up
-  # choose the native Wayland backend by default and it crashes before a window
-  # appears, and the only cure is a command-line argument — which on an ordinary
-  # desktop would mean every launcher having to remember one. Here the launcher
-  # is a file in this manifest, so it cannot be forgotten, and the newer
-  # Chromium comes free.
+  # and the AppImage carry.
+  #
+  # Electron 38 and up choose the native Wayland backend by default, and it
+  # crashes before a window appears. That is why the deb and the AppImage stay
+  # on 37, the last release that picks X11 on its own: forcing the backend from
+  # a desktop launcher means every way of starting the application has to
+  # remember an argument, and one that forgets it crashes.
+  #
+  # A Flatpak has exactly one way in — gitbraid.sh, a file in this repository —
+  # so the argument cannot be forgotten, and the sandbox is told to grant X11
+  # rather than Wayland. That is the whole reason a newer Chromium is safe here
+  # and not there. It does not make Wayland work; it makes X11 unavoidable.
   - name: electron
     buildsystem: simple
     build-commands:
       - install -d /app/gitbraid/electron
       - cp -a . /app/gitbraid/electron/
       - chmod +x /app/gitbraid/electron/electron
+      # Removed rather than left lying about: it can never be setuid root here,
+      # and zypak stands in for it. Shipping a helper that cannot work only
+      # invites something to find it and try.
+      - rm -f /app/gitbraid/electron/chrome-sandbox
     sources:
       - type: archive
         strip-components: 0
