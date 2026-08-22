@@ -391,6 +391,49 @@ p.write_text(s)
 PY
 git add . && commit "chore(cli): build into dist/ to match the other tools"
 
+# ── two stashes, set aside on different days ──────────────────────
+# The header has promised a stash since the first version of this script and
+# never made one. Two rather than one on purpose: with a single stash there is
+# no way to see that every stash is drawn rather than only the newest. One of
+# them carries an untracked file, which lives on a third parent that a plain
+# diff never looks at — the case that used to show as holding nothing.
+#
+# `git stash push` writes real commits, so it walks the same clock as
+# everything else; dated today they would sit above a history from February.
+stash() {            # stash <message> [--include-untracked]
+  stamp
+  GIT_AUTHOR_DATE="$WHEN" GIT_COMMITTER_DATE="$WHEN" \
+    git stash push -q "${@:2}" -m "$1"
+}
+
+git checkout -q develop
+dev2
+cat > src/feed/cache.js <<'JS'
+/* Not finished: the feed is rebuilt from scratch on every run, which is fine
+   for eighty posts and will not be fine for eight hundred. */
+export function cachedFeed(posts, previous) {
+  if (!previous) return null;
+  return posts.length === previous.length ? previous : null;
+}
+JS
+python3 - <<'PY2'
+import pathlib
+p = pathlib.Path('src/feed/rss.js')
+if p.exists():
+    s = p.read_text()
+    p.write_text('// TODO: reuse the previous feed when nothing changed\n' + s)
+PY2
+stash "Half-written feed cache" --include-untracked
+
+me
+python3 - <<'PY2'
+import pathlib
+p = pathlib.Path('src/args.js')
+s = p.read_text()
+p.write_text(s.replace("drafts: false", "drafts: false, quiet: false"))
+PY2
+stash "Experiment: a --quiet flag"
+
 # ── things left in progress, so the panels are not empty ──────────
 me
 git checkout -q feature/dark-theme
@@ -423,6 +466,7 @@ echo "Demo repository ready: $DIR"
 echo "  branches : main, develop, feature/dark-theme, feature/rss-feed, fix/slug-collision"
 echo "  tags     : v0.1.0, v0.1.1"
 echo "  staged   : docs/writing.md      unstaged: README.md"
+echo "  stashes  : 2 (one of them carrying an untracked file)"
 echo
 echo "For the conflict screenshot, run this inside the demo repo:"
 echo "  git merge develop        # conflicts in src/args.js, on purpose"

@@ -1,0 +1,116 @@
+# Flatpak manifest for Flathub.
+#
+#   flatpak-builder --user --install --force-clean build flatpak/io.github.heri_anggara.GitBraid.yml
+#   flatpak run io.github.heri_anggara.GitBraid
+#
+# Three things about this application shape the manifest, and each is written
+# out below where it applies: it drives the real git command line, it carries no
+# runtime dependencies of its own, and it needs a windowing backend chosen on
+# the command line rather than in JavaScript.
+app-id: io.github.heri_anggara.GitBraid
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+# Carries the shared libraries Chromium expects and nothing else does.
+base: org.electronjs.Electron2.BaseApp
+base-version: '25.08'
+command: gitbraid
+separate-locales: false
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Fetch, pull and push.
+  - --share=network
+  # A git client is pointed at repositories the reader chooses, and there is no
+  # portal for "open a folder and keep reading it for the length of a session".
+  - --filesystem=home
+  # SSH remotes, through the agent the desktop already runs.
+  - --socket=ssh-auth
+  # git credential helpers that keep HTTPS passwords in the keyring.
+  - --talk-name=org.freedesktop.secrets
+  # Opening a file in the reader's editor, and a folder in their file manager.
+  - --talk-name=org.freedesktop.portal.OpenURI
+
+modules:
+  # ── git itself ───────────────────────────────────────────────────
+  # The freedesktop runtime does not ship git — measured, not assumed:
+  # `flatpak run --command=sh org.freedesktop.Platform//25.08 -c 'command -v git'`
+  # finds nothing, though it does find ssh. Everything GitBraid does is a git
+  # command, so git has to be in the sandbox with it.
+  #
+  # Built without perl, tcl/tk and gettext. Those cover git's interactive
+  # porcelain — `add -i`, `add -p`, gitk, git-gui — none of which this
+  # application calls: it stages hunks by handing its own patch to
+  # `git apply --cached`. Leaving them out keeps the sandbox from depending on
+  # interpreters the Platform runtime does not have either.
+  - name: git
+    make-args:
+      - NO_PERL=1
+      - NO_TCLTK=1
+      - NO_GETTEXT=1
+      - NO_PYTHON=1
+      - INSTALL_SYMLINKS=1
+      - prefix=/app
+    make-install-args:
+      - NO_PERL=1
+      - NO_TCLTK=1
+      - NO_GETTEXT=1
+      - NO_PYTHON=1
+      - INSTALL_SYMLINKS=1
+      - prefix=/app
+    sources:
+      - type: archive
+        url: https://www.kernel.org/pub/software/scm/git/git-2.55.0.tar.xz
+        sha256: 457fdb04dc8728e007d4688695e6912e6f680727920f2a40bf11eacc17505357
+    cleanup:
+      - /share/git-core/templates/hooks
+      - /libexec/git-core/git-daemon
+      - /libexec/git-core/git-http-backend
+      - /libexec/git-core/git-imap-send
+      - /libexec/git-core/git-send-email
+
+  # ── Electron ─────────────────────────────────────────────────────
+  # The official prebuilt binary, pinned by hash. 43 rather than the 37 the deb
+  # and the AppImage carry: those are pinned to 37 because Electron 38 and up
+  # choose the native Wayland backend by default and it crashes before a window
+  # appears, and the only cure is a command-line argument — which on an ordinary
+  # desktop would mean every launcher having to remember one. Here the launcher
+  # is a file in this manifest, so it cannot be forgotten, and the newer
+  # Chromium comes free.
+  - name: electron
+    buildsystem: simple
+    build-commands:
+      - install -d /app/gitbraid/electron
+      - cp -a . /app/gitbraid/electron/
+      - chmod +x /app/gitbraid/electron/electron
+    sources:
+      - type: archive
+        strip-components: 0
+        url: https://github.com/electron/electron/releases/download/v43.4.1/electron-v43.4.1-linux-x64.zip
+        sha256: 79d4efd69f0ccf1fc11891ea5075329c7b3faddad79a08d9fb395bbd63169acf
+
+  # ── the application ──────────────────────────────────────────────
+  # No npm install, no vendored lockfile, no offline mirror. GitBraid has no
+  # runtime dependencies at all — electron and electron-builder are build tools
+  # and neither is needed here — so the whole application is the files it is
+  # written in.
+  - name: gitbraid
+    buildsystem: simple
+    build-commands:
+      - install -d /app/gitbraid/app
+      - cp -a main.js preload.js src package.json LICENSE /app/gitbraid/app/
+      - install -Dm755 flatpak/gitbraid.sh /app/bin/gitbraid
+      - install -Dm644 build/linux/io.github.heri_anggara.GitBraid.desktop
+        /app/share/applications/io.github.heri_anggara.GitBraid.desktop
+      - install -Dm644 build/linux/io.github.heri_anggara.GitBraid.metainfo.xml
+        /app/share/metainfo/io.github.heri_anggara.GitBraid.metainfo.xml
+      - for s in 16 24 32 48 64 128 256 512; do
+        install -Dm644 "build/icons/${s}x${s}.png"
+        "/app/share/icons/hicolor/${s}x${s}/apps/io.github.heri_anggara.GitBraid.png";
+        done
+    sources:
+      - type: dir
+        path: ..

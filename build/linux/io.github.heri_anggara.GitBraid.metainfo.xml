@@ -6,7 +6,7 @@
   <!-- The name of the desktop file as it is actually installed. The .deb and
        AppImage ship gitbraid.desktop; a Flatpak renames it to match <id>, and
        this line has to be changed with it. -->
-  <launchable type="desktop-id">gitbraid.desktop</launchable>
+  <launchable type="desktop-id">io.github.heri_anggara.GitBraid.desktop</launchable>
 
   <name>GitBraid</name>
   <summary>Read your Git history as coloured lanes</summary>
