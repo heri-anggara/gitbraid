@@ -7,6 +7,43 @@
  */
 window.Releases = [
   {
+    version: '0.8.0',
+    date: '2026-08-22',
+    title: 'It opens the repository you name, and it can be packaged as a Flatpak',
+    summary:
+      '`gitbraid .` now opens the repository you are standing in, which the '
+      + 'desktop file has been promising since the first release. And there is a '
+      + 'Flatpak manifest, built and run rather than merely written.',
+    sections: [
+      {
+        heading: 'Opening a repository by name',
+        items: [
+          'Both desktop files have said Exec=gitbraid %U since the first release, and nothing ever read the argument. `gitbraid .` — the most natural way to open the repository you are standing in — showed the start page and ignored the path.',
+          'The argument is matched by value rather than by position, because position is not dependable: Electron’s own arguments hold the executable, any Chromium switches, and sometimes the application directory itself. file:// URLs are accepted too, since %U hands over URLs rather than paths.',
+          'A second `gitbraid .` raises the window already open and adds a tab, rather than starting a rival process. One window with many tabs is the shape of this application, and two processes would keep two session files and overwrite each other’s.',
+          'A folder that is not a repository leaves the start page alone rather than reporting an error at you.',
+        ],
+      },
+      {
+        heading: 'A Flatpak, built and run',
+        items: [
+          'The manifest builds git into the sandbox, because the freedesktop runtime does not ship it and every single thing this application does is a git command. It is built without the interactive porcelain — `add -i`, `add -p`, gitk — none of which is called here, since hunks are staged by handing our own patch to `git apply --cached`.',
+          'There is no npm anywhere in it. No lockfile to vendor, no offline mirror, no dependency generator. Having no runtime dependencies has been a rule here for its own sake, and this is the first time it paid a bill.',
+          'It carries Electron 43 where the deb and the AppImage carry 37. Those stay on 37 because 38 and up choose a Wayland backend that crashes before a window appears, and forcing the backend from a desktop launcher would mean every way of starting the application having to remember an argument. A Flatpak has exactly one way in, so a Chromium six major versions newer comes free.',
+          'What that takes turned out to be more specific than expected, and it was measured rather than assumed: --ozone-platform-hint=auto, the same hint set to x11, and no flag at all all end in a crash; only naming the platform outright gets past it.',
+          'The known cost is git hooks. A hook runs inside the sandbox, so a plain shell hook works and one calling node or python fails, because those live on the host. It errors rather than being skipped silently, which is the better of the two failures, but it is a difference from the deb and the AppImage.',
+        ],
+      },
+      {
+        heading: 'Groundwork that came with it',
+        items: [
+          'The screenshots were four days old and showed an application that no longer exists — no filter box above the branches, and stashes drawn as three rows each. They are taken again, and the demo repository behind them now carries two stashes, one holding an untracked file.',
+          'The desktop file a Flatpak installs still asked the shell to wait for a startup signal this application never sends — the exact setting v0.5.3 turned off after ten seconds of loading cursor over a window that was already on screen. Shipping it as written would have handed Flatpak users a bug the deb had been fixed for.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.7.0',
     date: '2026-08-22',
     title: 'Stashes look like stashes, the sidebar has a search box, and four keys stop firing behind your back',
