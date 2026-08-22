@@ -133,7 +133,7 @@ git clone https://github.com/heri-anggara/gitbraid.git
 cd gitbraid
 npm install
 npm start                 # run it
-npm test                  # 216 checks, no network, no fixtures to download
+npm test                  # 218 checks, no network, no fixtures to download
 npm run dist              # .deb + AppImage into dist/
 npm run dist:win          # Windows installer, cross-built from Linux
 ```
