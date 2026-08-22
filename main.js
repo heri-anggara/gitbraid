@@ -1139,13 +1139,60 @@ function revealWindow() {
   if (win && !win.isVisible()) win.show();
 }
 
-app.whenReady().then(() => {
-  createWindow();
-  buildMenu();
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+/* A folder named on the command line. Both desktop files have said
+   `Exec=gitbraid %U` since the first release, and until now nothing read the
+   argument at all: `gitbraid .` opened the start page and ignored the path.
+
+   Matched by value rather than by position. Electron's own argv holds the
+   executable, any Chromium switches, and — when it is pointed at a directory
+   rather than packaged — the application directory itself, and none of those
+   sit at a dependable index. The Flatpak makes that plain: it passes
+   `--ozone-platform=x11` before the application path, so argv[1] is a switch
+   and argv[2] is the app. */
+function repoFromArgv(argv) {
+  const appPath = path.resolve(app.getAppPath());
+  for (const raw of argv.slice(1)) {
+    if (!raw || raw.startsWith('-')) continue;
+    let candidate = raw;
+    // %U hands over URLs, and a file manager sends file:// ones.
+    if (candidate.startsWith('file://')) {
+      try { candidate = decodeURIComponent(new URL(candidate).pathname); } catch { continue; }
+    }
+    const full = path.resolve(candidate);
+    if (full === appPath) continue;
+    try { if (fs.statSync(full).isDirectory()) return full; } catch { /* not a path */ }
+  }
+  return null;
+}
+
+/* Held until the renderer asks for it, which it does once during boot. Asking
+   is the renderer's job rather than ours to push: sending it unprompted raced
+   with restoring the saved tabs, and the restored session won — the window
+   opened on the repository the reader had not asked for. */
+let pendingRepo = repoFromArgv(process.argv);
+
+/* One window with many tabs is the whole shape of this application, so a
+   second `gitbraid .` belongs in the window already open. A rival process
+   would keep its own session file and the two would overwrite each other. */
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', (_evt, argv) => {
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.focus();
+    const dir = repoFromArgv(argv);
+    if (dir) send('open-recent', { path: dir });
   });
-});
+
+  app.whenReady().then(() => {
+    createWindow();
+    buildMenu();
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -1175,6 +1222,13 @@ handle('app:zoom', async (level) => {
 });
 
 handle('app:ready', async () => { revealWindow(); return true; });
+
+/* Answered once and then forgotten, so a later reload does not reopen it. */
+handle('app:launchRepo', async () => {
+  const dir = pendingRepo;
+  pendingRepo = null;
+  return dir;
+});
 
 /* ------------------------------------------------------------------ */
 /* git identity                                                        */

@@ -427,6 +427,32 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Membuka repositori lewat baris perintah**
+- Kedua berkas desktop menulis `Exec=gitbraid %U` sejak rilis pertama, dan
+  argumennya tidak pernah dibaca siapa pun — `gitbraid .` membuka halaman depan
+  lalu mengabaikan pathnya. Satu-satunya `process.argv` di `main.js` milik skrip
+  pembantu reword
+- Argumen dicocokkan **berdasarkan nilai, bukan posisi**. argv milik Electron
+  memuat berkas program, saklar Chromium mana pun, dan — kalau ia diarahkan ke
+  sebuah direktori alih-alih dipaketkan — direktori aplikasinya sendiri, dan
+  tidak satu pun duduk di indeks yang bisa diandalkan. Flatpak-nya memperjelas
+  itu: ia melewatkan `--ozone-platform=x11` sebelum path aplikasi, jadi argv[1]
+  saklar dan argv[2] aplikasinya. `file://` juga diterima, karena `%U`
+  menyerahkan URL
+- **Renderer yang meminta, bukan main yang mendorong.** Mengirimnya tanpa
+  diminta berlomba dengan pemulihan tab tersimpan, dan sesi yang dipulihkan
+  menang — jendelanya terbuka pada repositori yang bukan diminta pembaca.
+  Sekarang renderer menanyakannya sekali saat boot lewat `app:launchRepo`, dan
+  membukanya paling akhir supaya ia mendarat di atas sesi, bukan di bawahnya
+- **Satu instans.** `gitbraid .` yang kedua menaikkan jendela yang sudah ada dan
+  menambah tab. Proses tandingan akan memegang berkas sesinya sendiri dan
+  keduanya saling menimpa
+- Terukur, dengan aplikasi dijalankan sungguhan: argumen folder repo → terbuka;
+  `file:///tmp/inkwell` → terbuka; folder yang bukan repo → tidak ada yang
+  terbuka, tanpa galat; saklar mendahului path aplikasi → tetap terbuka; instans
+  kedua → keluar dengan kode 0 dan tab yang pertama menjadi
+  `["inkwell","second-repo"]`
+
 **Pintasan papan tik dan salinan teks**
 - **Pintasan satu-huruf ikut menyala bersama Ctrl dan Alt.** Penangan keydown
   membaca `e.key` tanpa pernah memeriksa modifier, jadi `Ctrl+F` — akselerator

@@ -4,7 +4,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 const CHANNELS = new Set([
   'app:recents', 'app:removeRecent', 'app:clearRecents', 'app:paths', 'app:zoom',
-  'app:menuState', 'app:ready', 'app:about', 'app:log', 'app:clearLog',
+  'app:menuState', 'app:ready', 'app:launchRepo', 'app:about', 'app:log', 'app:clearLog',
   'term:run', 'term:kill',
   'repos:list', 'repos:favorite', 'repos:forget', 'repos:scan', 'repos:wip',
   'git:identity', 'git:setIdentity',
