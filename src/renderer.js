@@ -1143,6 +1143,19 @@ function renderTree(node, kind, leafHtml, prefix = '', depth = 0) {
 const treeOrEmpty = (items, kind, leafHtml, empty) =>
   items.length ? renderTree(buildTree(items), kind, leafHtml) : `<li class="empty-row">${empty}</li>`;
 
+/* What the sidebar's filter box holds. Kept out of the tab state on purpose: it
+   is a way of looking, not something about the repository. */
+let refFilter = '';
+
+/* Filtering flattens, for the same reason the file lists flatten: a folder whose
+   children are all hidden tells you nothing, and keeping the folders while
+   hiding their contents would leave the indentation lying about what is there. */
+function matchRefs(items, name = (x) => x.name) {
+  if (!refFilter) return { shown: items, flat: false };
+  const q = refFilter;
+  return { shown: items.filter((x) => name(x).toLowerCase().includes(q)), flat: true };
+}
+
 function renderSidebar() {
   const { branches, remotes, tags } = state.refs;
 
@@ -1168,25 +1181,62 @@ function renderSidebar() {
     `style="--d:${depth}" title="${esc(t.name)}">${SIDE_ICON.tag}` +
     `<span class="side-name">${esc(label)}</span></li>`;
 
-  $('count-local').textContent = branches.length;
-  $('list-local').innerHTML = treeOrEmpty(branches, 'branch', branchLeaf, 'No branches yet');
+  /* Filtered, a group's rows are drawn flat — the whole name on each line, since
+     the folder that used to carry half of it is gone. */
+  const group = (id, items, kind, leaf, empty) => {
+    const { shown, flat } = matchRefs(items);
+    $(`count-${id}`).textContent = refFilter ? `${shown.length}/${items.length}` : items.length;
+    $(`count-${id}`).classList.toggle('filtered', Boolean(refFilter) && shown.length > 0);
+    $(`list-${id}`).innerHTML = shown.length
+      ? (flat ? shown.map((x) => leaf(x, x.name, 0)).join('')
+              : renderTree(buildTree(shown), kind, leaf))
+      : `<li class="empty-row">${refFilter ? 'Nothing matches' : empty}</li>`;
+    return shown.length;
+  };
 
-  $('count-remote').textContent = remotes.length;
-  $('list-remote').innerHTML = treeOrEmpty(remotes, 'remote', remoteLeaf, 'No remote branches');
-
-  $('count-tags').textContent = tags.length;
-  $('list-tags').innerHTML = treeOrEmpty(tags, 'tag', tagLeaf, 'No tags');
+  const hits = {
+    local: group('local', branches, 'branch', branchLeaf, 'No branches yet'),
+    remote: group('remote', remotes, 'remote', remoteLeaf, 'No remote branches'),
+    tags: group('tags', tags, 'tag', tagLeaf, 'No tags'),
+  };
 
   // Stash refs are stash@{0}, stash@{1} … — nothing to nest.
-  $('count-stash').textContent = state.stashes.length;
-  $('list-stash').innerHTML = state.stashes
+  const stashes = refFilter
+    ? state.stashes.filter((s) => s.subject.toLowerCase().includes(refFilter))
+    : state.stashes;
+  $('count-stash').textContent = refFilter
+    ? `${stashes.length}/${state.stashes.length}` : state.stashes.length;
+  $('count-stash').classList.toggle('filtered', Boolean(refFilter) && stashes.length > 0);
+  $('list-stash').innerHTML = stashes
     .map(
       (s) =>
         `<li class="tree-leaf" data-ref="${esc(s.ref)}" data-kind="stash" style="--d:0" ` +
         `title="${esc(s.subject)}"><span class="side-name">${esc(s.subject)}</span>` +
         `<span class="side-track">${relativeTime(s.date)}</span></li>`
     )
-    .join('') || '<li class="empty-row">Nothing stashed</li>';
+    .join('') || `<li class="empty-row">${refFilter ? 'Nothing matches' : 'Nothing stashed'}</li>`;
+  hits.stash = stashes.length;
+
+  /* Tags and stashes start shut, which is right until someone searches: a match
+     hidden inside a folded group is a search that answered nothing. While the
+     filter is on, a group holding matches is opened and one holding none folds
+     away entirely.
+
+     Only while it is on. Cleared, this leaves every group exactly as the reader
+     had it — restoring that is the filter box's job, from the note it took
+     before it started meddling, so a search never quietly rearranges the
+     sidebar for good. */
+  $('app').classList.toggle('ref-filtering', Boolean(refFilter));
+  if (!refFilter) {
+    for (const g of document.querySelectorAll('.side-group')) g.classList.remove('no-match');
+    return;
+  }
+  for (const g of document.querySelectorAll('.side-group')) {
+    const key = g.dataset.group;
+    if (!(key in hits)) continue;
+    g.classList.toggle('no-match', hits[key] === 0);
+    g.classList.toggle('collapsed', hits[key] === 0);
+  }
 }
 
 /* ═════ history columns ═════════════════════════════════════════ */
@@ -6393,6 +6443,35 @@ function wireFileList(id) {
 ['list-conflicts', 'list-staged', 'list-unstaged', 'list-commit-files'].forEach(wireFileList);
 
 /* ── file filter ── */
+/* ── the sidebar filter ── */
+/* What the groups looked like before the filter opened any of them. Restored on
+   the way out, so searching never leaves the sidebar rearranged. */
+let groupsBeforeFilter = null;
+
+$('ref-filter').addEventListener('input', (e) => {
+  const was = refFilter;
+  refFilter = e.target.value.trim().toLowerCase();
+  $('btn-ref-filter-clear').hidden = !refFilter;
+  if (!was && refFilter) {
+    groupsBeforeFilter = new Set([...document.querySelectorAll('.side-group')]
+      .filter((g) => g.classList.contains('collapsed'))
+      .map((g) => g.dataset.group));
+  }
+  if (was && !refFilter && groupsBeforeFilter) {
+    for (const g of document.querySelectorAll('.side-group')) {
+      g.classList.toggle('collapsed', groupsBeforeFilter.has(g.dataset.group));
+    }
+    groupsBeforeFilter = null;
+  }
+  if (state.refs) renderSidebar();
+});
+
+$('btn-ref-filter-clear').addEventListener('click', () => {
+  $('ref-filter').value = '';
+  $('ref-filter').dispatchEvent(new Event('input'));
+  $('ref-filter').focus();
+});
+
 $('file-filter').addEventListener('input', (e) => {
   wipFilter = e.target.value.trim().toLowerCase();
   $('btn-filter-clear').hidden = !wipFilter;

@@ -869,6 +869,45 @@ for (const [name, platform, expect] of [
       t.usesCwd === true || t.dir('/tmp/x').join(' ').includes('/tmp/x')));
 }
 
+console.log('\nfiltering the sidebar');
+{
+  /* Branches and tags were the only lists in the window without a search box,
+     which is felt hardest where it matters most: a repository here carries 581
+     tags, and scrolling was the only way to find one. */
+  const pick = (items, q) => (q ? items.filter((x) => x.name.toLowerCase().includes(q)) : items);
+  const tags = ['1.44.4.0', '1.45.2.0', 'voucher_reward', 'Voucher_Summary', 'kiosk-member']
+    .map((name) => ({ name }));
+
+  check('a plain substring matches', pick(tags, 'voucher').length === 2, pick(tags, 'voucher').length);
+  check('and it does not care about case',
+    pick(tags, 'voucher').some((t) => t.name === 'Voucher_Summary'));
+  check('a dotted version is matched literally, not as a pattern',
+    pick(tags, '1.45').length === 1 && pick(tags, '1.45')[0].name === '1.45.2.0');
+  check('nothing matching is nothing, not everything', pick(tags, 'zzzz').length === 0);
+  check('an empty box hides nothing', pick(tags, '').length === tags.length);
+
+  /* Filtering flattens, for the same reason the file lists do: a folder whose
+     children are all hidden says nothing, and keeping it would leave the
+     indentation claiming something that is not there. */
+  check('a filtered group is drawn flat rather than as a tree',
+    /flat \? shown\.map\(\(x\) => leaf\(x, x\.name, 0\)\)/.test(rendererSrc));
+  check('the header counts matches against the total',
+    /\$\{shown\.length\}\/\$\{items\.length\}/.test(rendererSrc));
+
+  /* Tags and stashes ship folded. A match hidden inside a folded group is a
+     search that answered nothing — so searching opens them, and clearing must
+     put them back exactly as they were rather than leaving the sidebar
+     rearranged for good. */
+  check('searching opens a group that has matches',
+    /g\.classList\.toggle\('collapsed', hits\[key\] === 0\)/.test(rendererSrc));
+  check('what the reader had folded is noted before anything is opened',
+    /groupsBeforeFilter = new Set/.test(rendererSrc));
+  check('and put back when the box is cleared',
+    /was && !refFilter && groupsBeforeFilter/.test(rendererSrc));
+  check('cleared, the filter stops touching the folds at all',
+    /if \(!refFilter\) \{[\s\S]{0,160}return;/.test(rendererSrc));
+}
+
 console.log('\na stash in the history');
 {
   /* One stash is up to three commits: the stash, one holding what was staged,

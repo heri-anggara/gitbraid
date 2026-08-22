@@ -427,6 +427,26 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Saringan cabang & tag di sidebar**
+- Satu kotak untuk seluruh sidebar, sama seperti Filter files menyaring staged
+  dan unstaged sekaligus — bukan empat kotak untuk empat bagian
+- Menyaring **meratakan** pohonnya, dengan alasan yang sama seperti daftar
+  berkas: folder yang seluruh isinya tersembunyi tidak mengatakan apa pun, dan
+  membiarkannya membuat indentasi berbohong tentang apa yang ada di dalamnya
+- Tag dan stash memang terlipat sejak awal — dan itu benar sampai seseorang
+  mencari. Kecocokan yang tersembunyi di dalam bagian terlipat sama saja dengan
+  pencarian yang tidak menjawab apa-apa. Jadi bagian yang punya kecocokan dibuka,
+  yang tidak punya dilipat hilang sekalian
+- **Yang dibuka harus dikembalikan.** Keadaan lipatan dicatat sebelum saringan
+  mulai mengubahnya, dan dipulihkan saat kotaknya dikosongkan — kalau tidak,
+  sekali mencari akan menata ulang sidebar seseorang secara permanen. Saat kotak
+  kosong, saringan tidak menyentuh lipatan sama sekali
+- Hitungannya jadi "cocok/total" dan diberi warna aksen, jadi 30/581 langsung
+  memberi tahu ada berapa dan dari berapa
+- Terukur pada repo dengan 581 tag: "voucher" → 30, "1.45" → 7, keduanya cocok
+  persis dengan jawaban `git tag | grep -c`. Menggambar ulang 0,3–1,8 ms saat
+  menyaring, 13,6 ms saat dikosongkan (581 tag digambar lagi)
+
 **Stash di graph: satu aksi, satu baris**
 - Sebuah stash adalah satu tindakan, tapi git menyimpannya sebagai **sampai tiga
   commit**: stash-nya sendiri, satu berisi apa yang ter-stage, dan satu berisi

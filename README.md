@@ -133,7 +133,7 @@ git clone https://github.com/heri-anggara/gitbraid.git
 cd gitbraid
 npm install
 npm start                 # run it
-npm test                  # 181 checks, no network, no fixtures to download
+npm test                  # 204 checks, no network, no fixtures to download
 npm run dist              # .deb + AppImage into dist/
 npm run dist:win          # Windows installer, cross-built from Linux
 ```
@@ -180,8 +180,9 @@ Honest ones, not a wish list:
   measures again, for the same reason.
 - **A real terminal.** The drawer captures command output rather than providing
   a TTY, so full-screen programs will not run in it.
-- **Sidebar filtering.** Commits, files, repositories and tabs each have a
-  search box; branches and tags do not.
+- **Filtering by anything but a name.** Every list has a search box now, but
+  they all match on the name — there is no way to ask for, say, branches merged
+  into the one you are on.
 
 ---
 
