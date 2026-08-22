@@ -62,3 +62,43 @@ git with all their hooks, helpers and configuration intact. It needs
 `--talk-name=org.freedesktop.Flatpak`, which is a documented way out of the
 sandbox, and Flathub reviewers treat it as one. Bundling git is the version that
 gets accepted without an argument, so it is the version here.
+
+## What the linter says
+
+```bash
+flatpak install --user flathub org.flatpak.Builder
+flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
+  manifest flatpak/io.github.heri_anggara.GitBraid.yml
+```
+
+Three findings, and only one of them was a mistake.
+
+**`finish-args-portal-talk-name` — fixed.** The manifest asked for
+`--talk-name=org.freedesktop.portal.OpenURI` so that opening a file in the
+reader's editor would work. XDG portals are reachable from every sandbox
+already; the permission was doing nothing but widening the surface. Removed, and
+the application still runs.
+
+**`finish-args-home-filesystem-access` and `finish-args-has-socket-ssh-auth` —
+kept, and they need explaining in the submission rather than fixing.** A git
+client is pointed at whichever repositories the reader chooses, and no portal
+offers "open a folder and keep reading it for the length of a session"; SSH
+remotes go through the agent the desktop already runs. Both are the ordinary
+shape of a git client, and both are exactly the kind of thing a reviewer should
+ask about.
+
+**`appstream-external-screenshot-url` — expected.** Flathub mirrors screenshots
+to its own media server when the build first runs on their infrastructure. It
+reads as an error locally and resolves there.
+
+## Building from the working tree
+
+The manifest names a tag, pinned to its commit, because Flathub builds from it
+and their farm has no working tree to reach into. To build what is checked out
+instead, swap the three `type: git` lines in the last module for:
+
+```yaml
+      - type: dir
+        path: ..
+```
+

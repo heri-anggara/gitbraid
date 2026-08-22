@@ -37,8 +37,10 @@ finish-args:
   - --socket=ssh-auth
   # git credential helpers that keep HTTPS passwords in the keyring.
   - --talk-name=org.freedesktop.secrets
-  # Opening a file in the reader's editor, and a folder in their file manager.
-  - --talk-name=org.freedesktop.portal.OpenURI
+  # Opening a file in the reader's editor and a folder in their file manager
+  # need nothing here: XDG portals are reachable from every sandbox already, and
+  # asking for them by name is what flatpak-builder-lint calls
+  # finish-args-portal-talk-name.
 
 modules:
   # ── git itself ───────────────────────────────────────────────────
@@ -136,5 +138,11 @@ modules:
         "/app/share/icons/hicolor/${s}x${s}/apps/io.github.heri_anggara.GitBraid.png";
         done
     sources:
-      - type: dir
-        path: ..
+      # The tag, pinned to its commit, because this file is also the one
+      # Flathub builds from and their farm has no working tree to reach into.
+      # To build the working tree instead, swap these three lines for
+      # `- type: dir` and `  path: ..`.
+      - type: git
+        url: https://github.com/heri-anggara/gitbraid.git
+        tag: v0.8.0
+        commit: 49cf9514aa499bd4110029dc9bd93871f775ffe9
