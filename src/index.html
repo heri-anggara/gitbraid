@@ -478,6 +478,25 @@
             <span class="si-name" id="side-branch-name"></span>
           </div>
         </div>
+
+        <!-- Satu kotak untuk seluruh sidebar, seperti Filter files menyaring
+             staged dan unstaged sekaligus. Sebuah repositori bisa membawa
+             ratusan tag; tanpa ini satu-satunya cara menemukannya adalah
+             menggulir sampai ketemu. -->
+        <div class="file-filter side-filter">
+          <svg class="ff-i" viewBox="0 0 14 14" aria-hidden="true">
+            <circle cx="6.2" cy="6.2" r="3.9" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <path d="m9.2 9.2 2.7 2.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+          <input id="ref-filter" type="text" spellcheck="false"
+                 placeholder="Filter branches and tags">
+          <button id="btn-ref-filter-clear" class="ff-clear" title="Clear the filter" hidden>
+            <svg class="tb-i" viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M3 3 9 9M9 3 3 9" fill="none" stroke="currentColor"
+                    stroke-width="1.7" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div class="side-group" data-group="local">

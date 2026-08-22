@@ -2332,6 +2332,16 @@ textarea {
   color: var(--text-dim);
 }
 
+/* The sidebar's own filter. Same shape as the one over the file lists, so both
+   searches in the window look and behave alike. */
+.side-filter { margin: 8px 0 2px; }
+/* A section with nothing matching is not worth the header either: while the
+   filter is on, an empty group folds away instead of saying "no match" four
+   times over. */
+.app.ref-filtering .side-group.no-match { display: none; }
+/* How many of the group matched, against how many there are. */
+.side-count.filtered { color: var(--accent-text); }
+
 /* ── change map ──────────────────────────────────────────────── */
 /* Always present, even with nothing to show: reserving the strip means opening
    a file never re-flows the diff sideways. It carries the diff's own background
