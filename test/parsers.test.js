@@ -911,7 +911,21 @@ console.log('\nwhat a stash is holding');
   check('the graph draws a stash as a broken ring, not a disc',
     /stash\s*\n?\s*\? ` fill-opacity="\.14"[^`]*stroke-dasharray="2\.5 2\.5"`/.test(graphSrc));
   check('and puts no face on it', /pending \|\| stash \? null : avatarFor/.test(graphSrc));
-  check('the panel says so above the message', /\$\('c-kind'\)\.hidden = !c\.stash;/.test(rendererSrc));
+  /* Said in the bar that already labels the panel, rather than on a line of its
+     own: one word does not need a row to itself. */
+  check('the panel bar says which of the two it is showing',
+    /\$\('c-top-label'\)\.textContent = c\.stash \? 'stash' : 'commit';/.test(rendererSrc));
+  check('and nothing is left of the badge that took a line',
+    !/c-kind/.test(rendererSrc) && !/c-kind/.test(
+      fs.readFileSync(path.join(__dirname, '..', 'src/index.html'), 'utf8')));
+
+  /* Every other pill takes its border from the lane colour, which a stash has
+     none of — so that shorthand was invalid here, and an invalid border takes
+     its width down with it, leaving `medium`: three pixels of dashes. */
+  const cssSrc = fs.readFileSync(path.join(__dirname, '..', 'src/styles.css'), 'utf8');
+  const stashPill = (cssSrc.match(/\.pill\.stash \{[^}]*\}/) || [''])[0];
+  check('the stash pill states its border in full, width included',
+    /border:\s*1px dashed/.test(stashPill), stashPill.replace(/\s+/g, ' ').slice(0, 90));
   check('and calls its parent what it is',
     /c\.stash \? 'taken from'/.test(rendererSrc));
 

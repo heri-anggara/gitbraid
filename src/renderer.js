@@ -2073,10 +2073,11 @@ async function renderCommitPanel(hash) {
   av.classList.remove('unset');
 
   /* A stash reads exactly like a commit here — "On develop: blm1" over an author
-     and a date — so it says what it is, in the same dashed language the sidebar
-     badge and the graph dot use. */
-  $('c-kind').hidden = !c.stash;
-  $('c-kind').textContent = 'stash';
+     and a date — so the bar has to say which it is. It is already there for
+     that: a badge above the message spent a whole line on one word the label
+     was going to carry anyway. */
+  $('c-top-label').textContent = c.stash ? 'stash' : 'commit';
+  $('c-top-label').classList.toggle('is-stash', Boolean(c.stash));
 
   /* A merge has two parents and they mean different things: the first is the
      branch you were on, the second is the branch that came in. Naming both,

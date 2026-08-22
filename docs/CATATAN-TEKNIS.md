@@ -479,9 +479,17 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   bahasa visual yang sama dengan baris "Uncommitted". Tanpa foto penulis: titik
   itu tidak sedang melaporkan siapa yang menulis, melainkan menandai sesuatu
   yang diparkir
-- Panel kanan menyebutkan "STASH" di atas pesannya, dan induknya diberi label
-  **"taken from"** alih-alih "parent" — karena itu commit tempat pekerjaannya
-  diambil, bukan commit yang diikutinya
+- Panel kanan mengatakannya lewat **label bilah atas** yang sudah ada — kata
+  "commit" berganti jadi "stash" dan diberi warna aksen. Versi pertama menaruh
+  lencana di baris tersendiri di atas pesan, dan itu memakan satu baris penuh
+  untuk satu kata yang labelnya memang sudah bertugas mengatakannya
+- Induknya diberi label **"taken from"** alih-alih "parent" — karena itu commit
+  tempat pekerjaannya diambil, bukan commit yang diikutinya
+- **Garis putus-putus badge-nya sempat setebal 3px.** Setiap pill lain mengambil
+  garisnya dari `--pc`, warna lajur, lewat `color-mix`. Stash tidak punya warna
+  lajur, jadi deklarasi itu tidak sah di sini — dan `border` shorthand yang tidak
+  sah **membawa serta lebarnya**, menyisakan bawaan `medium`. Sekarang lebar dan
+  warnanya disebutkan penuh: 1px, setara pill lain
 - Badge-nya sendiri, bergaris putus-putus: stash bukan cabang dan bukan tag, dan
   hanya yang terbaru yang ditunjuk `refs/stash` — tanpa badge itu, stash lama
   akan duduk sebagai baris tanpa label bertuliskan "On develop: …", tak

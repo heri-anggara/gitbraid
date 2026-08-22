@@ -808,7 +808,7 @@
       <!-- commit panel -->
       <div class="panel" id="panel-commit" hidden>
         <div class="c-top">
-          <span class="c-top-label">commit</span>
+          <span class="c-top-label" id="c-top-label">commit</span>
           <button class="hashbtn" id="c-hash" title="Copy the full SHA"></button>
           <button class="detail-collapse" id="detail-collapse-commit" title="Collapse the details panel"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M5.4 3.4 9 7l-3.6 3.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         </div>
@@ -816,9 +816,6 @@
         <!-- Pesan commit, bisa disunting di tempat. -->
         <div class="c-msgbox" id="c-msgbox">
           <div class="c-msg-read" id="c-msg-read">
-            <!-- Hanya muncul untuk stash: sebuah baris bertuliskan
-                 "On develop: …" terbaca persis seperti commit biasa. -->
-            <span class="c-kind" id="c-kind" hidden></span>
             <h2 id="c-subject"></h2>
             <p id="c-body" class="c-body"></p>
             <button class="c-edit" id="c-edit" title="Reword this commit">
