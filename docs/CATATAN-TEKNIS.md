@@ -468,6 +468,20 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   atas — begitu ada stash kedua, seluruh baris milik stash pertama hilang dari
   graph. Semua stash kini disebut namanya di dalam walk, jadi riwayatnya
   mengatakan hal yang sama berapa pun jumlah stash-nya
+- **Berkas tak terlacak di dalam stash sempat tidak terlihat sama sekali.**
+  Panel kanan menulis "no files" untuk stash yang isinya hanya berkas baru —
+  karena berkas itu disimpan di **induk ketiga**, bukan di pohon commit stash,
+  jadi membandingkannya dengan induk pertama tidak menemukan apa pun. Sekarang
+  didaftar dari induk ketiga dan ditandai sebagai *added*, dan diff-nya
+  ditampilkan terhadap pohon kosong — memang begitu adanya: berkas yang belum
+  pernah dilihat cabang mana pun. Path yang sudah ada di diff tidak diulang
+- Titik graph-nya cincin putus-putus, bukan cakram, dengan warna lajurnya —
+  bahasa visual yang sama dengan baris "Uncommitted". Tanpa foto penulis: titik
+  itu tidak sedang melaporkan siapa yang menulis, melainkan menandai sesuatu
+  yang diparkir
+- Panel kanan menyebutkan "STASH" di atas pesannya, dan induknya diberi label
+  **"taken from"** alih-alih "parent" — karena itu commit tempat pekerjaannya
+  diambil, bukan commit yang diikutinya
 - Badge-nya sendiri, bergaris putus-putus: stash bukan cabang dan bukan tag, dan
   hanya yang terbaru yang ditunjuk `refs/stash` — tanpa badge itu, stash lama
   akan duduk sebagai baris tanpa label bertuliskan "On develop: …", tak

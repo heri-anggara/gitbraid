@@ -816,6 +816,9 @@
         <!-- Pesan commit, bisa disunting di tempat. -->
         <div class="c-msgbox" id="c-msgbox">
           <div class="c-msg-read" id="c-msg-read">
+            <!-- Hanya muncul untuk stash: sebuah baris bertuliskan
+                 "On develop: …" terbaca persis seperti commit biasa. -->
+            <span class="c-kind" id="c-kind" hidden></span>
             <h2 id="c-subject"></h2>
             <p id="c-body" class="c-body"></p>
             <button class="c-edit" id="c-edit" title="Reword this commit">
