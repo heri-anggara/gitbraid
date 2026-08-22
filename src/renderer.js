@@ -7037,9 +7037,16 @@ window.addEventListener('drop', async (e) => {
   if (prefs.resumeLast && saved.paths.length) {
     restore = (await call('repos:existing', saved.paths)) || [];
   }
+  /* A folder named on the command line — `gitbraid .`, or a folder handed over
+     by a file manager. It beats the last-used repository, because naming one is
+     a clearer instruction than a fallback is; saved tabs still come back, and
+     the named repository joins them and takes the focus. */
+  const launch = await call('app:launchRepo');
+
   // Nothing saved yet — an install that predates tab restoring still lands in
   // the repository it used last.
-  const single = !restore.length && prefs.resumeLast && recents[0] ? recents[0] : null;
+  const single = !launch && !restore.length && prefs.resumeLast && recents[0]
+    ? recents[0] : null;
 
   if (restore.length) {
     $('booting-text').textContent = restore.length === 1
@@ -7047,6 +7054,8 @@ window.addEventListener('drop', async (e) => {
       : `Opening ${restore.length} repositories…`;
   } else if (single) {
     $('booting-text').textContent = `Opening ${single.name}…`;
+  } else if (launch) {
+    $('booting-text').textContent = `Opening ${baseName(launch)}…`;
   } else {
     endBooting();
   }
@@ -7065,6 +7074,12 @@ window.addEventListener('drop', async (e) => {
     endBooting();
   } else if (single) {
     await openRepoAt(single.path);
+    endBooting();               // also on failure — the start page is the fallback
+  }
+
+  /* Last, so it lands on top of a restored session rather than under it. */
+  if (launch) {
+    await openRepoAt(launch);
     endBooting();               // also on failure — the start page is the fallback
   }
 })();
