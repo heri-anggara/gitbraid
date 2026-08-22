@@ -2324,6 +2324,14 @@ textarea {
 .up-table td:not(:first-child), .up-table th:not(:first-child) { white-space: nowrap; }
 .up-table tr:last-child td { border-bottom: 0; }
 
+/* A stash is not a branch and not a tag, and its badge should not read like
+   one — it is work parked beside the history rather than part of it. */
+.pill.stash {
+  background: var(--surface-2);
+  border-style: dashed;
+  color: var(--text-dim);
+}
+
 /* ── change map ──────────────────────────────────────────────── */
 /* Always present, even with nothing to show: reserving the strip means opening
    a file never re-flows the diff sideways. It carries the diff's own background

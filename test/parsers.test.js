@@ -869,6 +869,81 @@ for (const [name, platform, expect] of [
       t.usesCwd === true || t.dir('/tmp/x').join(' ').includes('/tmp/x')));
 }
 
+console.log('\na stash in the history');
+{
+  /* One stash is up to three commits: the stash, one holding what was staged,
+     and one holding the untracked files. Drawing all three put three rows in
+     the history for a single action — two of them plumbing nobody made.
+
+     Checked against git rather than against a guess about its output: the
+     second parent of a stash is the index commit and the third is the untracked
+     one, and a stash taken with nothing untracked simply has no third. */
+  fs.writeFileSync(path.join(REPO, 'stash-me.txt'), 'work in progress\n');
+  fs.writeFileSync(path.join(REPO, 'stash-new.txt'), 'never added\n');
+  git(['add', 'stash-me.txt']);
+  git(['stash', 'push', '-u', '-m', 'half done']);
+
+  const hash = git(['rev-parse', 'stash@{0}']).trim();
+  const parents = git(['rev-parse', `${hash}^@`]).trim().split('\n').filter(Boolean);
+  check('a stash keeps three parents when something was staged and something was not',
+    parents.length === 3, parents.length);
+
+  const plumbing = new Set();
+  for (const side of ['^2', '^3']) {
+    const out = git(['rev-parse', '--verify', '-q', hash + side]).trim();
+    if (out) plumbing.add(out);
+  }
+  check('the two commits behind it are named exactly, not guessed',
+    plumbing.size === 2 && [...plumbing].every((h) => parents.includes(h)),
+    [...plumbing].length);
+  check('and the commit it was taken from is not one of them',
+    !plumbing.has(parents[0]));
+
+  const all = git(['log', '--all', '--format=%H']).trim().split('\n').filter(Boolean);
+  check('git shows all three in the history', all.filter((h) => h === hash || plumbing.has(h)).length === 3);
+  const kept = all.filter((h) => !plumbing.has(h));
+  check('dropping the two leaves the stash itself, once',
+    kept.filter((h) => h === hash).length === 1 &&
+    kept.filter((h) => plumbing.has(h)).length === 0);
+
+  /* Trimming the parents matters as much as dropping the rows: an edge to a
+     commit that is no longer in the list leaves a lane open forever. */
+  const trimmed = parents.slice(0, 1);
+  const have = new Set(kept);
+  check('the trimmed parent is still in the list, so no lane is left hanging',
+    trimmed.length === 1 && have.has(trimmed[0]));
+
+  // A stash with nothing untracked has no third parent at all.
+  fs.appendFileSync(path.join(REPO, 'a.txt'), 'more\n');
+  git(['stash', 'push', '-m', 'tracked only']);
+  const second = git(['rev-parse', 'stash@{0}']).trim();
+  check('a stash with nothing untracked has two parents, not three',
+    git(['rev-parse', `${second}^@`]).trim().split('\n').filter(Boolean).length === 2);
+  /* `rev-parse --verify -q` prints nothing, but it also *exits* non-zero, which
+     is a throw here and would be a rejected promise in the app. That is why the
+     lookup there sits inside a try — a stash with nothing untracked is ordinary,
+     not an error. */
+  let threw = false;
+  try { git(['rev-parse', '--verify', '-q', `${second}^3`]); } catch { threw = true; }
+  check('asking for a third parent that does not exist fails rather than answering', threw);
+  check('and the code that asks for it expects that',
+    /catch \{ \/\* no staged part, or no untracked part \*\/ \}/.test(mainSrc));
+
+  /* --all only reaches refs/stash, which is the newest. Older stashes vanish
+     unless they are named, which is why the walk lists them all by hash. */
+  const listed = git(['stash', 'list', '--format=%H']).trim().split('\n').filter(Boolean);
+  check('there are two stashes to draw', listed.length === 2, listed.length);
+  const reachable = git(['log', '--all', '--format=%H']).trim().split('\n');
+  check('but --all alone reaches only the newest of them',
+    reachable.includes(listed[0]) && !reachable.includes(listed[1]));
+  const named = git(['log', '--all', ...listed, '--format=%H']).trim().split('\n');
+  check('naming them all brings every stash into the history',
+    listed.every((h) => named.includes(h)));
+
+  git(['stash', 'clear']);
+  git(['checkout', '--', '.']);
+}
+
 fs.rmSync(REPO, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

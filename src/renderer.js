@@ -1406,6 +1406,14 @@ function ghostBranch(hash) {
 }
 
 const REF_ICON = {
+  /* A box with a lid: work set aside rather than committed. */
+  stash:
+    '<svg class="pill-i" viewBox="0 0 12 12" aria-hidden="true">' +
+    '<rect x="1.2" y="4.6" width="9.6" height="5.4" rx="1" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.2"/>' +
+    '<path d="M2.4 4.6 3.4 2.2h5.2l1 2.4M4.6 7.1h2.8" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.2" stroke-linecap="round" ' +
+    'stroke-linejoin="round"/></svg>',
   check:
     '<svg class="pill-i" viewBox="0 0 12 12" aria-hidden="true">' +
     '<path d="M2 6.3 4.6 8.9 10 3.1" fill="none" stroke="currentColor" ' +
@@ -1437,8 +1445,18 @@ function refPills(commit, lane) {
   const locals = [], remotes = [], tags = [];
   let current = null;
 
+  /* A stash says so itself. Only the newest one is pointed at by refs/stash, so
+     without this every older stash would sit in the history as an unlabelled row
+     reading "On develop: …" — indistinguishable from a commit. */
+  if (commit.stash) {
+    return `<span class="pill stash" title="Stashed work, kept off the branch">` +
+      `${REF_ICON.stash}<span class="pill-name">stash</span></span>`;
+  }
+
   for (const ref of commit.refs) {
     if (ref === 'HEAD') continue;
+    // refs/stash is the newest stash, already said by the badge above.
+    if (ref === 'refs/stash' || ref === 'stash') continue;
     /* `origin/HEAD` is a pointer to the remote's default branch, not a branch of
        its own. git prints it as a decoration, and without this it was landing in
        the local-branch bucket and drawing a badge nobody asked for. */
