@@ -427,6 +427,45 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Pintasan papan tik dan salinan teks**
+- **Pintasan satu-huruf ikut menyala bersama Ctrl dan Alt.** Penangan keydown
+  membaca `e.key` tanpa pernah memeriksa modifier, jadi `Ctrl+F` — akselerator
+  *Find Commit* milik aplikasi ini sendiri, yang didaftarkan pula di dialog
+  pintasan — sekaligus menarik seluruh remote; `Ctrl+P` menarik perubahan ke
+  working tree; `Ctrl+Shift+P`, palet perintah di hampir semua penyunting,
+  mendorong cabang ke remote tanpa satu pun dialog. `Alt`, tombol menubar di
+  Linux, bocor sama saja. Terukur pada aplikasi berjalan: `Ctrl+F → btn-fetch`,
+  `Ctrl+P → btn-pull`, `Ctrl+Shift+P → btn-push`, `Alt+F → btn-fetch`. Semuanya
+  juga menyala saat Preferences, catatan rilis, About, atau log aktivitas
+  terbuka. Kini satu penjagaan menolak modifier apa pun sebelum baris-baris itu,
+  dan satu lagi menolak saat ada panel yang menutupi riwayat. `Ctrl+R` tetap
+  menyegarkan — ia diperiksa sebelum penjagaan
+- **"1 commit of yours _are_ not on origin/main yet".** Dua tooltip paling
+  sering dilihat di aplikasi ini menjamakkan kata bendanya tapi tidak kata
+  kerjanya, dan 1 adalah nilai paling umum. Polanya sudah ada di tempat lain
+  (`n === 1 ? 'is' : 'are'`); dua tempat ini terlewat
+- **`Ctrl+Shift+O` dijanjikan dua kali dan terpasang di mana pun tidak** — di
+  tooltip tombol manajer repo dan di menu klik-kanan tab. Kini ia item menu
+  *File → Repository Management…* yang sungguhan, memakai aksi `repo-manager`
+  yang sudah ada. Label tooltipnya juga satu-satunya "Repo Management"
+  berhuruf-besar-judul di seluruh antarmuka
+- **Daftar "Keyboard shortcuts" tidak lengkap** — 23 baris menjadi 34: `Ctrl+T`,
+  `Ctrl+Shift+O`, `Ctrl+,`, `Ctrl+Q`, `Ctrl+Shift+R`, ``Ctrl+` `` — yang tooltipnya
+  sudah menjanjikan — `Alt+↑↓/Home/End` dan `Esc`
+- **Ejaan campur.** Suara rumah Britania di mana-mana — *colour*, *grey*,
+  *misspelt*, *centred* — kecuali *Favorite/Favorites* (5×) dan *customization*.
+  Kunci penyimpanan `favorite` sengaja tidak diubah; hanya labelnya. Dua dari
+  tujuh apostrof di teks tampak juga masih lurus
+- **Angka bahasa dan ekstensi dihitung ulang, bukan disalin.** README menulis
+  "some forty-five" ekstensi padahal 47, dan catatan ini menulis "30 → 47"
+  padahal 44 → 47. Yang "thirty" sudah keliru sebelum penambahan Ruby dan PHP —
+  v0.6.0 punya 44 — lalu dikutip sebagai titik awal tanpa dihitung lagi
+- **Dua batasan di dokumen ini menyebut fitur yang sudah ada.** Daftar "yang
+  belum ada" masih memuat *file history*, yang dikirim di v0.5.0, dan *penyaring
+  di sidebar*, yang dikirim setelah v0.6.0. README versi Inggris sudah benar
+  keduanya; yang berbahasa Indonesia tertinggal. Tabel pintasan di sini juga
+  kehilangan enam baris
+
 **Hasil audit menyeluruh**
 - **Saringan sidebar sempat mencemari preferensi lipatan grup.** Saringan
   membuka grup yang punya kecocokan dan melipat yang tidak — benar di layar,
@@ -449,7 +488,7 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   angka, dan komentarnya benar; kata kuncinya tidak — dan `end`, `unless`,
   `elsif` adalah sebagian besar dari rupa Ruby. Keduanya kini punya tabel
   sendiri, dan PHP menerima `#` maupun `//` sebagai komentar. Bahasa yang
-  dikenali naik 11 → 13, ekstensi 30 → 47
+  dikenali naik 11 → 13, ekstensi 44 → 47
 - Yang **tidak** terbukti bermasalah, semuanya diperiksa: 93 panggilan IPC
   seluruhnya ada di daftar izin; 207 rujukan `$('id')` seluruhnya ada (10 `pf-*`
   dibuat dinamis — alarm palsu pemindai); setiap klaim mutlak di teks UI benar;
@@ -1356,6 +1395,7 @@ menulis dua kunci ini; kunci lain ditolak.
 |---|---|
 | `Ctrl+T` | Tab baru (halaman depan) |
 | `Ctrl+O` | Buka repository |
+| `Ctrl+Shift+O` | Manajemen repository |
 | `Ctrl+W` | Tutup tab |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Tab berikutnya / sebelumnya |
 | `Ctrl+F` | Cari commit |
@@ -1368,6 +1408,11 @@ menulis dua kunci ini; kunci lain ditolak.
 | `Esc` | Tutup lapisan teratas: menu, log, preferensi, About, diff |
 | ``Ctrl+` `` | Buka / tutup panel terminal |
 | `Ctrl+,` | Preferences |
+| `Ctrl+Shift+F` | Layar penuh |
+| `Ctrl+Shift+R` | Jalankan ulang GitBraid |
+| `Ctrl+Q` | Keluar |
+| `Alt+↑` / `Alt+↓` | Perbedaan sebelumnya / berikutnya di dalam diff |
+| `Alt+Home` / `Alt+End` | Perbedaan pertama / terakhir |
 | `Alt+O` / `Alt+T` | Buka di file manager / terminal |
 | `F5` atau `Ctrl+R` | Muat ulang |
 | `f` | Fetch |
@@ -1384,14 +1429,14 @@ Ini prototipe yang berfungsi, bukan pengganti GitKraken. Yang belum ada:
 
 - **Interactive rebase.** Tidak ada UI drag-and-drop untuk squash/reorder commit.
 - **Integrasi GitHub/GitLab.** Tidak ada pull request, issue, atau review.
-- **Blame dan file history.**
+- **Blame.** File history sudah ada — klik kanan sebuah berkas — tapi belum
+  ada yang menunjukkan commit mana yang terakhir menyentuh tiap barisnya.
 - **Submodule dan Git LFS.**
 - **Terminal sungguhan.** Panel terminal menangkap keluaran perintah, bukan
   menyediakan TTY, jadi program layar penuh tidak bisa dipakai di dalamnya.
-- **Penyaring di sidebar.** Cabang, tag, remote, dan stash hanya bisa dicari
-  dengan menggulir. Pada repo dengan ratusan tag itu terasa; commit, berkas,
-  repo, dan tab masing-masing sudah punya kotak pencarian sendiri, sidebar
-  belum.
+- **Menyaring selain dengan nama.** Setiap daftar sudah punya kotak
+  pencariannya sendiri, tapi semuanya mencocokkan nama — tidak ada penyaring
+  berdasarkan penulis, tanggal, atau berkas yang disentuh.
 
 **Soal autentikasi:** `GIT_TERMINAL_PROMPT=0` sengaja diset supaya aplikasi tidak
 menggantung menunggu prompt password yang tidak kelihatan. Konsekuensinya, push
