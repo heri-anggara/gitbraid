@@ -2311,15 +2311,18 @@ handle('repo:resolve', async (repo, filePath, side) => {
 /* --- stash --- */
 
 handle('repo:stashList', async (repo) => {
+  /* The hash comes along so a stash drawn in the history can be recognised as
+     one: the row there knows a commit, and every stash command wants a
+     stash@{n}. Nothing else can join the two. */
   const raw = await git(repo, [
-    'stash', 'list', '-z', `--pretty=format:%gd%x1f%s%x1f%at`,
+    'stash', 'list', '-z', `--pretty=format:%gd%x1f%s%x1f%at%x1f%H`,
   ]);
   return raw
     .split('\0')
     .filter((s) => s.trim())
     .map((s) => {
-      const [ref, subject, at] = s.replace(/^\n/, '').split(UNIT);
-      return { ref, subject, date: Number(at) * 1000 };
+      const [ref, subject, at, hash] = s.replace(/^\n/, '').split(UNIT);
+      return { ref, subject, date: Number(at) * 1000, hash };
     });
 });
 
