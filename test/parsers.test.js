@@ -869,6 +869,42 @@ for (const [name, platform, expect] of [
       t.usesCwd === true || t.dir('/tmp/x').join(' ').includes('/tmp/x')));
 }
 
+console.log('\nthe hash a stash carries');
+{
+  /* A stash is a commit object, so the SHA in that column is real. It is worth
+     more there than a commit's: a commit can be found again through a branch,
+     a dropped stash through nothing else at all. Proved against git rather than
+     asserted — drop one and the object is still there, and still restorable. */
+  fs.writeFileSync(path.join(REPO, 'precious.txt'), 'worth keeping\n');
+  git(['add', 'precious.txt']);
+  git(['stash', 'push', '-m', 'about to be dropped']);
+  const hash = git(['rev-parse', 'stash@{0}']).trim();
+  git(['stash', 'drop']);
+
+  check('the stash is gone from the list',
+    !git(['stash', 'list']).includes('about to be dropped'));
+  check('but the object it left behind is still a commit',
+    git(['cat-file', '-t', hash]).trim() === 'commit');
+  check('and the work inside it still reads back',
+    git(['show', `${hash}:precious.txt`]).trim() === 'worth keeping');
+  git(['stash', 'store', '-m', 'put back', hash]);
+  check('so the hash alone puts it back on the list',
+    git(['stash', 'list']).includes('put back'));
+  git(['stash', 'drop']);
+
+  /* Which makes the warning matter: "cannot be recovered" was not true, and it
+     was talking someone out of the one thing that would have saved them. */
+  check('dropping no longer claims the work cannot be recovered',
+    !/Drop stash', 'This stash cannot be recovered/.test(rendererSrc));
+  check('it says where the work goes and how to keep a way back',
+    /copy the SHA first if you want that way back/.test(rendererSrc));
+  check('discarding still says unrecoverable, because there it is true',
+    /Discarded changes cannot be recovered/.test(rendererSrc));
+
+  check('the column explains the hash on a stash row and nowhere else',
+    /c\.stash\s*\n?\s*\? ' title="Local to this machine/.test(rendererSrc));
+}
+
 console.log('\nright-clicking a stash in the history');
 {
   /* The row used to offer the ordinary commit menu, and nearly every entry on it
