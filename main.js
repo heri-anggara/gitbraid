@@ -853,6 +853,10 @@ function buildMenu() {
         { label: 'Open Repo…', accelerator: 'CmdOrCtrl+O', click: () => send('open') },
         { label: 'Clone Repo…', accelerator: 'CmdOrCtrl+N', click: () => send('clone') },
         { label: 'Init Repo…', accelerator: 'CmdOrCtrl+I', click: () => send('init') },
+        // Promised by the toolbar button's tooltip and by the tab context menu,
+        // and until now bound nowhere at all.
+        { label: 'Repository Management…', accelerator: 'CmdOrCtrl+Shift+O',
+          click: () => send('repo-manager') },
         { type: 'separator' },
         {
           label: 'Open Recent',
@@ -1505,12 +1509,54 @@ handle('repo:status', async (repo) =>
   ]))
 );
 
+/* Every stash, and the two commits behind each one that nobody asked for.
+
+   A stash is one action, and git stores it as up to three commits: the stash
+   itself, one holding what was staged, and one holding the untracked files. All
+   three used to be drawn, so stashing once put three rows in the history — two
+   of them plumbing the user never made.
+
+   They are identified by asking git, not by reading their messages: the second
+   parent of a stash is the index commit and the third is the untracked one.
+   A stash made with nothing staged has no third parent, so ^3 is allowed to
+   fail.
+
+   The stashes themselves are added to the walk by hash. `--all` only reaches
+   refs/stash, which is the top of the stack — so with two stashes the older
+   one's rows vanished entirely while the newer one's were drawn. Naming them
+   all is what makes the history say the same thing however many there are. */
+async function stashShape(repo) {
+  const hide = new Set();
+  const marks = new Set();
+  let list = '';
+  try { list = await git(repo, ['stash', 'list', '--format=%H']); } catch { return { hide, marks }; }
+  for (const hash of list.split('\n').map((h) => h.trim()).filter(Boolean)) {
+    marks.add(hash);
+    for (const side of ['^2', '^3']) {
+      try {
+        const h = (await git(repo, ['rev-parse', '--verify', '-q', hash + side])).trim();
+        if (h) hide.add(h);
+      } catch { /* no staged part, or no untracked part */ }
+    }
+  }
+  return { hide, marks };
+}
+
 handle('repo:log', async (repo, { limit = 400, all = true, skip = 0 } = {}) => {
+  const { hide, marks } = all ? await stashShape(repo) : { hide: new Set(), marks: new Set() };
   const args = ['log', '--date-order', '-z', `--pretty=format:${LOG_FORMAT}`,
     `--max-count=${limit}`, `--skip=${skip}`];
-  if (all) args.push('--all');
+  if (all) args.push('--all', ...marks);
   try {
-    return parseLog(await git(repo, args));
+    const commits = parseLog(await git(repo, args));
+    if (!marks.size) return commits;
+    return commits
+      .filter((c) => !hide.has(c.hash))
+      .map((c) => (marks.has(c.hash)
+        /* Its other parents are the two commits just removed, and an edge to a
+           commit that is not in the list leaves a lane hanging open forever. */
+        ? { ...c, parents: c.parents.slice(0, 1), stash: true }
+        : c));
   } catch (e) {
     // Fresh repo with no commits yet.
     if (/does not have any commits|unknown revision/i.test(e.message)) return [];
@@ -1798,10 +1844,6 @@ handle('repo:conflictFile', async (repo, file) => {
   }
 });
 
-handle('repo:diffCommit', async (repo, hash) =>
-  git(repo, ['show', '--no-color', '--find-renames', '--format=', hash])
-);
-
 /** One file's changes inside one commit, rather than the whole commit. */
 /** How many parents a commit has, without loading its whole log entry. */
 async function isMerge(repo, hash) {
@@ -1823,6 +1865,24 @@ handle('repo:diffCommitFile', async (repo, { hash, file, ignoreWhitespace, conte
     return git(repo, show);
   }
   if (merge) {
+    /* A stash's untracked files live in its third parent, so the ordinary
+       comparison against the first one has nothing to say about them and the
+       pane came up empty. Shown against the empty tree instead, which is how a
+       file the branch has never seen ought to read: every line added. */
+    if (side === 'in') {
+      let third = '';
+      try { third = (await git(repo, ['rev-parse', '--verify', '-q', `${hash}^3`])).trim(); }
+      catch { /* not a stash, or nothing untracked in it */ }
+      if (third) {
+        const inThird = (await git(repo, ['ls-tree', '-r', '--name-only', '-z', third]))
+          .split('\0').filter(Boolean);
+        if (inThird.includes(file)) {
+          const empty = (await git(repo, ['hash-object', '-t', 'tree', '/dev/null'])).trim();
+          args.push(empty, third, '--', file);
+          return git(repo, args);
+        }
+      }
+    }
     args.push(`${hash}${MERGE_SIDES[side] || '^1'}`, hash, '--', file);
     return git(repo, args);
   }
@@ -1892,6 +1952,22 @@ handle('repo:rewordCommit', async (repo, { hash, message }) => {
  */
 const MERGE_SIDES = { in: '^1', other: '^2' };
 
+/* The files a stash is holding.
+
+   A stash keeps its untracked files in a third parent of its own, not in its
+   tree, so comparing it with the commit it was taken from finds none of them —
+   a stash of nothing but new files read as "no files" in the panel, which is
+   exactly as wrong as it sounds. They are listed from that third parent and
+   marked added, which is what they are: files the branch has never seen. */
+async function stashUntracked(repo, hash) {
+  let third = '';
+  try { third = (await git(repo, ['rev-parse', '--verify', '-q', `${hash}^3`])).trim(); }
+  catch { return []; }            // nothing untracked went in, which is ordinary
+  if (!third) return [];
+  const raw = await git(repo, ['ls-tree', '-r', '-z', '--name-only', third]);
+  return raw.split('\0').filter(Boolean).map((path) => ({ status: 'A', path, untracked: true }));
+}
+
 handle('repo:commitFiles', async (repo, hash, side = 'in') => {
   const args = ['diff-tree', '--no-commit-id', '--name-status', '-r', '-z', '--find-renames'];
   if (side === 'combined') {
@@ -1913,6 +1989,17 @@ handle('repo:commitFiles', async (repo, hash, side = 'in') => {
       files.push({ status: status[0], orig: parts[++i], path: parts[++i] });
     } else {
       files.push({ status: status[0], path: parts[++i] });
+    }
+  }
+
+  /* Only a stash has a third parent, so asking costs one rev-parse and answers
+     for every commit that is not one. A path already listed is left alone: it
+     was tracked and changed, and saying it twice would be worse than either. */
+  if (side === 'in') {
+    const extra = await stashUntracked(repo, hash);
+    if (extra.length) {
+      const seen = new Set(files.map((f) => f.path));
+      for (const f of extra) if (!seen.has(f.path)) files.push(f);
     }
   }
   return files;
@@ -1984,8 +2071,6 @@ handle('repo:lastMessage', async (repo) =>
 );
 
 /* --- branches --- */
-
-handle('repo:checkout', async (repo, ref) => git(repo, ['checkout', ref]));
 
 /* Switching branch with uncommitted work is the one routine action that can
    quietly cost you something, so the renderer asks first and passes the answer
@@ -2224,15 +2309,18 @@ handle('repo:resolve', async (repo, filePath, side) => {
 /* --- stash --- */
 
 handle('repo:stashList', async (repo) => {
+  /* The hash comes along so a stash drawn in the history can be recognised as
+     one: the row there knows a commit, and every stash command wants a
+     stash@{n}. Nothing else can join the two. */
   const raw = await git(repo, [
-    'stash', 'list', '-z', `--pretty=format:%gd%x1f%s%x1f%at`,
+    'stash', 'list', '-z', `--pretty=format:%gd%x1f%s%x1f%at%x1f%H`,
   ]);
   return raw
     .split('\0')
     .filter((s) => s.trim())
     .map((s) => {
-      const [ref, subject, at] = s.replace(/^\n/, '').split(UNIT);
-      return { ref, subject, date: Number(at) * 1000 };
+      const [ref, subject, at, hash] = s.replace(/^\n/, '').split(UNIT);
+      return { ref, subject, date: Number(at) * 1000, hash };
     });
 });
 
@@ -2288,8 +2376,6 @@ handle('repo:stashApply', async (repo, ref, pop) =>
 handle('repo:stashDrop', async (repo, ref) => git(repo, ['stash', 'drop', ref]));
 
 /* --- misc --- */
-
-handle('repo:raw', async (repo, args) => git(repo, args));
 
 handle('shell:openPath', async (p) => shell.openPath(p));
 

@@ -27,13 +27,13 @@ runtime dependencies.
 
 ## Download
 
-Latest release: **v0.6.0**
+Latest release: **v0.7.0**
 
 | Platform | File | Notes |
 |---|---|---|
-| **Debian / Ubuntu** | [`gitbraid_0.6.0_amd64.deb`](https://github.com/heri-anggara/gitbraid/releases/download/v0.6.0/gitbraid_0.6.0_amd64.deb) | Installs into the applications menu |
-| **Any Linux** | [`GitBraid-0.6.0.AppImage`](https://github.com/heri-anggara/gitbraid/releases/download/v0.6.0/GitBraid-0.6.0.AppImage) | One file, no install, updates itself |
-| **Windows** | [`GitBraid Setup 0.6.0.exe`](https://github.com/heri-anggara/gitbraid/releases/download/v0.6.0/GitBraid.Setup.0.6.0.exe) | Unsigned — see the note below |
+| **Debian / Ubuntu** | [`gitbraid_0.7.0_amd64.deb`](https://github.com/heri-anggara/gitbraid/releases/download/v0.7.0/gitbraid_0.7.0_amd64.deb) | Installs into the applications menu |
+| **Any Linux** | [`GitBraid-0.7.0.AppImage`](https://github.com/heri-anggara/gitbraid/releases/download/v0.7.0/GitBraid-0.7.0.AppImage) | One file, no install, updates itself |
+| **Windows** | [`GitBraid Setup 0.7.0.exe`](https://github.com/heri-anggara/gitbraid/releases/download/v0.7.0/GitBraid.Setup.0.7.0.exe) | Unsigned — see the note below |
 
 Older versions and full notes live on the [releases page](https://github.com/heri-anggara/gitbraid/releases).
 
@@ -65,7 +65,7 @@ has more than one answer.
 
 </div>
 
-**Diffs you can read.** Syntax colouring for eleven languages across some thirty
+**Diffs you can read.** Syntax colouring for thirteen languages across forty-seven
 file extensions, written here rather than pulled from a library. Stage, unstage and discard by hunk. A
 strip beside the scrollbar shows where every change is — click one to jump to
 it.
@@ -103,7 +103,7 @@ log of every `git` command it ran, so nothing it does is a mystery.
 **Debian / Ubuntu**
 
 ```bash
-sudo apt install ./gitbraid_0.6.0_amd64.deb
+sudo apt install ./gitbraid_0.7.0_amd64.deb
 ```
 
 Then find GitBraid in your applications menu, or run `gitbraid`.
@@ -111,8 +111,8 @@ Then find GitBraid in your applications menu, or run `gitbraid`.
 **AppImage**
 
 ```bash
-chmod +x GitBraid-0.6.0.AppImage
-./GitBraid-0.6.0.AppImage
+chmod +x GitBraid-0.7.0.AppImage
+./GitBraid-0.7.0.AppImage
 ```
 
 **To remove**
@@ -133,7 +133,7 @@ git clone https://github.com/heri-anggara/gitbraid.git
 cd gitbraid
 npm install
 npm start                 # run it
-npm test                  # 181 checks, no network, no fixtures to download
+npm test                  # 259 checks, no network, no fixtures to download
 npm run dist              # .deb + AppImage into dist/
 npm run dist:win          # Windows installer, cross-built from Linux
 ```
@@ -180,8 +180,9 @@ Honest ones, not a wish list:
   measures again, for the same reason.
 - **A real terminal.** The drawer captures command output rather than providing
   a TTY, so full-screen programs will not run in it.
-- **Sidebar filtering.** Commits, files, repositories and tabs each have a
-  search box; branches and tags do not.
+- **Filtering by anything but a name.** Every list has a search box now, but
+  they all match on the name — there is no way to ask for, say, branches merged
+  into the one you are on.
 
 ---
 

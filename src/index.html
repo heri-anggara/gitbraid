@@ -60,7 +60,7 @@
 
   <!-- ── tabs ────────────────────────────────────────────────── -->
   <div class="tabbar" id="tabbar">
-    <button id="btn-repomgr" class="tab-btn" title="Repo Management (Ctrl+Shift+O)">
+    <button id="btn-repomgr" class="tab-btn" title="Repository management (Ctrl+Shift+O)">
       <svg class="tb-i" viewBox="0 0 14 14" aria-hidden="true">
         <path d="M1.6 3.4a1 1 0 0 1 1-1h2.6l1.1 1.4h6.1a1 1 0 0 1 1 1v6.4a1 1 0 0 1-1 1H2.6a1 1 0 0 1-1-1z"
               fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
@@ -478,6 +478,25 @@
             <span class="si-name" id="side-branch-name"></span>
           </div>
         </div>
+
+        <!-- Satu kotak untuk seluruh sidebar, seperti Filter files menyaring
+             staged dan unstaged sekaligus. Sebuah repositori bisa membawa
+             ratusan tag; tanpa ini satu-satunya cara menemukannya adalah
+             menggulir sampai ketemu. -->
+        <div class="file-filter side-filter">
+          <svg class="ff-i" viewBox="0 0 14 14" aria-hidden="true">
+            <circle cx="6.2" cy="6.2" r="3.9" fill="none" stroke="currentColor" stroke-width="1.4"/>
+            <path d="m9.2 9.2 2.7 2.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+          <input id="ref-filter" type="text" spellcheck="false"
+                 placeholder="Filter branches and tags">
+          <button id="btn-ref-filter-clear" class="ff-clear" title="Clear the filter" hidden>
+            <svg class="tb-i" viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M3 3 9 9M9 3 3 9" fill="none" stroke="currentColor"
+                    stroke-width="1.7" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div class="side-group" data-group="local">
@@ -789,7 +808,7 @@
       <!-- commit panel -->
       <div class="panel" id="panel-commit" hidden>
         <div class="c-top">
-          <span class="c-top-label">commit</span>
+          <span class="c-top-label" id="c-top-label">commit</span>
           <button class="hashbtn" id="c-hash" title="Copy the full SHA"></button>
           <button class="detail-collapse" id="detail-collapse-commit" title="Collapse the details panel"><svg viewBox="0 0 14 14" aria-hidden="true"><path d="M5.4 3.4 9 7l-3.6 3.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         </div>
@@ -834,7 +853,7 @@
         <div class="c-filebar">
           <span class="c-stats" id="c-stats"></span>
           <span class="c-viewtoggle">
-            <button class="btn btn-sm" id="c-sort" title="Sort by name, or keep git's own order">A–Z</button>
+            <button class="btn btn-sm" id="c-sort" title="Sort by name, or keep git’s own order">A–Z</button>
             <button class="btn btn-sm btn-viewas" id="c-viewas"></button>
           </span>
         </div>

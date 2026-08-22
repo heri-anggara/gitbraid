@@ -2129,6 +2129,9 @@ textarea {
   text-transform: uppercase;
   color: var(--text-faint);
 }
+/* The bar already says what the panel is showing, so a stash says it there
+   rather than spending a whole line of its own on one word. */
+.c-top-label.is-stash { color: var(--accent-text); font-weight: 700; }
 
 .c-msgbox { padding: 12px; }
 .c-msg-read { position: relative; padding-right: 26px; }
@@ -2323,6 +2326,29 @@ textarea {
    first column holds the label and may wrap as much as it likes. */
 .up-table td:not(:first-child), .up-table th:not(:first-child) { white-space: nowrap; }
 .up-table tr:last-child td { border-bottom: 0; }
+
+/* A stash is not a branch and not a tag, and its badge should not read like
+   one — it is work parked beside the history rather than part of it. */
+.pill.stash {
+  /* Every other pill takes its border from --pc, the lane's colour. A stash has
+     no lane colour to take, so that declaration was invalid here — and an
+     invalid `border` shorthand takes its width down with it, leaving the
+     default `medium`, which is three pixels of dashes. Stated in full instead,
+     and finely: a hairline in the same grey as the rest of the chrome. */
+  border: 1px dashed var(--line-strong);
+  background: var(--surface-2);
+  color: var(--text-dim);
+}
+
+/* The sidebar's own filter. Same shape as the one over the file lists, so both
+   searches in the window look and behave alike. */
+.side-filter { margin: 8px 0 2px; }
+/* A section with nothing matching is not worth the header either: while the
+   filter is on, an empty group folds away instead of saying "no match" four
+   times over. */
+.app.ref-filtering .side-group.no-match { display: none; }
+/* How many of the group matched, against how many there are. */
+.side-count.filtered { color: var(--accent-text); }
 
 /* ── change map ──────────────────────────────────────────────── */
 /* Always present, even with nothing to show: reserving the strip means opening

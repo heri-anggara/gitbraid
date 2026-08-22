@@ -427,6 +427,170 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Pintasan papan tik dan salinan teks**
+- **Pintasan satu-huruf ikut menyala bersama Ctrl dan Alt.** Penangan keydown
+  membaca `e.key` tanpa pernah memeriksa modifier, jadi `Ctrl+F` — akselerator
+  *Find Commit* milik aplikasi ini sendiri, yang didaftarkan pula di dialog
+  pintasan — sekaligus menarik seluruh remote; `Ctrl+P` menarik perubahan ke
+  working tree; `Ctrl+Shift+P`, palet perintah di hampir semua penyunting,
+  mendorong cabang ke remote tanpa satu pun dialog. `Alt`, tombol menubar di
+  Linux, bocor sama saja. Terukur pada aplikasi berjalan: `Ctrl+F → btn-fetch`,
+  `Ctrl+P → btn-pull`, `Ctrl+Shift+P → btn-push`, `Alt+F → btn-fetch`. Semuanya
+  juga menyala saat Preferences, catatan rilis, About, atau log aktivitas
+  terbuka. Kini satu penjagaan menolak modifier apa pun sebelum baris-baris itu,
+  dan satu lagi menolak saat ada panel yang menutupi riwayat. `Ctrl+R` tetap
+  menyegarkan — ia diperiksa sebelum penjagaan
+- **"1 commit of yours _are_ not on origin/main yet".** Dua tooltip paling
+  sering dilihat di aplikasi ini menjamakkan kata bendanya tapi tidak kata
+  kerjanya, dan 1 adalah nilai paling umum. Polanya sudah ada di tempat lain
+  (`n === 1 ? 'is' : 'are'`); dua tempat ini terlewat
+- **`Ctrl+Shift+O` dijanjikan dua kali dan terpasang di mana pun tidak** — di
+  tooltip tombol manajer repo dan di menu klik-kanan tab. Kini ia item menu
+  *File → Repository Management…* yang sungguhan, memakai aksi `repo-manager`
+  yang sudah ada. Label tooltipnya juga satu-satunya "Repo Management"
+  berhuruf-besar-judul di seluruh antarmuka
+- **Daftar "Keyboard shortcuts" tidak lengkap** — 23 baris menjadi 34: `Ctrl+T`,
+  `Ctrl+Shift+O`, `Ctrl+,`, `Ctrl+Q`, `Ctrl+Shift+R`, ``Ctrl+` `` — yang tooltipnya
+  sudah menjanjikan — `Alt+↑↓/Home/End` dan `Esc`
+- **Ejaan campur.** Suara rumah Britania di mana-mana — *colour*, *grey*,
+  *misspelt*, *centred* — kecuali *Favorite/Favorites* (5×) dan *customization*.
+  Kunci penyimpanan `favorite` sengaja tidak diubah; hanya labelnya. Dua dari
+  tujuh apostrof di teks tampak juga masih lurus
+- **Angka bahasa dan ekstensi dihitung ulang, bukan disalin.** README menulis
+  "some forty-five" ekstensi padahal 47, dan catatan ini menulis "30 → 47"
+  padahal 44 → 47. Yang "thirty" sudah keliru sebelum penambahan Ruby dan PHP —
+  v0.6.0 punya 44 — lalu dikutip sebagai titik awal tanpa dihitung lagi
+- **Dua batasan di dokumen ini menyebut fitur yang sudah ada.** Daftar "yang
+  belum ada" masih memuat *file history*, yang dikirim di v0.5.0, dan *penyaring
+  di sidebar*, yang dikirim setelah v0.6.0. README versi Inggris sudah benar
+  keduanya; yang berbahasa Indonesia tertinggal. Tabel pintasan di sini juga
+  kehilangan enam baris
+
+**Hasil audit menyeluruh**
+- **Saringan sidebar sempat mencemari preferensi lipatan grup.** Saringan
+  membuka grup yang punya kecocokan dan melipat yang tidak — benar di layar,
+  keliru kalau dicatat. Mengklik satu header saat menyaring membuat
+  `saveGroups()` membaca DOM dan menyimpan lipatan buatan saringan itu, sehingga
+  grup yang tidak pernah dilipat siapa pun muncul terlipat di sesi berikutnya.
+  Terukur: mulai dari nol terlipat, sesudahnya penyimpanan berisi
+  `remote,tags,stash`. Sekarang yang diingat saat menyaring adalah catatan
+  sebelum saringan menyentuh apa pun, dan melipat grup dengan tangan saat
+  menyaring ikut memperbarui catatan itu
+- **`repo:raw` dihapus.** Ia menjalankan perintah git apa pun dengan argumen apa
+  pun lewat IPC, dan tidak pernah dipanggil. Seluruh sikap keamanan aplikasi ini
+  bertumpu pada permukaan yang sempit — renderer ber-sandbox, contextIsolation,
+  CSP ketat, daftar saluran terbatas — dan git bisa diminta menjalankan program
+  lain (`core.sshCommand`, `core.pager`). Itu satu-satunya saluran yang akan
+  mengubah renderer yang tertembus menjadi eksekusi perintah bebas
+- `repo:checkout` dan `repo:diffCommit` juga dihapus: keduanya digantikan
+  `repo:checkoutWith` dan `repo:diffCommitFile`, dan tidak pernah dipanggil
+- **Ruby diwarnai memakai tabel Python, PHP memakai tabel JavaScript.** String,
+  angka, dan komentarnya benar; kata kuncinya tidak — dan `end`, `unless`,
+  `elsif` adalah sebagian besar dari rupa Ruby. Keduanya kini punya tabel
+  sendiri, dan PHP menerima `#` maupun `//` sebagai komentar. Bahasa yang
+  dikenali naik 11 → 13, ekstensi 44 → 47
+- Yang **tidak** terbukti bermasalah, semuanya diperiksa: 93 panggilan IPC
+  seluruhnya ada di daftar izin; 207 rujukan `$('id')` seluruhnya ada (10 `pf-*`
+  dibuat dinamis — alarm palsu pemindai); setiap klaim mutlak di teks UI benar;
+  angka versi dan jumlah uji di README cocok; 20 alur fitur berjalan tanpa satu
+  galat pun
+
+**Saringan cabang & tag di sidebar**
+- Satu kotak untuk seluruh sidebar, sama seperti Filter files menyaring staged
+  dan unstaged sekaligus — bukan empat kotak untuk empat bagian
+- Menyaring **meratakan** pohonnya, dengan alasan yang sama seperti daftar
+  berkas: folder yang seluruh isinya tersembunyi tidak mengatakan apa pun, dan
+  membiarkannya membuat indentasi berbohong tentang apa yang ada di dalamnya
+- Tag dan stash memang terlipat sejak awal — dan itu benar sampai seseorang
+  mencari. Kecocokan yang tersembunyi di dalam bagian terlipat sama saja dengan
+  pencarian yang tidak menjawab apa-apa. Jadi bagian yang punya kecocokan dibuka,
+  yang tidak punya dilipat hilang sekalian
+- **Yang dibuka harus dikembalikan.** Keadaan lipatan dicatat sebelum saringan
+  mulai mengubahnya, dan dipulihkan saat kotaknya dikosongkan — kalau tidak,
+  sekali mencari akan menata ulang sidebar seseorang secara permanen. Saat kotak
+  kosong, saringan tidak menyentuh lipatan sama sekali
+- Hitungannya jadi "cocok/total" dan diberi warna aksen, jadi 30/581 langsung
+  memberi tahu ada berapa dan dari berapa
+- Terukur pada repo dengan 581 tag: "voucher" → 30, "1.45" → 7, keduanya cocok
+  persis dengan jawaban `git tag | grep -c`. Menggambar ulang 0,3–1,8 ms saat
+  menyaring, 13,6 ms saat dikosongkan (581 tag digambar lagi)
+
+**Stash di graph: satu aksi, satu baris**
+- Sebuah stash adalah satu tindakan, tapi git menyimpannya sebagai **sampai tiga
+  commit**: stash-nya sendiri, satu berisi apa yang ter-stage, dan satu berisi
+  berkas tak terlacak. Ketiganya dulu digambar, jadi men-stash sekali menaruh
+  tiga baris di riwayat — dua di antaranya pipa-ledeng yang tidak pernah dibuat
+  pengguna
+- Dikenali dengan **bertanya pada git**, bukan membaca teks pesannya: induk
+  kedua sebuah stash adalah commit index, induk ketiga adalah commit untracked.
+  Stash tanpa berkas tak terlacak tidak punya induk ketiga, jadi `^3` boleh gagal
+- `rev-parse --verify -q` memang tidak mencetak apa-apa, tapi ia juga **keluar
+  dengan status non-nol** — jadi pencariannya dibungkus `try`, karena stash tanpa
+  berkas tak terlacak itu hal biasa, bukan galat
+- **Daftar induknya harus dipangkas, bukan cuma barisnya dibuang.** Sisi lain
+  induk stash adalah dua commit yang baru saja dihapus, dan sebuah tepi menuju
+  commit yang tidak ada di daftar meninggalkan lajur menganga selamanya.
+  Terukur: nol lajur menggantung sesudahnya
+- **Temuan yang tidak diduga:** tampilan lama bukan hanya berisik, tapi juga
+  **tidak konsisten**. `--all` hanya menjangkau `refs/stash`, yaitu stash paling
+  atas — begitu ada stash kedua, seluruh baris milik stash pertama hilang dari
+  graph. Semua stash kini disebut namanya di dalam walk, jadi riwayatnya
+  mengatakan hal yang sama berapa pun jumlah stash-nya
+- **Berkas tak terlacak di dalam stash sempat tidak terlihat sama sekali.**
+  Panel kanan menulis "no files" untuk stash yang isinya hanya berkas baru —
+  karena berkas itu disimpan di **induk ketiga**, bukan di pohon commit stash,
+  jadi membandingkannya dengan induk pertama tidak menemukan apa pun. Sekarang
+  didaftar dari induk ketiga dan ditandai sebagai *added*, dan diff-nya
+  ditampilkan terhadap pohon kosong — memang begitu adanya: berkas yang belum
+  pernah dilihat cabang mana pun. Path yang sudah ada di diff tidak diulang
+- Titik graph-nya cincin putus-putus, bukan cakram, dengan warna lajurnya —
+  bahasa visual yang sama dengan baris "Uncommitted". Tanpa foto penulis: titik
+  itu tidak sedang melaporkan siapa yang menulis, melainkan menandai sesuatu
+  yang diparkir
+- Panel kanan mengatakannya lewat **label bilah atas** yang sudah ada — kata
+  "commit" berganti jadi "stash" dan diberi warna aksen. Versi pertama menaruh
+  lencana di baris tersendiri di atas pesan, dan itu memakan satu baris penuh
+  untuk satu kata yang labelnya memang sudah bertugas mengatakannya
+- Induknya diberi label **"taken from"** alih-alih "parent" — karena itu commit
+  tempat pekerjaannya diambil, bukan commit yang diikutinya
+- **Garis putus-putus badge-nya sempat setebal 3px.** Setiap pill lain mengambil
+  garisnya dari `--pc`, warna lajur, lewat `color-mix`. Stash tidak punya warna
+  lajur, jadi deklarasi itu tidak sah di sini — dan `border` shorthand yang tidak
+  sah **membawa serta lebarnya**, menyisakan bawaan `medium`. Sekarang lebar dan
+  warnanya disebutkan penuh: 1px, setara pill lain
+- **Hash di kolom SHA itu nyata, dan justru lebih berharga daripada milik
+  commit.** Sebuah commit masih bisa ditemukan lewat cabang; stash yang sudah
+  dibuang tidak bisa ditemukan lewat apa pun **kecuali hash-nya**. Diuji: setelah
+  `git stash drop`, daftarnya kosong tapi objeknya masih commit, isinya masih
+  terbaca, dan `git stash store <hash>` mengembalikannya
+- Karena itu peringatan lama saya — *"This stash cannot be recovered"* — **tidak
+  benar**, dan lebih buruk lagi: ia membujuk orang menjauh dari satu-satunya hal
+  yang bisa menyelamatkan mereka. Sekarang peringatannya menyebutkan bahwa
+  pekerjaannya bertahan di repositori di bawah hash-nya sampai git membersihkan
+  yang tak tertunjuk, dan menyarankan menyalin SHA lebih dulu. Peringatan
+  *discard changes* tetap berbunyi "tidak bisa dipulihkan", karena di sana itu
+  memang benar
+- Sel SHA pada baris stash membawa keterangan: lokal, tidak pernah di-push, dan
+  satu-satunya jalan pulang kalau stash dibuang. Hanya pada baris stash
+
+- **Klik kanan pada baris stash dulu memberi menu commit biasa**, dan hampir
+  setiap entrinya keliru kalau dikenakan pada stash: *Check out* mendaratkan
+  Anda dalam keadaan detached di atas merge berinduk tiga; *Cherry-pick* dan
+  *Revert* menuntut induk dipilih dan tetap tidak bermakna; *Reset branch to
+  here* memindahkan cabang Anda ke atas stash — cara kehilangan cabang. Sekarang
+  baris stash memberi **Apply and keep / Apply and drop / Drop stash / Copy
+  SHA**, sama persis dengan yang sudah lama ditawarkan sidebar
+- Setiap perintah stash menuntut `stash@{n}`, sementara baris riwayat hanya tahu
+  hash. Karena itu `repo:stashList` ikut membawa `%H` — hash itulah satu-satunya
+  yang menyambungkan keduanya
+- Ada uji yang memastikan menu baris dan menu sidebar menawarkan hal yang sama:
+  stash yang sama, diklik kanan di dua tempat, tidak boleh menawarkan dua
+  perlakuan berbeda
+- Badge-nya sendiri, bergaris putus-putus: stash bukan cabang dan bukan tag, dan
+  hanya yang terbaru yang ditunjuk `refs/stash` — tanpa badge itu, stash lama
+  akan duduk sebagai baris tanpa label bertuliskan "On develop: …", tak
+  terbedakan dari commit biasa
+
 **Naik ke Electron 37, dan regresi yang ikut terbawa**
 - Electron 31 sudah lama di luar dukungan; 37 membawa Chromium 126 → 138 dan
   Node 20 → 22. Kodenya **tidak butuh perubahan sama sekali** — permukaan API
@@ -1231,6 +1395,7 @@ menulis dua kunci ini; kunci lain ditolak.
 |---|---|
 | `Ctrl+T` | Tab baru (halaman depan) |
 | `Ctrl+O` | Buka repository |
+| `Ctrl+Shift+O` | Manajemen repository |
 | `Ctrl+W` | Tutup tab |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Tab berikutnya / sebelumnya |
 | `Ctrl+F` | Cari commit |
@@ -1243,6 +1408,11 @@ menulis dua kunci ini; kunci lain ditolak.
 | `Esc` | Tutup lapisan teratas: menu, log, preferensi, About, diff |
 | ``Ctrl+` `` | Buka / tutup panel terminal |
 | `Ctrl+,` | Preferences |
+| `Ctrl+Shift+F` | Layar penuh |
+| `Ctrl+Shift+R` | Jalankan ulang GitBraid |
+| `Ctrl+Q` | Keluar |
+| `Alt+↑` / `Alt+↓` | Perbedaan sebelumnya / berikutnya di dalam diff |
+| `Alt+Home` / `Alt+End` | Perbedaan pertama / terakhir |
 | `Alt+O` / `Alt+T` | Buka di file manager / terminal |
 | `F5` atau `Ctrl+R` | Muat ulang |
 | `f` | Fetch |
@@ -1259,14 +1429,14 @@ Ini prototipe yang berfungsi, bukan pengganti GitKraken. Yang belum ada:
 
 - **Interactive rebase.** Tidak ada UI drag-and-drop untuk squash/reorder commit.
 - **Integrasi GitHub/GitLab.** Tidak ada pull request, issue, atau review.
-- **Blame dan file history.**
+- **Blame.** File history sudah ada — klik kanan sebuah berkas — tapi belum
+  ada yang menunjukkan commit mana yang terakhir menyentuh tiap barisnya.
 - **Submodule dan Git LFS.**
 - **Terminal sungguhan.** Panel terminal menangkap keluaran perintah, bukan
   menyediakan TTY, jadi program layar penuh tidak bisa dipakai di dalamnya.
-- **Penyaring di sidebar.** Cabang, tag, remote, dan stash hanya bisa dicari
-  dengan menggulir. Pada repo dengan ratusan tag itu terasa; commit, berkas,
-  repo, dan tab masing-masing sudah punya kotak pencarian sendiri, sidebar
-  belum.
+- **Menyaring selain dengan nama.** Setiap daftar sudah punya kotak
+  pencariannya sendiri, tapi semuanya mencocokkan nama — tidak ada penyaring
+  berdasarkan penulis, tanggal, atau berkas yang disentuh.
 
 **Soal autentikasi:** `GIT_TERMINAL_PROMPT=0` sengaja diset supaya aplikasi tidak
 menggantung menunggu prompt password yang tidak kelihatan. Konsekuensinya, push

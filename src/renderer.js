@@ -168,7 +168,7 @@ function relativeTime(ms) {
   return new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-/** Whichever of the two the reader picked in Preferences → UI customization. */
+/** Whichever of the two the reader picked in Preferences → UI customisation. */
 const stamp = (ms) => (prefs.dateStyle === 'relative' ? relativeTime(ms) : absoluteTime(ms));
 
 /** GitKraken's history stamp: 08/14/2026 @ 2:59 PM. */
@@ -994,14 +994,16 @@ function renderToolbar() {
   ahead.hidden = !s?.ahead;
   ahead.textContent = s?.ahead || '';
   ahead.title = s?.ahead
-    ? `${s.ahead} commit${s.ahead === 1 ? '' : 's'} of yours are not on ${s.upstream || 'the remote'} yet`
+    ? `${s.ahead} commit${s.ahead === 1 ? '' : 's'} of yours ${s.ahead === 1 ? 'is' : 'are'} `
+      + `not on ${s.upstream || 'the remote'} yet`
     : '';
 
   const behind = $('badge-behind');
   behind.hidden = !s?.behind;
   behind.textContent = s?.behind || '';
   behind.title = s?.behind
-    ? `${s.behind} commit${s.behind === 1 ? '' : 's'} on ${s.upstream || 'the remote'} are not here yet`
+    ? `${s.behind} commit${s.behind === 1 ? '' : 's'} on ${s.upstream || 'the remote'} `
+      + `${s.behind === 1 ? 'is' : 'are'} not here yet`
     : '';
 
   /* `aria-disabled` rather than `disabled`: a disabled button dispatches no
@@ -1143,6 +1145,19 @@ function renderTree(node, kind, leafHtml, prefix = '', depth = 0) {
 const treeOrEmpty = (items, kind, leafHtml, empty) =>
   items.length ? renderTree(buildTree(items), kind, leafHtml) : `<li class="empty-row">${empty}</li>`;
 
+/* What the sidebar's filter box holds. Kept out of the tab state on purpose: it
+   is a way of looking, not something about the repository. */
+let refFilter = '';
+
+/* Filtering flattens, for the same reason the file lists flatten: a folder whose
+   children are all hidden tells you nothing, and keeping the folders while
+   hiding their contents would leave the indentation lying about what is there. */
+function matchRefs(items, name = (x) => x.name) {
+  if (!refFilter) return { shown: items, flat: false };
+  const q = refFilter;
+  return { shown: items.filter((x) => name(x).toLowerCase().includes(q)), flat: true };
+}
+
 function renderSidebar() {
   const { branches, remotes, tags } = state.refs;
 
@@ -1168,25 +1183,62 @@ function renderSidebar() {
     `style="--d:${depth}" title="${esc(t.name)}">${SIDE_ICON.tag}` +
     `<span class="side-name">${esc(label)}</span></li>`;
 
-  $('count-local').textContent = branches.length;
-  $('list-local').innerHTML = treeOrEmpty(branches, 'branch', branchLeaf, 'No branches yet');
+  /* Filtered, a group's rows are drawn flat — the whole name on each line, since
+     the folder that used to carry half of it is gone. */
+  const group = (id, items, kind, leaf, empty) => {
+    const { shown, flat } = matchRefs(items);
+    $(`count-${id}`).textContent = refFilter ? `${shown.length}/${items.length}` : items.length;
+    $(`count-${id}`).classList.toggle('filtered', Boolean(refFilter) && shown.length > 0);
+    $(`list-${id}`).innerHTML = shown.length
+      ? (flat ? shown.map((x) => leaf(x, x.name, 0)).join('')
+              : renderTree(buildTree(shown), kind, leaf))
+      : `<li class="empty-row">${refFilter ? 'Nothing matches' : empty}</li>`;
+    return shown.length;
+  };
 
-  $('count-remote').textContent = remotes.length;
-  $('list-remote').innerHTML = treeOrEmpty(remotes, 'remote', remoteLeaf, 'No remote branches');
-
-  $('count-tags').textContent = tags.length;
-  $('list-tags').innerHTML = treeOrEmpty(tags, 'tag', tagLeaf, 'No tags');
+  const hits = {
+    local: group('local', branches, 'branch', branchLeaf, 'No branches yet'),
+    remote: group('remote', remotes, 'remote', remoteLeaf, 'No remote branches'),
+    tags: group('tags', tags, 'tag', tagLeaf, 'No tags'),
+  };
 
   // Stash refs are stash@{0}, stash@{1} … — nothing to nest.
-  $('count-stash').textContent = state.stashes.length;
-  $('list-stash').innerHTML = state.stashes
+  const stashes = refFilter
+    ? state.stashes.filter((s) => s.subject.toLowerCase().includes(refFilter))
+    : state.stashes;
+  $('count-stash').textContent = refFilter
+    ? `${stashes.length}/${state.stashes.length}` : state.stashes.length;
+  $('count-stash').classList.toggle('filtered', Boolean(refFilter) && stashes.length > 0);
+  $('list-stash').innerHTML = stashes
     .map(
       (s) =>
         `<li class="tree-leaf" data-ref="${esc(s.ref)}" data-kind="stash" style="--d:0" ` +
         `title="${esc(s.subject)}"><span class="side-name">${esc(s.subject)}</span>` +
         `<span class="side-track">${relativeTime(s.date)}</span></li>`
     )
-    .join('') || '<li class="empty-row">Nothing stashed</li>';
+    .join('') || `<li class="empty-row">${refFilter ? 'Nothing matches' : 'Nothing stashed'}</li>`;
+  hits.stash = stashes.length;
+
+  /* Tags and stashes start shut, which is right until someone searches: a match
+     hidden inside a folded group is a search that answered nothing. While the
+     filter is on, a group holding matches is opened and one holding none folds
+     away entirely.
+
+     Only while it is on. Cleared, this leaves every group exactly as the reader
+     had it — restoring that is the filter box's job, from the note it took
+     before it started meddling, so a search never quietly rearranges the
+     sidebar for good. */
+  $('app').classList.toggle('ref-filtering', Boolean(refFilter));
+  if (!refFilter) {
+    for (const g of document.querySelectorAll('.side-group')) g.classList.remove('no-match');
+    return;
+  }
+  for (const g of document.querySelectorAll('.side-group')) {
+    const key = g.dataset.group;
+    if (!(key in hits)) continue;
+    g.classList.toggle('no-match', hits[key] === 0);
+    g.classList.toggle('collapsed', hits[key] === 0);
+  }
 }
 
 /* ═════ history columns ═════════════════════════════════════════ */
@@ -1406,6 +1458,14 @@ function ghostBranch(hash) {
 }
 
 const REF_ICON = {
+  /* A box with a lid: work set aside rather than committed. */
+  stash:
+    '<svg class="pill-i" viewBox="0 0 12 12" aria-hidden="true">' +
+    '<rect x="1.2" y="4.6" width="9.6" height="5.4" rx="1" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.2"/>' +
+    '<path d="M2.4 4.6 3.4 2.2h5.2l1 2.4M4.6 7.1h2.8" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.2" stroke-linecap="round" ' +
+    'stroke-linejoin="round"/></svg>',
   check:
     '<svg class="pill-i" viewBox="0 0 12 12" aria-hidden="true">' +
     '<path d="M2 6.3 4.6 8.9 10 3.1" fill="none" stroke="currentColor" ' +
@@ -1437,8 +1497,18 @@ function refPills(commit, lane) {
   const locals = [], remotes = [], tags = [];
   let current = null;
 
+  /* A stash says so itself. Only the newest one is pointed at by refs/stash, so
+     without this every older stash would sit in the history as an unlabelled row
+     reading "On develop: …" — indistinguishable from a commit. */
+  if (commit.stash) {
+    return `<span class="pill stash" title="Stashed work, kept off the branch">` +
+      `${REF_ICON.stash}<span class="pill-name">stash</span></span>`;
+  }
+
   for (const ref of commit.refs) {
     if (ref === 'HEAD') continue;
+    // refs/stash is the newest stash, already said by the badge above.
+    if (ref === 'refs/stash' || ref === 'stash') continue;
     /* `origin/HEAD` is a pointer to the remote's default branch, not a branch of
        its own. git prints it as a decoration, and without this it was landing in
        the local-branch bucket and drawing a badge nobody asked for. */
@@ -1713,7 +1783,13 @@ function renderRows() {
           author: `<span class="c-author">${authorChip(c)}${highlight(c.author, q)}</span>`,
           adate: `<span class="c-adate">${stamp(c.authorDate)}</span>`,
           cdate: `<span class="c-date">${stamp(c.commitDate)}</span>`,
-          sha: `<span class="c-sha">${c.hash.slice(0, 7)}</span>`,
+          /* A stash has a real hash, and it is worth more here than a commit's:
+             a commit can be found again through a branch, a dropped stash
+             through nothing else at all. It is also local and never pushed, so
+             it says both. */
+          sha: `<span class="c-sha"${c.stash
+            ? ' title="Local to this machine — and the only way back to this work if the stash is dropped"'
+            : ''}>${c.hash.slice(0, 7)}</span>`,
         }) + '</li>'
       );
     })
@@ -2004,13 +2080,22 @@ async function renderCommitPanel(hash) {
   av.style.setProperty('--hue', avatarHue(c.email));
   av.classList.remove('unset');
 
+  /* A stash reads exactly like a commit here — "On develop: blm1" over an author
+     and a date — so the bar has to say which it is. It is already there for
+     that: a badge above the message spent a whole line on one word the label
+     was going to carry anyway. */
+  $('c-top-label').textContent = c.stash ? 'stash' : 'commit';
+  $('c-top-label').classList.toggle('is-stash', Boolean(c.stash));
+
   /* A merge has two parents and they mean different things: the first is the
      branch you were on, the second is the branch that came in. Naming both,
      and letting you jump to either, is the only way the row explains itself. */
   const parents = c.parents || [];
   const isMergeCommit = parents.length > 1;
   $('c-parents').innerHTML = parents.map((h, i) => {
-    const role = isMergeCommit ? (i === 0 ? 'onto' : 'from') : 'parent';
+    // A stash's parent is where the work was taken from, not what it follows.
+    const role = c.stash ? 'taken from'
+      : isMergeCommit ? (i === 0 ? 'onto' : 'from') : 'parent';
     const named = isMergeCommit ? branchAt(h) : '';
     return `<button class="hashbtn c-parent" data-hash="${esc(h)}" ` +
       `title="Go to this parent">` +
@@ -4004,7 +4089,7 @@ function renderRepoManager() {
   const groups = [
     { key: 'open', title: 'Open repositories', empty: 'No repository is open',
       rows: [...openPaths].map((p) => byPath.get(p) || { path: p, name: p.split('/').pop() }) },
-    { key: 'favorites', title: 'Favorites', empty: 'Star a repository to keep it here',
+    { key: 'favorites', title: 'Favourites', empty: 'Star a repository to keep it here',
       rows: rm.repos.filter((r) => r.favorite) },
     { key: 'recent', title: 'Recent repositories', empty: 'Nothing opened yet',
       rows: rm.recents.map((p) => byPath.get(p)).filter(Boolean) },
@@ -4055,7 +4140,7 @@ function repoRow(r, openPaths) {
     // The star sits outside the hover-only tools: a control you cannot see is a
     // control nobody finds.
     `<button class="rm-star${r.favorite ? ' on' : ''}" data-fav="${esc(r.path)}" ` +
-    `title="${r.favorite ? 'Remove from favorites' : 'Add to favorites'}">${STAR(r.favorite)}</button>` +
+    `title="${r.favorite ? 'Remove from favourites' : 'Add to favourites'}">${STAR(r.favorite)}</button>` +
     // Owner rides along with the name instead of claiming a column of its own:
     // a separate column leaves a gulf between the two on a wide window.
     '<span class="rm-main">' +
@@ -4533,7 +4618,7 @@ function prefPages() {
     },
     {
       id: 'ui',
-      label: 'UI customization',
+      label: 'UI customisation',
       groups: [
         {
           title: 'Appearance',
@@ -4638,7 +4723,7 @@ function prefPages() {
               get: () => prefs.lineNumbers,
               set: (v) => { prefs.lineNumbers = v; savePrefs(); applyPrefs(); } },
             { kind: 'toggle', label: 'Syntax highlighting',
-              help: `Coloured by GitBraid's own tokenizer for ${Hl.languages()} languages.`,
+              help: `Coloured by GitBraid’s own tokenizer for ${Hl.languages()} languages.`,
               get: () => viewer.syntax,
               set: (v) => { viewer.syntax = v; saveViewer(); syncViewerToggles(); renderViewer(); } },
           ],
@@ -5572,9 +5657,11 @@ const SHORTCUTS = [
     ['Ctrl O', 'Open a repository in a new tab'],
     ['Ctrl N', 'Clone from a URL'],
     ['Ctrl I', 'Create a new repository'],
+    ['Ctrl Shift O', 'Repository management'],
     ['F5 / Ctrl R', 'Refresh'],
   ]],
   ['Tabs and search', [
+    ['Ctrl T', 'New tab'],
     ['Ctrl W', 'Close the current tab'],
     ['Ctrl Tab', 'Next tab'],
     ['Ctrl Shift Tab', 'Previous tab'],
@@ -5587,17 +5674,30 @@ const SHORTCUTS = [
     ['Shift P', 'Push the current branch'],
     ['B', 'New branch'],
     ['Ctrl Enter', 'Commit (from the message box)'],
-    ['Ctrl /', 'This list'],
     ['Alt O', 'Open in file manager'],
     ['Alt T', 'Open an external terminal'],
+  ]],
+  ['Reading a diff', [
+    ['Alt Down', 'Next difference'],
+    ['Alt Up', 'Previous difference'],
+    ['Alt Home', 'First difference'],
+    ['Alt End', 'Last difference'],
+    ['Esc', 'Close the file, or whatever is covering the history'],
   ]],
   ['View', [
     ['Ctrl J', 'Show or hide the left panel'],
     ['Ctrl K', 'Show or hide the commit details panel'],
+    ['Ctrl `', 'Show or hide the terminal'],
     ['Ctrl =', 'Increase zoom'],
     ['Ctrl -', 'Decrease zoom'],
     ['Ctrl 0', 'Reset zoom'],
     ['Ctrl Shift F', 'Toggle full screen'],
+  ]],
+  ['GitBraid', [
+    ['Ctrl ,', 'Preferences'],
+    ['Ctrl /', 'This list'],
+    ['Ctrl Shift R', 'Relaunch GitBraid'],
+    ['Ctrl Q', 'Quit'],
   ]],
 ];
 
@@ -5672,9 +5772,16 @@ window.gitbraid.on('menu:action', (msg) => {
 /* Which group headers are shut. Tags and stashes ship shut (see index.html);
    anything the user changes afterwards wins. */
 function saveGroups() {
-  const shut = [...document.querySelectorAll('.side-group')]
-    .filter((g) => g.classList.contains('collapsed'))
-    .map((g) => g.dataset.group);
+  /* While a filter is on, the document is not the reader's doing: the filter
+     opens groups that hold matches and folds away the ones that do not. Writing
+     that down as a preference meant one search, plus one click on a header, left
+     groups shut for good that nobody had ever shut. What gets remembered while
+     filtering is the note taken before the filter touched anything. */
+  const shut = refFilter && groupsBeforeFilter
+    ? [...groupsBeforeFilter]
+    : [...document.querySelectorAll('.side-group')]
+        .filter((g) => g.classList.contains('collapsed'))
+        .map((g) => g.dataset.group);
   try { localStorage.setItem('gitbraid-groups', JSON.stringify(shut)); } catch { /* ignore */ }
 }
 
@@ -5717,11 +5824,11 @@ $('side-repo').addEventListener('click', async (e) => {
     { label: 'Open in terminal', accel: 'Alt+T', run: MENU_ACTIONS.terminal },
     { label: 'Open in code editor', run: openRepoInEditor },
     '-',
-    { label: 'Favorite this repository', checked: isFavorite,
-      hint: 'Favorites sit at the top of the repository manager',
+    { label: 'Favourite this repository', checked: isFavorite,
+      hint: 'Favourites sit at the top of the repository manager',
       run: async () => {
         await call('repos:favorite', path, !isFavorite);
-        setStatus(isFavorite ? `${state.repo.name} unfavorited` : `${state.repo.name} favorited`, 'ok');
+        setStatus(isFavorite ? `${state.repo.name} unfavourited` : `${state.repo.name} favourited`, 'ok');
       } },
     '-',
     { label: 'Close tab', accel: 'Ctrl+W', run: () => closeTab() },
@@ -5869,6 +5976,15 @@ $('sidebar').addEventListener('click', (e) => {
   if (head) {
     const group = head.closest('.side-group');
     group.classList.toggle('collapsed');
+    /* Folding a group by hand while a filter is on is still a decision, and it
+       has to survive the filter being cleared — so it goes into the note the
+       filter restores from, not only into the document the filter is about to
+       overwrite. */
+    if (refFilter && groupsBeforeFilter) {
+      const key = group.dataset.group;
+      if (group.classList.contains('collapsed')) groupsBeforeFilter.add(key);
+      else groupsBeforeFilter.delete(key);
+    }
     saveGroups();
     return;
   }
@@ -6115,7 +6231,11 @@ $('sidebar').addEventListener('contextmenu', (e) => {
       { label: 'Apply and drop', run: () => applyStash(ref, true) },
       '-',
       { label: 'Drop stash', danger: true, run: async () => {
-          const ok = await confirmAction('Drop stash', 'This stash cannot be recovered.', 'Drop');
+          const ok = await confirmAction('Drop stash',
+            'It leaves the list, and nothing in GitBraid brings it back. The work '
+            + 'survives in the repository under its own hash until git next collects '
+            + 'what nothing points at — copy the SHA first if you want that way back.',
+            'Drop');
           if (!ok) return;
           const res = await call('repo:stashDrop', repoPath(), ref);
           if (res !== null) { await refresh(); setStatus('Dropped stash', 'ok'); }
@@ -6185,11 +6305,47 @@ $('commit-list').addEventListener('click', (e) => {
   renderDetail();
 });
 
+/** The stash@{n} a commit in the history belongs to, if it is one at all. */
+const stashRefFor = (hash) =>
+  (state.stashes || []).find((s) => s.hash === hash)?.ref || null;
+
 $('commit-list').addEventListener('contextmenu', (e) => {
   const row = e.target.closest('.commit-row[data-hash]');
   if (!row) return;
   const hash = row.dataset.hash;
   const short = hash.slice(0, 7);
+
+  /* A stash is not a commit on the branch, and nearly everything below would be
+     wrong done to one — checking it out lands you detached on a three-parent
+     merge, cherry-picking and reverting need a parent chosen and mean nothing
+     anyway, and resetting the branch onto it is a way to lose the branch. What a
+     stash actually answers to is apply, pop and drop, which is what the sidebar
+     has always offered it. The same three, so the row and the sidebar agree. */
+  const stashRef = stashRefFor(hash);
+  if (stashRef) {
+    contextMenu(e, [
+      { label: 'Apply and keep', run: () => applyStash(stashRef, false) },
+      { label: 'Apply and drop', run: () => applyStash(stashRef, true) },
+      '-',
+      { label: 'Drop stash', danger: true, run: async () => {
+          const ok = await confirmAction('Drop stash',
+            'It leaves the list, and nothing in GitBraid brings it back. The work '
+            + 'survives in the repository under its own hash until git next collects '
+            + 'what nothing points at — copy the SHA first if you want that way back.',
+            'Drop');
+          if (!ok) return;
+          const res = await call('repo:stashDrop', repoPath(), stashRef);
+          if (res !== null) { await refresh(); setStatus('Dropped stash', 'ok'); }
+        } },
+      '-',
+      { label: 'Copy SHA', run: () => {
+          navigator.clipboard.writeText(hash);
+          setStatus('Full SHA copied', 'ok');
+        } },
+    ]);
+    return;
+  }
+
   contextMenu(e, [
     { label: 'Copy SHA', run: () => navigator.clipboard.writeText(hash) },
     { label: `Check out ${short}`, run: () => checkout(hash) },
@@ -6375,6 +6531,35 @@ function wireFileList(id) {
 ['list-conflicts', 'list-staged', 'list-unstaged', 'list-commit-files'].forEach(wireFileList);
 
 /* ── file filter ── */
+/* ── the sidebar filter ── */
+/* What the groups looked like before the filter opened any of them. Restored on
+   the way out, so searching never leaves the sidebar rearranged. */
+let groupsBeforeFilter = null;
+
+$('ref-filter').addEventListener('input', (e) => {
+  const was = refFilter;
+  refFilter = e.target.value.trim().toLowerCase();
+  $('btn-ref-filter-clear').hidden = !refFilter;
+  if (!was && refFilter) {
+    groupsBeforeFilter = new Set([...document.querySelectorAll('.side-group')]
+      .filter((g) => g.classList.contains('collapsed'))
+      .map((g) => g.dataset.group));
+  }
+  if (was && !refFilter && groupsBeforeFilter) {
+    for (const g of document.querySelectorAll('.side-group')) {
+      g.classList.toggle('collapsed', groupsBeforeFilter.has(g.dataset.group));
+    }
+    groupsBeforeFilter = null;
+  }
+  if (state.refs) renderSidebar();
+});
+
+$('btn-ref-filter-clear').addEventListener('click', () => {
+  $('ref-filter').value = '';
+  $('ref-filter').dispatchEvent(new Event('input'));
+  $('ref-filter').focus();
+});
+
 $('file-filter').addEventListener('input', (e) => {
   wipFilter = e.target.value.trim().toLowerCase();
   $('btn-filter-clear').hidden = !wipFilter;
@@ -6686,6 +6871,10 @@ $('chk-amend').addEventListener('change', async () => {
   }
 });
 
+/* The overlays that own the keyboard while they are up — the same set the
+   Esc chain below backs out of, in the same order. */
+const KEY_BLOCKERS = ['modal', 'ctxmenu', 'logs', 'prefs', 'about', 'notes', 'fhist'];
+
 /* keyboard — Ctrl+O/N/I, the zoom keys, F5 and the panel toggles are all
    menu accelerators now, handled in the main process. */
 document.addEventListener('keydown', (e) => {
@@ -6711,8 +6900,22 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.target.matches('input, textarea')) return;
   if (!state.repo) return;
-  if (e.key === 'r' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); refresh(); }
-  else if (e.key === 'f') $('btn-fetch').click();
+  if (e.key === 'r' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); refresh(); return; }
+
+  /* Everything below is a bare letter, so a modifier means the key belongs to
+     something else and this handler has no business reading it. Matching on
+     e.key alone let Ctrl+F — this application's own Find Commit — fetch every
+     remote as well, let Ctrl+P pull, and let Ctrl+Shift+P, the command palette
+     in every editor people come here from, push the branch. Alt is the menu bar
+     key on Linux and leaked the same way. */
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+  /* An overlay covering the history takes the keyboard with it. Reading the
+     release notes should not be one stray keystroke away from a push. */
+  if (KEY_BLOCKERS.some((id) => !$(id).hidden)) return;
+  if ($('app').classList.contains('managing')) return;
+
+  if (e.key === 'f') $('btn-fetch').click();
   else if (e.key === 'p') $('btn-pull').click();
   else if (e.key === 'P') $('btn-push').click();
   else if (e.key === 'b') newBranch(null);

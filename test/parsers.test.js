@@ -869,6 +869,311 @@ for (const [name, platform, expect] of [
       t.usesCwd === true || t.dir('/tmp/x').join(' ').includes('/tmp/x')));
 }
 
+console.log('\nwhat the audit turned up');
+{
+  /* The sidebar filter opens groups that hold matches and folds away the ones
+     that do not — which is right on screen and wrong to write down. Clicking a
+     header while filtering used to persist the filter's own doing, so groups
+     nobody had ever folded came back folded next session. */
+  check('what is remembered while filtering is the note, not the document',
+    /refFilter && groupsBeforeFilter\s*\n?\s*\? \[\.\.\.groupsBeforeFilter\]/.test(rendererSrc));
+  check('and folding one by hand while filtering updates that note',
+    /groupsBeforeFilter\.add\(key\)/.test(rendererSrc) &&
+    /groupsBeforeFilter\.delete\(key\)/.test(rendererSrc));
+
+  /* repo:raw ran any git command with any arguments, over IPC, and nothing
+     called it. git can be asked to run other programs — core.sshCommand,
+     core.pager — so it was the one channel that would have turned a renderer
+     compromise into arbitrary execution. */
+  const pre = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  /* Quoted in full: repo:diffCommitFile contains repo:diffCommit, and a loose
+     match reports the live channel as the dead one. */
+  for (const gone of ["'repo:raw'", "'repo:checkout'", "'repo:diffCommit'"]) {
+    check(`${gone} is gone from the main process`, !mainSrc.includes(gone), gone);
+    check(`${gone} is gone from the allowlist`, !pre.includes(gone), gone);
+  }
+  check('while the one it is easily confused with is still there',
+    mainSrc.includes("'repo:diffCommitFile'") && pre.includes("'repo:diffCommitFile'"));
+  check('the channels that remain are all still reachable',
+    !/handle\('repo:raw'/.test(mainSrc) && /handle\('repo:checkoutWith'/.test(mainSrc));
+
+  /* Ruby was coloured by Python's table and PHP by JavaScript's, which got the
+     strings and comments right and the keywords wrong — `end` and `unless` are
+     most of what Ruby looks like. */
+  const hl = { window: {} };
+  vm.createContext(hl);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src/highlight.js'), 'utf8'), hl);
+  const H = hl.window.Hl;
+  const keys = (file, code) => {
+    const out = H.line(code, H.langOf(file));
+    return [...out.matchAll(/class="hl-(key|lit)">([^<]*)</g)].map((m) => m[2]);
+  };
+  check('a .rb file is read as Ruby', H.langOf('a.rb') === 'ruby', H.langOf('a.rb'));
+  check('and its own keywords colour', keys('a.rb', 'class Foo; def x; end; end').join(',')
+    .includes('end'), keys('a.rb', 'class Foo; def x; end; end').join(','));
+  check('nil counts as a literal, not a plain word', keys('a.rb', 'x = nil').includes('nil'));
+  check('a .php file is read as PHP', H.langOf('a.php') === 'php', H.langOf('a.php'));
+  check('and its keywords colour too',
+    keys('a.php', 'function f() { return true; }').join(',').includes('function'));
+  check('# opens a comment in PHP as well as //',
+    /hl-com/.test(H.line('$x = 1; # note', 'php')));
+  check('JavaScript is untouched by any of it',
+    keys('a.js', 'const x = 1').includes('const'));
+}
+
+console.log('\nthe hash a stash carries');
+{
+  /* A stash is a commit object, so the SHA in that column is real. It is worth
+     more there than a commit's: a commit can be found again through a branch,
+     a dropped stash through nothing else at all. Proved against git rather than
+     asserted — drop one and the object is still there, and still restorable. */
+  fs.writeFileSync(path.join(REPO, 'precious.txt'), 'worth keeping\n');
+  git(['add', 'precious.txt']);
+  git(['stash', 'push', '-m', 'about to be dropped']);
+  const hash = git(['rev-parse', 'stash@{0}']).trim();
+  git(['stash', 'drop']);
+
+  check('the stash is gone from the list',
+    !git(['stash', 'list']).includes('about to be dropped'));
+  check('but the object it left behind is still a commit',
+    git(['cat-file', '-t', hash]).trim() === 'commit');
+  check('and the work inside it still reads back',
+    git(['show', `${hash}:precious.txt`]).trim() === 'worth keeping');
+  git(['stash', 'store', '-m', 'put back', hash]);
+  check('so the hash alone puts it back on the list',
+    git(['stash', 'list']).includes('put back'));
+  git(['stash', 'drop']);
+
+  /* Which makes the warning matter: "cannot be recovered" was not true, and it
+     was talking someone out of the one thing that would have saved them. */
+  check('dropping no longer claims the work cannot be recovered',
+    !/Drop stash', 'This stash cannot be recovered/.test(rendererSrc));
+  check('it says where the work goes and how to keep a way back',
+    /copy the SHA first if you want that way back/.test(rendererSrc));
+  check('discarding still says unrecoverable, because there it is true',
+    /Discarded changes cannot be recovered/.test(rendererSrc));
+
+  check('the column explains the hash on a stash row and nowhere else',
+    /c\.stash\s*\n?\s*\? ' title="Local to this machine/.test(rendererSrc));
+}
+
+console.log('\nright-clicking a stash in the history');
+{
+  /* The row used to offer the ordinary commit menu, and nearly every entry on it
+     is wrong done to a stash: checking one out lands you detached on a
+     three-parent merge, cherry-pick and revert need a parent chosen and mean
+     nothing either way, and resetting the branch onto one is a way to lose the
+     branch. */
+  const menu = rendererSrc.slice(
+    rendererSrc.indexOf('const stashRef = stashRefFor(hash);'),
+    rendererSrc.indexOf('  contextMenu(e, [', rendererSrc.indexOf('const stashRef = stashRefFor(hash);') + 200)
+  );
+  check('a stash row is recognised before the commit menu is built',
+    menu.includes('if (stashRef) {'), menu.length);
+  for (const good of ['Apply and keep', 'Apply and drop', 'Drop stash', 'Copy SHA']) {
+    check(`it offers ${good}`, menu.includes(good));
+  }
+  for (const bad of ['Check out', 'Branch from here', 'Cherry-pick', 'Revert this commit',
+                     'Reset branch to here']) {
+    check(`and never ${bad}`, !menu.includes(bad), bad);
+  }
+  check('it stops there rather than falling through to the commit menu',
+    /\]\);\s*\n\s*return;\s*\n\s*\}/.test(menu));
+
+  /* Row and sidebar have to agree: the same stash, right-clicked in two places,
+     must not offer two different sets of things to do to it. */
+  const side = rendererSrc.slice(
+    rendererSrc.indexOf("} else if (kind === 'stash') {"),
+    rendererSrc.indexOf("} else if (kind === 'remote') {")
+  );
+  for (const shared of ['Apply and keep', 'Apply and drop', 'Drop stash']) {
+    check(`the sidebar offers ${shared} too`, side.includes(shared));
+  }
+
+  /* Every stash command wants a stash@{n}; the history row knows a commit. The
+     hash is what joins the two, so the list has to carry it. */
+  check('the stash list carries the commit hash', /%at%x1f%H/.test(mainSrc));
+  check('and the row looks its ref up by that hash',
+    /\(state\.stashes \|\| \[\]\)\.find\(\(s\) => s\.hash === hash\)/.test(rendererSrc));
+}
+
+console.log('\nwhat a stash is holding');
+{
+  /* A stash keeps its untracked files in a third parent rather than in its own
+     tree, so comparing it with the commit it was taken from finds none of them.
+     A stash of nothing but new files read as "no files" in the panel. */
+  fs.writeFileSync(path.join(REPO, 'only-new.txt'), 'never added\n');
+  git(['stash', 'push', '-u', '-m', 'untracked only']);
+  const only = git(['rev-parse', 'stash@{0}']).trim();
+
+  /* The tree here also carries changes from the tests above, so the point is
+     not that the comparison finds nothing — it is that it never finds the file
+     that went in untracked, whatever else it turns up. */
+  const against = git(['diff', '--name-only', `${only}^1`, only]).trim().split('\n').filter(Boolean);
+  check('comparing it with its first parent never mentions the untracked file',
+    !against.includes('only-new.txt'), against.join(','));
+
+  const third = git(['rev-parse', '--verify', '-q', `${only}^3`]).trim();
+  check('but the third parent exists', /^[0-9a-f]{40}$/.test(third));
+  const inThird = git(['ls-tree', '-r', '--name-only', third]).trim().split('\n').filter(Boolean);
+  check('and it is holding the file', inThird.includes('only-new.txt'), inThird.join(','));
+  check('the code reads the list from there',
+    /ls-tree', '-r', '-z', '--name-only', third/.test(mainSrc));
+  check('and calls those files added, which is what they are',
+    /status: 'A', path, untracked: true/.test(mainSrc));
+
+  /* Their diffs need the same treatment: the ordinary comparison has nothing to
+     say about a file that is not in either tree being compared. */
+  const empty = git(['hash-object', '-t', 'tree', '/dev/null']).trim();
+  const shown = git(['diff', '--no-color', empty, third, '--', 'only-new.txt']);
+  check('shown against the empty tree, every line of it is an addition',
+    shown.includes('+never added'), shown.slice(0, 60));
+  check('and that is how the app asks for it', /hash-object', '-t', 'tree'/.test(mainSrc));
+
+  /* A stash already listing a path as changed must not list it twice. */
+  check('a path already in the diff is not repeated',
+    /const seen = new Set\(files\.map\(\(f\) => f\.path\)\);/.test(mainSrc));
+
+  // And it looks like what it is, in three places that agree with each other.
+  const graphSrc = fs.readFileSync(path.join(__dirname, '..', 'src/graph.js'), 'utf8');
+  check('the graph draws a stash as a broken ring, not a disc',
+    /stash\s*\n?\s*\? ` fill-opacity="\.14"[^`]*stroke-dasharray="2\.5 2\.5"`/.test(graphSrc));
+  check('and puts no face on it', /pending \|\| stash \? null : avatarFor/.test(graphSrc));
+  /* Said in the bar that already labels the panel, rather than on a line of its
+     own: one word does not need a row to itself. */
+  check('the panel bar says which of the two it is showing',
+    /\$\('c-top-label'\)\.textContent = c\.stash \? 'stash' : 'commit';/.test(rendererSrc));
+  check('and nothing is left of the badge that took a line',
+    !/c-kind/.test(rendererSrc) && !/c-kind/.test(
+      fs.readFileSync(path.join(__dirname, '..', 'src/index.html'), 'utf8')));
+
+  /* Every other pill takes its border from the lane colour, which a stash has
+     none of — so that shorthand was invalid here, and an invalid border takes
+     its width down with it, leaving `medium`: three pixels of dashes. */
+  const cssSrc = fs.readFileSync(path.join(__dirname, '..', 'src/styles.css'), 'utf8');
+  const stashPill = (cssSrc.match(/\.pill\.stash \{[^}]*\}/) || [''])[0];
+  check('the stash pill states its border in full, width included',
+    /border:\s*1px dashed/.test(stashPill), stashPill.replace(/\s+/g, ' ').slice(0, 90));
+  check('and calls its parent what it is',
+    /c\.stash \? 'taken from'/.test(rendererSrc));
+
+  git(['stash', 'drop']);
+}
+
+console.log('\nfiltering the sidebar');
+{
+  /* Branches and tags were the only lists in the window without a search box,
+     which is felt hardest where it matters most: a repository here carries 581
+     tags, and scrolling was the only way to find one. */
+  const pick = (items, q) => (q ? items.filter((x) => x.name.toLowerCase().includes(q)) : items);
+  const tags = ['1.44.4.0', '1.45.2.0', 'voucher_reward', 'Voucher_Summary', 'kiosk-member']
+    .map((name) => ({ name }));
+
+  check('a plain substring matches', pick(tags, 'voucher').length === 2, pick(tags, 'voucher').length);
+  check('and it does not care about case',
+    pick(tags, 'voucher').some((t) => t.name === 'Voucher_Summary'));
+  check('a dotted version is matched literally, not as a pattern',
+    pick(tags, '1.45').length === 1 && pick(tags, '1.45')[0].name === '1.45.2.0');
+  check('nothing matching is nothing, not everything', pick(tags, 'zzzz').length === 0);
+  check('an empty box hides nothing', pick(tags, '').length === tags.length);
+
+  /* Filtering flattens, for the same reason the file lists do: a folder whose
+     children are all hidden says nothing, and keeping it would leave the
+     indentation claiming something that is not there. */
+  check('a filtered group is drawn flat rather than as a tree',
+    /flat \? shown\.map\(\(x\) => leaf\(x, x\.name, 0\)\)/.test(rendererSrc));
+  check('the header counts matches against the total',
+    /\$\{shown\.length\}\/\$\{items\.length\}/.test(rendererSrc));
+
+  /* Tags and stashes ship folded. A match hidden inside a folded group is a
+     search that answered nothing — so searching opens them, and clearing must
+     put them back exactly as they were rather than leaving the sidebar
+     rearranged for good. */
+  check('searching opens a group that has matches',
+    /g\.classList\.toggle\('collapsed', hits\[key\] === 0\)/.test(rendererSrc));
+  check('what the reader had folded is noted before anything is opened',
+    /groupsBeforeFilter = new Set/.test(rendererSrc));
+  check('and put back when the box is cleared',
+    /was && !refFilter && groupsBeforeFilter/.test(rendererSrc));
+  check('cleared, the filter stops touching the folds at all',
+    /if \(!refFilter\) \{[\s\S]{0,160}return;/.test(rendererSrc));
+}
+
+console.log('\na stash in the history');
+{
+  /* One stash is up to three commits: the stash, one holding what was staged,
+     and one holding the untracked files. Drawing all three put three rows in
+     the history for a single action — two of them plumbing nobody made.
+
+     Checked against git rather than against a guess about its output: the
+     second parent of a stash is the index commit and the third is the untracked
+     one, and a stash taken with nothing untracked simply has no third. */
+  fs.writeFileSync(path.join(REPO, 'stash-me.txt'), 'work in progress\n');
+  fs.writeFileSync(path.join(REPO, 'stash-new.txt'), 'never added\n');
+  git(['add', 'stash-me.txt']);
+  git(['stash', 'push', '-u', '-m', 'half done']);
+
+  const hash = git(['rev-parse', 'stash@{0}']).trim();
+  const parents = git(['rev-parse', `${hash}^@`]).trim().split('\n').filter(Boolean);
+  check('a stash keeps three parents when something was staged and something was not',
+    parents.length === 3, parents.length);
+
+  const plumbing = new Set();
+  for (const side of ['^2', '^3']) {
+    const out = git(['rev-parse', '--verify', '-q', hash + side]).trim();
+    if (out) plumbing.add(out);
+  }
+  check('the two commits behind it are named exactly, not guessed',
+    plumbing.size === 2 && [...plumbing].every((h) => parents.includes(h)),
+    [...plumbing].length);
+  check('and the commit it was taken from is not one of them',
+    !plumbing.has(parents[0]));
+
+  const all = git(['log', '--all', '--format=%H']).trim().split('\n').filter(Boolean);
+  check('git shows all three in the history', all.filter((h) => h === hash || plumbing.has(h)).length === 3);
+  const kept = all.filter((h) => !plumbing.has(h));
+  check('dropping the two leaves the stash itself, once',
+    kept.filter((h) => h === hash).length === 1 &&
+    kept.filter((h) => plumbing.has(h)).length === 0);
+
+  /* Trimming the parents matters as much as dropping the rows: an edge to a
+     commit that is no longer in the list leaves a lane open forever. */
+  const trimmed = parents.slice(0, 1);
+  const have = new Set(kept);
+  check('the trimmed parent is still in the list, so no lane is left hanging',
+    trimmed.length === 1 && have.has(trimmed[0]));
+
+  // A stash with nothing untracked has no third parent at all.
+  fs.appendFileSync(path.join(REPO, 'a.txt'), 'more\n');
+  git(['stash', 'push', '-m', 'tracked only']);
+  const second = git(['rev-parse', 'stash@{0}']).trim();
+  check('a stash with nothing untracked has two parents, not three',
+    git(['rev-parse', `${second}^@`]).trim().split('\n').filter(Boolean).length === 2);
+  /* `rev-parse --verify -q` prints nothing, but it also *exits* non-zero, which
+     is a throw here and would be a rejected promise in the app. That is why the
+     lookup there sits inside a try — a stash with nothing untracked is ordinary,
+     not an error. */
+  let threw = false;
+  try { git(['rev-parse', '--verify', '-q', `${second}^3`]); } catch { threw = true; }
+  check('asking for a third parent that does not exist fails rather than answering', threw);
+  check('and the code that asks for it expects that',
+    /catch \{ \/\* no staged part, or no untracked part \*\/ \}/.test(mainSrc));
+
+  /* --all only reaches refs/stash, which is the newest. Older stashes vanish
+     unless they are named, which is why the walk lists them all by hash. */
+  const listed = git(['stash', 'list', '--format=%H']).trim().split('\n').filter(Boolean);
+  check('there are two stashes to draw', listed.length === 2, listed.length);
+  const reachable = git(['log', '--all', '--format=%H']).trim().split('\n');
+  check('but --all alone reaches only the newest of them',
+    reachable.includes(listed[0]) && !reachable.includes(listed[1]));
+  const named = git(['log', '--all', ...listed, '--format=%H']).trim().split('\n');
+  check('naming them all brings every stash into the history',
+    listed.every((h) => named.includes(h)));
+
+  git(['stash', 'clear']);
+  git(['checkout', '--', '.']);
+}
+
 fs.rmSync(REPO, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
