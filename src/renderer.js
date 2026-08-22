@@ -2072,13 +2072,21 @@ async function renderCommitPanel(hash) {
   av.style.setProperty('--hue', avatarHue(c.email));
   av.classList.remove('unset');
 
+  /* A stash reads exactly like a commit here — "On develop: blm1" over an author
+     and a date — so it says what it is, in the same dashed language the sidebar
+     badge and the graph dot use. */
+  $('c-kind').hidden = !c.stash;
+  $('c-kind').textContent = 'stash';
+
   /* A merge has two parents and they mean different things: the first is the
      branch you were on, the second is the branch that came in. Naming both,
      and letting you jump to either, is the only way the row explains itself. */
   const parents = c.parents || [];
   const isMergeCommit = parents.length > 1;
   $('c-parents').innerHTML = parents.map((h, i) => {
-    const role = isMergeCommit ? (i === 0 ? 'onto' : 'from') : 'parent';
+    // A stash's parent is where the work was taken from, not what it follows.
+    const role = c.stash ? 'taken from'
+      : isMergeCommit ? (i === 0 ? 'onto' : 'from') : 'parent';
     const named = isMergeCommit ? branchAt(h) : '';
     return `<button class="hashbtn c-parent" data-hash="${esc(h)}" ` +
       `title="Go to this parent">` +

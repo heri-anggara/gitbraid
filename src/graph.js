@@ -214,15 +214,23 @@
       const cx = x(row.lane);
       const cy = y(i + offset);
       const pending = row.commit.pending === true;
+      /* A stash is work set aside, not a commit on the branch, and its dot says
+         so the way the uncommitted row does: a ring rather than a disc, drawn
+         with a broken line. It keeps the lane's colour, because where it was
+         taken from is the useful part. No face on it either — the dot is not
+         reporting who wrote something, it is marking something parked. */
+      const stash = row.commit.stash === true;
       const color = pending ? 'var(--pending)' : laneColor(row.lane);
-      const avatar = pending ? null : avatarFor(row.commit);
+      const avatar = pending || stash ? null : avatarFor(row.commit);
       // A knocked-out ring keeps lines from running visibly under the dot.
       dots.push(
         `<circle cx="${cx}" cy="${cy}" r="${DOT_R + 1.5}" fill="var(--bg-graph)"/>` +
         `<circle cx="${cx}" cy="${cy}" r="${DOT_R}" fill="${color}"` +
         (pending
           ? ' fill-opacity=".2" stroke="var(--pending)" stroke-width="2" stroke-dasharray="2 2"'
-          : '') +
+          : stash
+            ? ` fill-opacity=".14" stroke="${color}" stroke-width="1.8" stroke-dasharray="2.5 2.5"`
+            : '') +
         '/>' +
         (avatar
           ? `<image href="${avatar}" x="${cx - AVATAR_R}" y="${cy - AVATAR_R}" ` +

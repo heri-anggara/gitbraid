@@ -2324,6 +2324,21 @@ textarea {
 .up-table td:not(:first-child), .up-table th:not(:first-child) { white-space: nowrap; }
 .up-table tr:last-child td { border-bottom: 0; }
 
+/* Said once above the message in the panel, in the same dashed language the
+   sidebar badge and the graph dot use. */
+.c-kind {
+  display: inline-block;
+  margin-bottom: 5px;
+  padding: 1px 7px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
 /* A stash is not a branch and not a tag, and its badge should not read like
    one — it is work parked beside the history rather than part of it. */
 .pill.stash {

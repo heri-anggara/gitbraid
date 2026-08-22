@@ -869,6 +869,55 @@ for (const [name, platform, expect] of [
       t.usesCwd === true || t.dir('/tmp/x').join(' ').includes('/tmp/x')));
 }
 
+console.log('\nwhat a stash is holding');
+{
+  /* A stash keeps its untracked files in a third parent rather than in its own
+     tree, so comparing it with the commit it was taken from finds none of them.
+     A stash of nothing but new files read as "no files" in the panel. */
+  fs.writeFileSync(path.join(REPO, 'only-new.txt'), 'never added\n');
+  git(['stash', 'push', '-u', '-m', 'untracked only']);
+  const only = git(['rev-parse', 'stash@{0}']).trim();
+
+  /* The tree here also carries changes from the tests above, so the point is
+     not that the comparison finds nothing — it is that it never finds the file
+     that went in untracked, whatever else it turns up. */
+  const against = git(['diff', '--name-only', `${only}^1`, only]).trim().split('\n').filter(Boolean);
+  check('comparing it with its first parent never mentions the untracked file',
+    !against.includes('only-new.txt'), against.join(','));
+
+  const third = git(['rev-parse', '--verify', '-q', `${only}^3`]).trim();
+  check('but the third parent exists', /^[0-9a-f]{40}$/.test(third));
+  const inThird = git(['ls-tree', '-r', '--name-only', third]).trim().split('\n').filter(Boolean);
+  check('and it is holding the file', inThird.includes('only-new.txt'), inThird.join(','));
+  check('the code reads the list from there',
+    /ls-tree', '-r', '-z', '--name-only', third/.test(mainSrc));
+  check('and calls those files added, which is what they are',
+    /status: 'A', path, untracked: true/.test(mainSrc));
+
+  /* Their diffs need the same treatment: the ordinary comparison has nothing to
+     say about a file that is not in either tree being compared. */
+  const empty = git(['hash-object', '-t', 'tree', '/dev/null']).trim();
+  const shown = git(['diff', '--no-color', empty, third, '--', 'only-new.txt']);
+  check('shown against the empty tree, every line of it is an addition',
+    shown.includes('+never added'), shown.slice(0, 60));
+  check('and that is how the app asks for it', /hash-object', '-t', 'tree'/.test(mainSrc));
+
+  /* A stash already listing a path as changed must not list it twice. */
+  check('a path already in the diff is not repeated',
+    /const seen = new Set\(files\.map\(\(f\) => f\.path\)\);/.test(mainSrc));
+
+  // And it looks like what it is, in three places that agree with each other.
+  const graphSrc = fs.readFileSync(path.join(__dirname, '..', 'src/graph.js'), 'utf8');
+  check('the graph draws a stash as a broken ring, not a disc',
+    /stash\s*\n?\s*\? ` fill-opacity="\.14"[^`]*stroke-dasharray="2\.5 2\.5"`/.test(graphSrc));
+  check('and puts no face on it', /pending \|\| stash \? null : avatarFor/.test(graphSrc));
+  check('the panel says so above the message', /\$\('c-kind'\)\.hidden = !c\.stash;/.test(rendererSrc));
+  check('and calls its parent what it is',
+    /c\.stash \? 'taken from'/.test(rendererSrc));
+
+  git(['stash', 'drop']);
+}
+
 console.log('\nfiltering the sidebar');
 {
   /* Branches and tags were the only lists in the window without a search box,
