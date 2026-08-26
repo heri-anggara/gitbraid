@@ -4408,21 +4408,20 @@ async function gitAction(id, verb, fn, done) {
   // Shown after the toolbar has settled, so the dialog is not fighting a
   // spinner for attention. Not awaited: the caller still has a refresh to do,
   // and the repository should be redrawn behind the explanation, not after it.
-  if (lastRun && lastRun.since === startedAt) {
-    lastRun.failed = !ok;
-    if (!ok) lastRun.title = `${verb} failed`;
-  }
+  if (lastRun && lastRun.since === startedAt) lastRun.failed = !ok;
   /* A failure is shown whatever the preference says: it is the one outcome the
      reader has to be told about, and the switch is about the quiet successes.
      Either way only for the tab still in front — the other one refreshes itself
      when it comes back. */
   gitOutLive = false;
+  const took = Date.now() - startedAt;
+  if (lastRun && lastRun.since === startedAt) lastRun.took = took;
   if (activeId === startedOn) {
     /* The live pane held git's narration, which is stderr only. What was
        recorded holds both streams, so the finished dialog replaces the running
        one rather than adding to it — otherwise every line arrives twice. */
-    if (!ok) await showGitOutput(`${verb} failed`, startedAt, { failed: true, fallback: lastFailure });
-    else if (prefs.showGitOutput && !gitOutDismissed) await showGitOutput(verb, startedAt);
+    if (!ok) await showGitOutput(verb, startedAt, { failed: true, fallback: lastFailure, took });
+    else if (prefs.showGitOutput && !gitOutDismissed) await showGitOutput(verb, startedAt, { took });
     else if (prefs.showGitOutput) closeGitOutput();
   } else if (prefs.showGitOutput) {
     closeGitOutput();
@@ -5248,7 +5247,7 @@ function openGitOutputLive(verb) {
   gitOutText = '';
   $('gitout-title').textContent = verb;
   $('gitout-title').classList.remove('is-bad');
-  $('gitout-sub').textContent = 'Running…';
+  setGitOutputState('running', 'Running…');
   $('gitout-body').innerHTML = '<pre class="go-out go-live" id="gitout-live"></pre>';
   $('gitout').hidden = false;
 }
@@ -5278,14 +5277,30 @@ function appendGitOutputLine(text) {
   body.scrollTop = body.scrollHeight;
 }
 
-function paintGitOutput(title, blocks, failed) {
+/* Whether it is still going, and how it ended. The title stays the verb the
+   action was started with: turning "Pushing" into "Pushed" needs a rule that
+   sooner or later writes "Resetted", and a line that says so plainly works for
+   any verb at all. */
+function setGitOutputState(kind, text) {
+  const mark = $('gitout-mark');
+  mark.className = `go-mark go-${kind}`;
+  mark.textContent = kind === 'done' ? '✓' : kind === 'failed' ? '✕' : '';
+  $('gitout-state').textContent = text;
+}
+
+/** "3.0 s" past a second, "840 ms" below it — seconds there would read 0.8. */
+const elapsed = (ms) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`);
+
+function paintGitOutput(title, blocks, failed, took) {
   gitOutText = blocks
     .map((b) => (b.cmd ? `$ ${b.cmd}\n${b.out}` : b.out))
     .join('\n\n');
   $('gitout-title').textContent = title;
   $('gitout-title').classList.toggle('is-bad', !!failed);
-  $('gitout-sub').textContent = blocks.length === 1
-    ? '1 command' : `${blocks.length} commands`;
+  const count = blocks.length === 1 ? '1 command' : `${blocks.length} commands`;
+  setGitOutputState(failed ? 'failed' : 'done',
+    [failed ? 'Failed' : 'Done', took ? `in ${elapsed(took)}` : '', `· ${count}`]
+      .filter(Boolean).join(' '));
   $('gitout-body').innerHTML = blocks.map((b) =>
     (b.cmd ? `<p class="go-cmd">$ ${esc(b.cmd)}</p>` : '') +
     `<pre class="go-out${b.bad ? ' bad' : ''}">${esc(b.out)}</pre>`).join('');
@@ -5305,6 +5320,7 @@ async function outputSince(since) {
 }
 
 async function showGitOutput(title, since, opts = {}) {
+  const took = opts.took;
   let blocks = await outputSince(since);
   /* A failure whose command kept nothing still has the message the renderer was
      handed — better a dialog with only that than no dialog at all. */
@@ -5312,17 +5328,19 @@ async function showGitOutput(title, since, opts = {}) {
     blocks = [{ cmd: null, out: String(opts.fallback), bad: true }];
   }
   if (!blocks.length) return false;
-  paintGitOutput(title, blocks, opts.failed);
+  paintGitOutput(title, blocks, opts.failed, took);
   return true;
 }
 
 /* The corner asks for the last action, whenever it ran. */
 async function showLastGitOutput() {
-  if (lastRun && await showGitOutput(lastRun.title, lastRun.since, { failed: lastRun.failed })) return;
+  if (lastRun && await showGitOutput(lastRun.title, lastRun.since,
+    { failed: lastRun.failed, took: lastRun.took })) return;
   const rows = await call('app:log');
   const newest = (rows || []).find((r) => r.out);
   if (!newest) {
     paintGitOutput('Git output', [{ cmd: null, out: 'Nothing has run yet.' }], false);
+    setGitOutputState('idle', '');
     return;
   }
   paintGitOutput(newest.command.replace(/^git /, ''),

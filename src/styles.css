@@ -1912,6 +1912,22 @@ textarea {
 .gitout-card { max-width: 760px; }
 /* A failed action says so in its own title rather than in a second window. */
 #gitout-title.is-bad { color: var(--del-ink); }
+/* Still going, or over and how it went. The mark carries the colour so the
+   words stay readable at the weight the rest of the subtitle is set in. */
+.gitout-state { display: flex; align-items: center; gap: 6px; }
+.go-mark { flex: none; font-size: 11px; line-height: 1; }
+.go-done { color: var(--add-ink); }
+.go-failed { color: var(--del-ink); }
+/* A spinner rather than a glyph: the one state that has to look like time
+   passing is the one where time is passing. */
+.go-running {
+  width: 10px; height: 10px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .go-running { animation-duration: 2.4s; } }
 .go-out.bad { color: var(--del-ink); }
 /* The glyph beside the status line, quieter than the ones on the right because
    the words next to it already carry the message. */
