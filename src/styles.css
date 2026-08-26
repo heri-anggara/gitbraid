@@ -1905,6 +1905,35 @@ textarea {
 .logs-tools { margin-left: auto; display: flex; align-items: center; gap: 6px; }
 .logs-count { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
 
+/* One command's output, set like a terminal: the command line it came from,
+   then the answer under it, monospaced and unwrapped-looking. Narrower than the
+   activity log because output lines are short and a wide column makes them
+   drift apart. */
+.gitout-card { max-width: 760px; }
+.gitout-body {
+  margin: 0;
+  padding: 10px 12px 14px;
+  overflow: auto;
+  background: var(--surface-2);
+}
+.go-cmd {
+  margin: 14px 0 4px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+.go-cmd:first-child { margin-top: 0; }
+.go-out {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .logs-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; }
 .logs-list li {
   display: grid;
@@ -1917,6 +1946,38 @@ textarea {
   font-size: 11.5px;
 }
 .logs-list li:hover { background: var(--surface-2); }
+
+/* A row that kept its output opens to show it. The chevron is the only hint
+   the row is more than a line, so it turns rather than appearing on hover —
+   a control that shows up only under the pointer is a control nobody finds. */
+.logs-list li.has-out { cursor: pointer; }
+.logs-list li.has-out:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.lg-chev {
+  display: inline-block;
+  width: 10px;
+  margin-right: 4px;
+  color: var(--text-faint);
+  transition: transform 120ms ease;
+}
+.logs-list li.open .lg-chev { transform: rotate(90deg); }
+.lg-out {
+  display: none;
+  grid-column: 2 / -1;
+  margin: 4px 0 2px;
+  padding: 6px 8px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.logs-list li.open .lg-out { display: block; }
 .lg-time { color: var(--text-faint); }
 .lg-cmd { color: var(--text-dim); overflow-wrap: anywhere; }
 .lg-ms { color: var(--text-faint); text-align: right; font-variant-numeric: tabular-nums; }
@@ -3462,7 +3523,18 @@ mark {
   font-size: 11px;
   color: var(--text-faint);
 }
-.status-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Clickable, but not dressed as a button: it is a line of prose that happens
+   to open the log, and a bordered control here would compete with the status
+   itself for the corner. The hover underline is the whole affordance. */
+.status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.status-text:hover { text-decoration: underline; text-underline-offset: 2px; }
+.status-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .status-text.error { color: var(--danger); }
 .status-text.ok { color: var(--add); }
 

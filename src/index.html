@@ -907,7 +907,8 @@
 
   <!-- ── status bar ──────────────────────────────────────────── -->
   <footer class="statusbar">
-    <span id="status-text" class="status-text">Ready</span>
+    <span id="status-text" class="status-text" role="button" tabindex="0"
+          title="Open the activity log — every git command GitBraid ran">Ready</span>
     <span id="status-spinner" class="spinner" hidden></span>
 
     <span class="sb-right">
@@ -956,6 +957,30 @@
 </div>
 
 <!-- activity log -->
+<!-- What git said, in the order it said it. The activity log is the record of
+     every command; this is one command's output, shown the way a terminal would
+     have shown it. -->
+<div id="gitout" class="logs" hidden>
+  <div class="logs-card gitout-card" role="dialog" aria-modal="true" aria-label="Git output">
+    <header class="logs-head">
+      <div>
+        <h3 id="gitout-title">Git output</h3>
+        <p class="logs-sub" id="gitout-sub"></p>
+      </div>
+      <span class="logs-tools">
+        <button class="btn btn-sm" id="gitout-copy">Copy</button>
+        <button class="fv-ib fv-close" id="gitout-close" title="Close (Esc)">
+          <svg class="fv-i" viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M3 3 9 9M9 3 3 9" fill="none" stroke="currentColor"
+                  stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </span>
+    </header>
+    <div class="gitout-body" id="gitout-body"></div>
+  </div>
+</div>
+
 <div id="logs" class="logs" hidden>
   <div class="logs-card" role="dialog" aria-modal="true" aria-label="Activity log">
     <header class="logs-head">
