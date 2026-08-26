@@ -148,7 +148,17 @@ function keepsOutput(args, code) {
 }
 
 function trimOutput(text) {
-  const clean = String(text || '').replace(/\r/g, '\n').trim();
+  /* git draws progress by rewriting one line over itself with \r —
+     "Counting objects: 9%\rCounting objects: 18%\r…\rdone." A terminal shows
+     only what survived each rewrite, and turning every \r into a newline
+     instead expanded a single counter into forty lines of nearly identical
+     text. Keep the last thing written to each line, which is what was on
+     screen. */
+  const clean = String(text || '')
+    .split('\n')
+    .map((line) => line.split('\r').pop())
+    .join('\n')
+    .trim();
   if (!clean) return null;
   const lines = clean.split('\n');
   const cut = lines.length > OUT_MAX_LINES

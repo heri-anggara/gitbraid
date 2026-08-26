@@ -1916,6 +1916,10 @@ textarea {
 /* The glyph beside the status line, quieter than the ones on the right because
    the words next to it already carry the message. */
 .sb-out { margin-right: 2px; }
+/* While it runs. Dimmer than the finished output, because these are git's
+   progress counters rather than its answer, and a minimum height keeps the
+   dialog from growing line by line under the reader's eyes. */
+.go-live { min-height: 120px; color: var(--text-dim); }
 .gitout-body {
   margin: 0;
   padding: 10px 12px 14px;
