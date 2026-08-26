@@ -4351,28 +4351,6 @@ function tbProgress(percent) {
  * Runs one git action with the button as its progress display.
  * `fn` returns null when it failed — call() has already said why.
  */
-/* A command that fails deserves more than a line that the next status message
-   scrolls away. This says what was being attempted, the reason git gave, and —
-   when git said more than one line — all of it, because on a rejected push the
-   line that explains is never the first. */
-function showFailure(verb, text) {
-  const lines = String(text).split(/[\r\n]/).map((l) => l.trimEnd()).filter(Boolean);
-  if (!lines.length) return;
-  modal({
-    // "Finishing release did not finish" — the verb already carries the word.
-    title: `${verb} failed`,
-    /* The line that explains, which is rarely the first: git opens a refused
-       push with "To <url>", and the reason is three lines further down. */
-    description: firstLine(text),
-    // Everything git said, in the order it said it, with nothing removed — the
-    // headline is a highlight, not a replacement for the output.
-    html: lines.length > 1
-      ? `<div class="modal-field"><div class="fail-out">${esc(lines.join('\n'))}</div></div>`
-      : '',
-    confirmLabel: 'Close',
-    hideCancel: true,
-  });
-}
 
 async function gitAction(id, verb, fn, done) {
   if (action) { setStatus('Another Git command is still running', 'error'); return; }
@@ -4380,6 +4358,7 @@ async function gitAction(id, verb, fn, done) {
   const startedOn = activeId;
   // Everything git writes from here on belongs to this action.
   const startedAt = Date.now();
+  lastRun = { title: verb, since: startedAt, failed: false };
   action = { id, tab: startedOn, label: label ? label.textContent : '' };
 
   if (label) label.textContent = verb;
@@ -4413,11 +4392,18 @@ async function gitAction(id, verb, fn, done) {
   // Shown after the toolbar has settled, so the dialog is not fighting a
   // spinner for attention. Not awaited: the caller still has a refresh to do,
   // and the repository should be redrawn behind the explanation, not after it.
-  if (!ok && lastFailure && activeId === startedOn) showFailure(verb, lastFailure);
-  /* Only on success, and only for the tab still in front. A failure already
-     puts everything git said in a dialog of its own, so doing it here too
-     would stack a second copy of the same text behind the first. */
-  if (ok && prefs.showGitOutput && activeId === startedOn) await showGitOutput(verb, startedAt);
+  if (lastRun && lastRun.since === startedAt) {
+    lastRun.failed = !ok;
+    if (!ok) lastRun.title = `${verb} failed`;
+  }
+  /* A failure is shown whatever the preference says: it is the one outcome the
+     reader has to be told about, and the switch is about the quiet successes.
+     Either way only for the tab still in front — the other one refreshes itself
+     when it comes back. */
+  if (activeId === startedOn) {
+    if (!ok) await showGitOutput(`${verb} failed`, startedAt, { failed: true, fallback: lastFailure });
+    else if (prefs.showGitOutput) await showGitOutput(verb, startedAt);
+  }
   return ok;
 }
 
@@ -5183,31 +5169,69 @@ async function openLogs() {
 
 const closeLogs = () => { $('logs').hidden = true; };
 
-/* ═════ what one command said ═══════════════════════════════════ */
+/* ═════ what git said ═══════════════════════════════════════════ */
 
-/* The activity log is the record of every command GitBraid ran. This is the
-   output of the one you just asked for, laid out the way a terminal would have
-   laid it out — the command, then what it answered. */
+/* The activity log is the record of every command GitBraid ran. This is one
+   action's output, laid out the way a terminal would have laid it out. Success
+   and failure share it: a reader should have one window to recognise as "what
+   git said", not two that look alike and behave differently. */
 let gitOutText = '';
 
-async function showGitOutput(verb, since) {
-  const rows = await call('app:log');
-  if (!rows) return;
-  /* Newest first from main, and only the ones this action wrote. A refresh
-     fires a dozen read-only commands right afterwards; none of them kept
-     output, so none of them can appear here. */
-  const mine = rows.filter((r) => r.at >= since && r.out).reverse();
-  if (!mine.length) return;
+/* Which action the bottom-left corner should show when asked. Set when one
+   starts, so a refresh's dozen read-only commands afterwards cannot be mistaken
+   for it. */
+let lastRun = null;
 
-  gitOutText = mine.map((r) => `$ ${r.command}\n${r.out}`).join('\n\n');
-  $('gitout-title').textContent = verb;
-  $('gitout-sub').textContent = mine.length === 1
-    ? '1 command' : `${mine.length} commands`;
-  $('gitout-body').innerHTML = mine.map((r) =>
-    `<p class="go-cmd">$ ${esc(r.command)}</p>` +
-    `<pre class="go-out">${esc(r.out)}</pre>`).join('');
+function paintGitOutput(title, blocks, failed) {
+  gitOutText = blocks
+    .map((b) => (b.cmd ? `$ ${b.cmd}\n${b.out}` : b.out))
+    .join('\n\n');
+  $('gitout-title').textContent = title;
+  $('gitout-title').classList.toggle('is-bad', !!failed);
+  $('gitout-sub').textContent = blocks.length === 1
+    ? '1 command' : `${blocks.length} commands`;
+  $('gitout-body').innerHTML = blocks.map((b) =>
+    (b.cmd ? `<p class="go-cmd">$ ${esc(b.cmd)}</p>` : '') +
+    `<pre class="go-out${b.bad ? ' bad' : ''}">${esc(b.out)}</pre>`).join('');
   $('gitout').hidden = false;
   $('gitout-body').scrollTop = 0;
+}
+
+/** Everything written since `since` that kept its output, oldest first. */
+async function outputSince(since) {
+  const rows = await call('app:log');
+  // Newest first from main. A refresh fires read-only commands right after an
+  // action; none of them keeps output, so none of them can appear here.
+  return (rows || [])
+    .filter((r) => r.at >= since && r.out)
+    .reverse()
+    .map((r) => ({ cmd: r.command, out: r.out, bad: Boolean(r.code) }));
+}
+
+async function showGitOutput(title, since, opts = {}) {
+  let blocks = await outputSince(since);
+  /* A failure whose command kept nothing still has the message the renderer was
+     handed — better a dialog with only that than no dialog at all. */
+  if (!blocks.length && opts.fallback) {
+    blocks = [{ cmd: null, out: String(opts.fallback), bad: true }];
+  }
+  if (!blocks.length) return false;
+  paintGitOutput(title, blocks, opts.failed);
+  return true;
+}
+
+/* The corner asks for the last action, whenever it ran. */
+async function showLastGitOutput() {
+  if (lastRun && await showGitOutput(lastRun.title, lastRun.since, { failed: lastRun.failed })) return;
+  const rows = await call('app:log');
+  const newest = (rows || []).find((r) => r.out);
+  if (!newest) {
+    paintGitOutput('Git output', [{ cmd: null, out: 'Nothing has run yet.' }], false);
+    return;
+  }
+  paintGitOutput(newest.command.replace(/^git /, ''),
+    [{ cmd: newest.command, out: newest.out, bad: Boolean(newest.code) }],
+    Boolean(newest.code));
 }
 
 const closeGitOutput = () => { $('gitout').hidden = true; };
@@ -5218,7 +5242,6 @@ $('gitout-copy').addEventListener('click', () => {
   navigator.clipboard.writeText(gitOutText);
   setStatus('Output copied', 'ok');
 });
-
 /* One listener on the list rather than one per row: the list is redrawn whole
    every time it opens, and per-row listeners would be rebound with it. */
 $('logs-list').addEventListener('click', (e) => {
@@ -5262,10 +5285,12 @@ $('sb-term').addEventListener('click', toggleTerm);
 $('sb-logs').addEventListener('click', openLogs);
 /* The status line is the last thing git said, so clicking it asks for the rest.
    It sits at the far left of the bar, which is where the eye already is when a
-   command has just finished. */
-$('status-text').addEventListener('click', openLogs);
+   command has just finished — and the glyph beside it is there because a
+   control that only appears under the pointer is one nobody finds. */
+$('status-text').addEventListener('click', showLastGitOutput);
+$('sb-out').addEventListener('click', showLastGitOutput);
 $('status-text').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openLogs(); }
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showLastGitOutput(); }
 });
 $('sb-zoom-in').addEventListener('click', () => applyZoom(zoomLevel + 1));
 $('sb-zoom-out').addEventListener('click', () => applyZoom(zoomLevel - 1));

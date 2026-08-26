@@ -448,11 +448,24 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   akan kosong selama push berlangsung, dan yang ditunggui orang adalah dialog
   kosong. Kemajuan selama aksi berjalan sudah ditangani label tombol dan status
   bar
-- **Hanya saat berhasil.** Kegagalan sudah punya dialognya sendiri
-  (`showFailure`) yang menampilkan seluruh keluaran git; membukanya di sini juga
-  berarti dua salinan teks yang sama, satu di belakang yang lain
-- Baris status di pojok kiri bawah kini bisa diklik — ia sudah menampilkan
-  kalimat terakhir dari git, jadi mengkliknya meminta sisanya
+- **Satu dialog untuk keduanya.** Sebelumnya kegagalan punya dialog sendiri
+  (`showFailure`) yang isinya sama tapi bentuknya lain. Dialog itu dihapus:
+  pembaca cukup mengenali satu jendela sebagai "apa kata git", bukan dua yang
+  mirip tapi berperilaku beda. Kegagalan hanya mengganti judulnya jadi
+  *"Push failed"* dan mewarnai barisnya
+- **Kegagalan selalu muncul, apa pun saklarnya.** Itu satu-satunya hasil yang
+  pembaca wajib tahu; saklarnya mengatur keberhasilan yang sunyi
+- Pojok kiri bawah punya glif terminal di sebelah baris status, dan keduanya
+  membuka dialog yang sama. Glifnya ada karena kontrol yang cuma muncul di bawah
+  kursor adalah kontrol yang tidak ditemukan siapa pun
+- `lastRun` dicatat saat aksi **dimulai**, bukan dicari belakangan: penyegaran
+  sesudahnya menembakkan belasan perintah baca-saja, dan tanpa penanda itu yang
+  terbaru bukan yang diminta
+- `config` dan `remote` sengaja tidak ikut disimpan walau keduanya bisa menulis.
+  Bentuk tulisnya tidak mengatakan apa-apa (`git config user.email x` diam), dan
+  bentuk bacanya menjawab dengan nilai — jadi menyimpannya mengumpulkan alamat
+  surel dan URL, bukan narasi. Terukur: sebelum diperbaiki, klik pojok kiri
+  bawah membuka dialog berisi `git config --local user.email`
 
 **Membuka repositori lewat baris perintah**
 - Kedua berkas desktop menulis `Exec=gitbraid %U` sejak rilis pertama, dan

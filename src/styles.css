@@ -1910,6 +1910,12 @@ textarea {
    activity log because output lines are short and a wide column makes them
    drift apart. */
 .gitout-card { max-width: 760px; }
+/* A failed action says so in its own title rather than in a second window. */
+#gitout-title.is-bad { color: var(--del-ink); }
+.go-out.bad { color: var(--del-ink); }
+/* The glyph beside the status line, quieter than the ones on the right because
+   the words next to it already carry the message. */
+.sb-out { margin-right: 2px; }
 .gitout-body {
   margin: 0;
   padding: 10px 12px 14px;
@@ -3619,23 +3625,6 @@ mark {
 .modal-field input:focus { border-color: var(--accent); outline: none; }
 .modal-field .with-button { display: flex; gap: .45em; }
 .modal-field .with-button input[type="text"] { flex: 1; min-width: 0; }
-/* What git actually printed. Monospace because it is output, scrollable because
-   a rejected push can run to a dozen lines, and selectable because the first
-   thing anyone does with an error is paste it somewhere. */
-.fail-out {
-  max-height: 220px;
-  padding: 9px 10px;
-  overflow: auto;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  font-family: var(--mono);
-  font-size: 11.5px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  color: var(--text-dim);
-  user-select: text;
-}
 
 .modal-note {
   margin: .15em 0 0;

@@ -125,8 +125,12 @@ const MUTATES = new Set([
   'apply', 'clean', 'am', 'init', 'gc', 'prune',
 ]);
 
-/* These five both read and write, and the reading forms run constantly. */
-const SOMETIMES = new Set(['stash', 'branch', 'tag', 'remote', 'config']);
+/* These three both read and write, and the reading forms run constantly.
+   `config` and `remote` are deliberately not among them: their writing forms
+   say nothing at all (`git config user.email x` prints no line), while their
+   reading forms answer with a value — so keeping their output collects
+   email addresses and URLs and no narration whatsoever. */
+const SOMETIMES = new Set(['stash', 'branch', 'tag']);
 const LISTING = new Set(['list', '-l', '--list', '--format', '--get', '--get-all',
   '--get-regexp', '-v', '--verbose', '--points-at', '--merged', '--no-merged']);
 
