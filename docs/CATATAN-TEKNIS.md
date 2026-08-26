@@ -486,6 +486,11 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   satu; SourceTree membiarkan daftarnya polos dan hanya kolom grafnya yang
   berwarna. Mempertahankan garis-garis itu akan jadi satu-satunya hal yang
   membuat preset ini tidak menyerupai namanya
+- **Lebar lajur diturunkan lagi ke 13px**, dan `PAD_X` — jarak sebelum lajur
+  pertama — berhenti jadi konstanta agar ikut menyempit ke 11. Kolom grafnya
+  menjadi 74px. Sudut kemiringannya menyesuaikan sendiri: `drop` dibatasi
+  `LANE_W / 2`, jadi lajur yang lebih rapat menghasilkan kemiringan yang lebih
+  tegak tanpa angka tambahan
 - **Lalu radius kecil itu sendiri ternyata salah arah.** Radius 4 mengubah tiap
   perpindahan lajur jadi **kurung siku** — persis satu hal yang tidak pernah
   dilakukan graf SourceTree. Ia meninggalkan lajur secara **miring** dan
