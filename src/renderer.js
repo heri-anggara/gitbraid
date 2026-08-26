@@ -5393,8 +5393,13 @@ const STYLE_PRESETS = {
   /* Its graph keeps a column of its own, narrow, with small solid dots and thin
      lines; the branch and tag pills sit in front of the subject in the column
      SourceTree calls Description. Rows are a shade tighter than GitBraid's. */
-  sourcetree: { label: 'SourceTree', join: 'curved', rowH: 28, lane: 18,
-                dot: 4, stroke: 2, corner: 4, inline: true },
+  /* A slant, not a corner. A tight radius turned every lane change into a
+     square bracket, which is the one thing SourceTree's graph never does: it
+     leaves a lane on a diagonal and picks the next one up on the way down. The
+     corner figure is what that diagonal is allowed to fall through — about
+     three-quarters of a row, which sets the angle. */
+  sourcetree: { label: 'SourceTree', join: 'diagonal', rowH: 28, lane: 18,
+                dot: 4, stroke: 2, corner: 11, inline: true },
 };
 
 /* The graph's dials and the list's row height are two halves of one setting:
