@@ -1920,6 +1920,28 @@ textarea {
    progress counters rather than its answer, and a minimum height keeps the
    dialog from growing line by line under the reader's eyes. */
 .go-live { min-height: 120px; color: var(--text-dim); }
+
+/* ── branch names beside the subject ───────────────────────────── */
+/* The pills sit in the message cell, so the cell has to lay them out in a row
+   with the text rather than let them stack. Baseline alignment keeps a pill
+   from riding above the words it belongs to. */
+.refs-inline .c-msg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+/* The subject takes what is left and gives way first: a long branch name should
+   not be the thing that gets cut. */
+.refs-inline .c-msg-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.refs-inline .c-msg .pill { flex: none; }
+/* Body text is a second line's worth of detail and has no room left here. */
+.refs-inline .c-msg-body { display: none; }
 .gitout-body {
   margin: 0;
   padding: 10px 12px 14px;

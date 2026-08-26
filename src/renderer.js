@@ -16,6 +16,7 @@ const PREF_DEFAULTS = {
   commitLimit: 400,
   resumeLast: true,
   showGitOutput: false,       // open the activity log after an action
+  refsInline: false,          // branch pills before the subject, no column of their own
   graphStyle: 'curved',       // how a line crosses lanes
   rowDensity: 'comfortable',  // and how tall a history row is
   dateStyle: 'absolute',
@@ -1281,7 +1282,12 @@ const saveColumns = () => {
   } catch { /* ignore */ }
 };
 
-const visibleColumns = () => COLUMNS.filter((c) => !cols.hidden.has(c.key));
+/* With the pills inline the Branch / Tag column has nothing left to hold, so it
+   stands down rather than sitting there empty and 158px wide. It is not added to
+   cols.hidden: that set is the reader's own choice from the header menu, and
+   overwriting it would lose what they picked the moment they tried this. */
+const visibleColumns = () => COLUMNS.filter((c) =>
+  !cols.hidden.has(c.key) && !(prefs.refsInline && c.key === 'refs'));
 
 /** Back to the widths and the visibility a fresh install starts with. */
 function resetColumns() {
@@ -1780,7 +1786,14 @@ function renderRows() {
         `style="--lane:${lane}" title="${esc(full)}">` +
         rowCells({
           refs: `<span class="c-refs">${pills}${ghost}</span>`,
-          msg: `<span class="c-msg"><span class="c-msg-text">${highlight(c.subject, q)}</span>` +
+          /* The ghost badge follows the subject rather than leading it. It is
+             invisible until the row is hovered but takes its space either way,
+             and in front it shoved every subject right by the width of a branch
+             name nobody could see. Measured: rows with no visible pill started
+             at 438px where their neighbours started at 307. */
+          msg: `<span class="c-msg">${prefs.refsInline ? pills : ''}` +
+            `<span class="c-msg-text">${highlight(c.subject, q)}</span>` +
+            (prefs.refsInline ? ghost : '') +
             (c.body ? `<span class="c-msg-body">${highlight(c.body.split('\n')[0], q)}</span>` : '') +
             '</span>',
           author: `<span class="c-author">${authorChip(c)}${highlight(c.author, q)}</span>`,
@@ -4650,6 +4663,13 @@ function prefPages() {
         {
           title: 'History rows',
           fields: [
+            { kind: 'toggle', label: 'Branch names beside the subject',
+              help: 'Puts the branch and tag pills in front of the commit message and '
+                + 'retires the column that held them, the way SourceTree and SourceGit '
+                + 'lay a history out. The graph packs its lanes tighter to match.',
+              get: () => prefs.refsInline,
+              set: (v) => { prefs.refsInline = v; savePrefs(); applyGraphLook();
+                applyColumns(); if (state.repo) renderHistory(); } },
             { kind: 'select', label: 'Graph style',
               options: [['curved', 'Curved — round bends'],
                         ['angular', 'Angular — square corners'],
@@ -5362,7 +5382,10 @@ $('logs-copy').addEventListener('click', async () => {
 function applyGraphLook() {
   window.Graph.setStyle(prefs.graphStyle);
   window.Graph.setDensity(prefs.rowDensity);
+  // A strip beside the subject rather than a column of its own: tighter.
+  if (prefs.refsInline) window.Graph.setLaneWidth(12);
   document.documentElement.style.setProperty('--row-h', `${window.Graph.ROW_H}px`);
+  $('app').classList.toggle('refs-inline', prefs.refsInline);
 }
 
 function renderZoomLevel() {

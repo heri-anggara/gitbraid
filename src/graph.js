@@ -35,6 +35,14 @@
     ROW_H = DENSITIES[name] || DENSITIES.comfortable;
   }
 
+  /* Lane width is the layout's to set, not the style's: with the branch pills
+     moved in beside the subject, the graph is a narrow strip at the left of the
+     row and packs its lanes tighter than it would in a column of its own.
+     Called after setStyle, which has just written the style's own width. */
+  function setLaneWidth(px) {
+    if (px) LANE_W = px;
+  }
+
   // Lane colours, picked to stay legible on both the light and dark ground.
   const LANE_COLORS = [
     '#3b7fe0', // blue
@@ -290,7 +298,7 @@
   /* Getters rather than copies: the renderer reads Graph.ROW_H on every scroll
      and would keep the value it was given at load otherwise. */
   window.Graph = {
-    layout, render, laneColor, setStyle, setDensity, PAD_X,
+    layout, render, laneColor, setStyle, setDensity, setLaneWidth, PAD_X,
     styles: Object.keys(STYLES),
     densities: Object.keys(DENSITIES),
     get ROW_H() { return ROW_H; },

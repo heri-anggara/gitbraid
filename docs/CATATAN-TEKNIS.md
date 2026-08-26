@@ -427,6 +427,23 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Nama cabang di samping subjek**
+- Susunan yang dipakai SourceTree dan SourceGit berbeda **secara struktural**,
+  bukan sekadar bentuk garis: tidak ada kolom Branch/Tag terpisah sama sekali.
+  Label menempel di depan pesan commit, dan kolom graf jadi jalur sempit
+- Kolom `refs` mundur sendiri saat mode ini menyala, **tanpa** dimasukkan ke
+  `cols.hidden` — himpunan itu milik pilihan pembaca dari menu klik-kanan
+  header, dan menulisinya akan menghapus apa yang mereka pilih
+- Lebar lajur jadi urusan susunan, bukan gaya: 12px di mode ini lawan 16–22px
+  saat graf punya kolom sendiri
+- **Badge hantu pindah ke belakang subjek.** Ia tak terlihat sampai kursor lewat
+  tapi tetap memakan ruang; di depan, ia mendorong tiap subjek sejauh lebar nama
+  cabang yang tak seorang pun bisa lihat. Terukur: baris tanpa pill terlihat
+  mulai di **438px** sementara tetangganya mulai di **307px**. Sesudah
+  dipindah, keduanya di 307
+- Subjeknya yang mengalah lebih dulu saat sempit (`text-overflow: ellipsis`),
+  bukan nama cabangnya — nama cabang yang terpotong separuh tidak berguna
+
 **Gaya graf dan kerapatan baris**
 - Seluruh identitas visual graf ternyata terkumpul di tujuh angka dan satu
   fungsi. `const` diubah jadi `let`, ditambah tabel gaya — tidak ada satu pun
