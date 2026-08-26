@@ -1937,6 +1937,26 @@ textarea {
    dialog from growing line by line under the reader's eyes. */
 .go-live { min-height: 120px; color: var(--text-dim); }
 
+/* ── the SourceTree preset ─────────────────────────────────────── */
+/* Its pills are squarer than GitBraid's and lean on a border rather than a
+   wash, which is what lets a row carry three of them without the colour
+   drowning the sentence they sit in front of. */
+.style-sourcetree .pill {
+  border-radius: 2px;
+  padding: 0 5px;
+  background: color-mix(in srgb, var(--pc) 12%, transparent);
+  border-color: color-mix(in srgb, var(--pc) 70%, transparent);
+}
+/* The checked-out branch keeps its solid fill — that is the one thing in the
+   column worth shouting, and both applications shout it. */
+.style-sourcetree .pill.current { background: var(--pc); border-color: var(--pc); }
+/* No lane wash across the rows. GitBraid stripes each row in its lane's colour,
+   which is how its graph and its list stay tied together; SourceTree leaves the
+   list plain and lets the graph column carry the colour on its own. Keeping the
+   stripes here would be the one thing that stopped this looking like what it is
+   named after. */
+.style-sourcetree #commit-list .commit-row { --lane-tint: 0%; }
+
 /* ── branch names beside the subject ───────────────────────────── */
 /* The pills sit in the message cell, so the cell has to lay them out in a row
    with the text rather than let them stack. Baseline alignment keeps a pill

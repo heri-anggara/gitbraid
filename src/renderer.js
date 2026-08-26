@@ -16,9 +16,7 @@ const PREF_DEFAULTS = {
   commitLimit: 400,
   resumeLast: true,
   showGitOutput: false,       // open the activity log after an action
-  refsInline: false,          // branch pills before the subject, no column of their own
-  graphStyle: 'curved',       // how a line crosses lanes
-  rowDensity: 'comfortable',  // and how tall a history row is
+  uiStyle: 'gitbraid',        // how the history reads: see STYLE_PRESETS
   dateStyle: 'absolute',
   toolbarLabels: true,
   ghostBadge: true,
@@ -1287,7 +1285,7 @@ const saveColumns = () => {
    cols.hidden: that set is the reader's own choice from the header menu, and
    overwriting it would lose what they picked the moment they tried this. */
 const visibleColumns = () => COLUMNS.filter((c) =>
-  !cols.hidden.has(c.key) && !(prefs.refsInline && c.key === 'refs'));
+  !cols.hidden.has(c.key) && !(refsAreInline() && c.key === 'refs'));
 
 /** Back to the widths and the visibility a fresh install starts with. */
 function resetColumns() {
@@ -1791,9 +1789,9 @@ function renderRows() {
              and in front it shoved every subject right by the width of a branch
              name nobody could see. Measured: rows with no visible pill started
              at 438px where their neighbours started at 307. */
-          msg: `<span class="c-msg">${prefs.refsInline ? pills : ''}` +
+          msg: `<span class="c-msg">${refsAreInline() ? pills : ''}` +
             `<span class="c-msg-text">${highlight(c.subject, q)}</span>` +
-            (prefs.refsInline ? ghost : '') +
+            (refsAreInline() ? ghost : '') +
             (c.body ? `<span class="c-msg-body">${highlight(c.body.split('\n')[0], q)}</span>` : '') +
             '</span>',
           author: `<span class="c-author">${authorChip(c)}${highlight(c.author, q)}</span>`,
@@ -4662,29 +4660,14 @@ function prefPages() {
         {
           title: 'History rows',
           fields: [
-            { kind: 'toggle', label: 'Branch names beside the subject',
-              help: 'Puts the branch and tag pills in front of the commit message and '
-                + 'retires the column that held them, the way SourceTree and SourceGit '
-                + 'lay a history out. The graph packs its lanes tighter to match.',
-              get: () => prefs.refsInline,
-              set: (v) => { prefs.refsInline = v; savePrefs(); applyGraphLook();
+            { kind: 'select', label: 'Style',
+              options: Object.entries(STYLE_PRESETS).map(([k, v]) => [k, v.label]),
+              help: 'How a history reads: the shape of the graph, how tall a row is, '
+                + 'and whether the branch and tag names keep a column of their own or '
+                + 'sit in front of the commit message.',
+              get: () => prefs.uiStyle,
+              set: (v) => { prefs.uiStyle = v; savePrefs(); applyGraphLook();
                 applyColumns(); if (state.repo) renderHistory(); } },
-            { kind: 'select', label: 'Graph style',
-              options: [['curved', 'Curved — round bends'],
-                        ['angular', 'Angular — square corners'],
-                        ['diagonal', 'Diagonal — slanted joins']],
-              help: 'How a line crosses from one lane to the next, and how heavy the '
-                + 'dots and lines are with it. The lanes themselves do not move.',
-              get: () => prefs.graphStyle,
-              set: (v) => { prefs.graphStyle = v; savePrefs(); applyGraphLook();
-                if (state.repo) renderHistory(); } },
-            { kind: 'select', label: 'Row height',
-              options: [['comfortable', 'Comfortable — 31px'], ['compact', 'Compact — 24px']],
-              help: 'Compact fits about a third more commits on a screen. It shortens '
-                + 'every row in the history, not only the graph column.',
-              get: () => prefs.rowDensity,
-              set: (v) => { prefs.rowDensity = v; savePrefs(); applyGraphLook();
-                if (state.repo) renderHistory(); } },
             { kind: 'select', label: 'Date and time',
               options: [['absolute', '08/17/2026 @ 10:55 PM'], ['relative', '2h ago']],
               help: 'How the Commit Date and Author Time columns are written.',
@@ -5394,17 +5377,43 @@ $('logs-copy').addEventListener('click', async () => {
 
 /* ═════ status bar ══════════════════════════════════════════════ */
 
+/* One name for a whole way of reading a history, rather than four dials the
+   reader has to combine correctly. Each preset says how a line crosses lanes,
+   how tall a row is, how wide a lane is, and whether the branch pills keep a
+   column of their own — the four together are what makes a history look like
+   one application rather than another.
+
+   Named after the applications they are drawn from, which is a promise worth
+   making here in a way it was not for the join shapes: these are meant to be
+   recognisable, and if one drifts from what it is named after that is a bug in
+   the preset rather than a bad name. */
+const STYLE_PRESETS = {
+  gitbraid:   { label: 'GitBraid', join: 'curved', rowH: 31, lane: 22,
+                dot: 8, stroke: 2.5, inline: false },
+  /* Its graph keeps a column of its own, narrow, with small solid dots and thin
+     lines; the branch and tag pills sit in front of the subject in the column
+     SourceTree calls Description. Rows are a shade tighter than GitBraid's. */
+  sourcetree: { label: 'SourceTree', join: 'curved', rowH: 28, lane: 18,
+                dot: 4, stroke: 2, inline: true },
+};
+
 /* The graph's dials and the list's row height are two halves of one setting:
    the SVG lays rows out from Graph.ROW_H and the list sizes them from --row-h,
    and a disagreement between the two shears the dots off their rows. */
 function applyGraphLook() {
-  window.Graph.setStyle(prefs.graphStyle);
-  window.Graph.setDensity(prefs.rowDensity);
-  // A strip beside the subject rather than a column of its own: tighter.
-  if (prefs.refsInline) window.Graph.setLaneWidth(12);
+  const st = STYLE_PRESETS[prefs.uiStyle] || STYLE_PRESETS.gitbraid;
+  window.Graph.setStyle(st.join);
+  window.Graph.setMetrics({ rowH: st.rowH, laneW: st.lane, dotR: st.dot, stroke: st.stroke });
   document.documentElement.style.setProperty('--row-h', `${window.Graph.ROW_H}px`);
-  $('app').classList.toggle('refs-inline', prefs.refsInline);
+  $('app').classList.toggle('refs-inline', st.inline);
+  for (const key of Object.keys(STYLE_PRESETS)) {
+    $('app').classList.toggle(`style-${key}`, prefs.uiStyle === key);
+  }
 }
+
+/** The preset decides whether the pills keep a column; nothing else reads it. */
+const refsAreInline = () =>
+  (STYLE_PRESETS[prefs.uiStyle] || STYLE_PRESETS.gitbraid).inline;
 
 function renderZoomLevel() {
   $('sb-zoom-level').textContent = `${Math.round(1.2 ** zoomLevel * 100)}%`;

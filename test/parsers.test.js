@@ -690,10 +690,19 @@ check('clean status has no entries', (() => {
 })());
 /* ── every graph style must still land its edges on the parent dot ─ */
 console.log('\ngraph styles');
+/* The metric sets the presets actually ship, plus an extreme of each, so a
+   preset added later cannot quietly break the one thing that must hold. */
+const METRICS = [
+  { rowH: 31, laneW: 22, dotR: 8, stroke: 2.5 },     // GitBraid
+  { rowH: 28, laneW: 18, dotR: 4, stroke: 2 },       // SourceTree
+  { rowH: 18, laneW: 9, dotR: 2.5, stroke: 1 },      // tighter than any preset
+  { rowH: 48, laneW: 34, dotR: 12, stroke: 4 },      // looser than any preset
+];
+
 for (const style of Graph.styles) {
   Graph.setStyle(style);
-  for (const density of Graph.densities) {
-    Graph.setDensity(density);
+  for (const m of METRICS) {
+    Graph.setMetrics(m);
     const rowH = Graph.ROW_H;
     const laneW = Graph.LANE_W;
     const s2 = Graph.render(layout, idx);
@@ -717,12 +726,12 @@ for (const style of Graph.styles) {
         if (!hit) land = false;
       }
     });
-    check(`${style}/${density}: every edge lands on its parent`, land);
+    check(`${style} at ${m.rowH}/${m.laneW}: every edge lands on its parent`, land);
   }
 }
 // Leave the module the way the application boots it.
 Graph.setStyle('curved');
-Graph.setDensity('comfortable');
+Graph.setMetrics({ rowH: 31, laneW: 22, dotR: 8, stroke: 2.5 });
 
 check('the three styles differ in shape', (() => {
   const shape = (st) => { Graph.setStyle(st); return Graph.render(layout, idx); };
@@ -731,11 +740,21 @@ check('the three styles differ in shape', (() => {
   return a !== b && b !== c && a !== c && a.includes('A') && !b.includes(' A');
 })());
 
-check('compact really is shorter', (() => {
-  Graph.setDensity('compact');
-  const short = Graph.ROW_H;
-  Graph.setDensity('comfortable');
-  return short < Graph.ROW_H;
+check('metrics take, and the avatar follows the dot', (() => {
+  Graph.setMetrics({ rowH: 28, laneW: 18, dotR: 4, stroke: 2 });
+  const tight = Graph.ROW_H === 28 && Graph.LANE_W === 18 && Graph.DOT_R === 4;
+  // A dot this small is drawn without a face, whatever the preference says.
+  const noFace = !Graph.render(layout, idx, { avatarFor: () => 'x.png' }).includes('<image');
+  Graph.setMetrics({ rowH: 31, laneW: 22, dotR: 8, stroke: 2.5 });
+  const face = Graph.render(layout, idx, { avatarFor: () => 'x.png' }).includes('<image');
+  return tight && noFace && face;
+})());
+
+check('a partial metric leaves the rest alone', (() => {
+  Graph.setMetrics({ rowH: 40 });
+  const kept = Graph.LANE_W === 22 && Graph.DOT_R === 8;
+  Graph.setMetrics({ rowH: 31 });
+  return kept && Graph.ROW_H === 31;
 })());
 
 check('an unknown style falls back rather than breaking', (() => {
@@ -1095,7 +1114,9 @@ console.log('\nwhat a stash is holding');
   const graphSrc = fs.readFileSync(path.join(__dirname, '..', 'src/graph.js'), 'utf8');
   check('the graph draws a stash as a broken ring, not a disc',
     /stash\s*\n?\s*\? ` fill-opacity="\.14"[^`]*stroke-dasharray="2\.5 2\.5"`/.test(graphSrc));
-  check('and puts no face on it', /pending \|\| stash \? null : avatarFor/.test(graphSrc));
+  // The condition has grown a third term since; what matters is that a stash
+  // is still one of the things that stops a face being drawn.
+  check('and puts no face on it', /pending \|\| stash[^?]*\? null : avatarFor/.test(graphSrc));
   /* Said in the bar that already labels the panel, rather than on a line of its
      own: one word does not need a row to itself. */
   check('the panel bar says which of the two it is showing',
