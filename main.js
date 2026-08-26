@@ -105,7 +105,56 @@ function reasonLine(text) {
   );
 }
 
-function recordGit(cwd, args, ms, stderr, code) {
+/* The first argument that is the command rather than an option. `-c` and `-C`
+   each swallow the argument after them, so skipping every dash is not enough. */
+function gitVerb(args) {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '-c' || args[i] === '-C') { i++; continue; }
+    if (!args[i].startsWith('-')) return args[i];
+  }
+  return null;
+}
+
+/* Whose output is worth keeping. What git says while fetching, merging or
+   pushing is narration written to be read; what `git log` and `git status` say
+   is data this application parses and throws away. Keeping both would hold tens
+   of megabytes and bury the interesting lines among them. */
+const MUTATES = new Set([
+  'fetch', 'pull', 'push', 'clone', 'merge', 'rebase', 'cherry-pick', 'revert',
+  'reset', 'commit', 'checkout', 'switch', 'restore', 'add', 'rm', 'mv',
+  'apply', 'clean', 'am', 'init', 'gc', 'prune',
+]);
+
+/* These five both read and write, and the reading forms run constantly. */
+const SOMETIMES = new Set(['stash', 'branch', 'tag', 'remote', 'config']);
+const LISTING = new Set(['list', '-l', '--list', '--format', '--get', '--get-all',
+  '--get-regexp', '-v', '--verbose', '--points-at', '--merged', '--no-merged']);
+
+const OUT_MAX_LINES = 120;
+const OUT_MAX_CHARS = 8000;
+
+function keepsOutput(args, code) {
+  // A failure is worth reading whatever ran, including the read-only commands.
+  if (code) return true;
+  const verb = gitVerb(args);
+  if (!verb) return false;
+  if (MUTATES.has(verb)) return true;
+  if (!SOMETIMES.has(verb)) return false;
+  return !args.some((a) => LISTING.has(a) || a.startsWith('--format='));
+}
+
+function trimOutput(text) {
+  const clean = String(text || '').replace(/\r/g, '\n').trim();
+  if (!clean) return null;
+  const lines = clean.split('\n');
+  const cut = lines.length > OUT_MAX_LINES
+    ? [...lines.slice(0, OUT_MAX_LINES), `… ${lines.length - OUT_MAX_LINES} more lines`]
+    : lines;
+  const joined = cut.join('\n');
+  return joined.length > OUT_MAX_CHARS ? `${joined.slice(0, OUT_MAX_CHARS)}\n… truncated` : joined;
+}
+
+function recordGit(cwd, args, ms, stderr, code, output) {
   const first = reasonLine(stderr);
   gitLog.push({
     at: Date.now(),
@@ -114,6 +163,7 @@ function recordGit(cwd, args, ms, stderr, code) {
     ms,
     error: first ? first.slice(0, 200) : null,
     code: code || null,
+    out: keepsOutput(args, code) ? trimOutput(output) : null,
   });
   if (gitLog.length > LOG_MAX) gitLog.splice(0, gitLog.length - LOG_MAX);
 }
@@ -140,11 +190,12 @@ function git(cwd, args, extraEnv = null) {
           const e = new Error(said || (err.message || '').trim());
           e.stderr = stderr;
           e.stdout = stdout;
-          recordGit(cwd, args, Date.now() - started, said, err.code ?? 1);
+          recordGit(cwd, args, Date.now() - started, said, err.code ?? 1,
+            `${stdout || ''}\n${stderr || ''}`);
           reject(e);
           return;
         }
-        recordGit(cwd, args, Date.now() - started, null, 0);
+        recordGit(cwd, args, Date.now() - started, null, 0, `${stdout || ''}\n${stderr || ''}`);
         resolve(stdout);
       }
     );
@@ -190,14 +241,15 @@ function gitProgress(cwd, args, onLine) {
       for (const line of parts) if (line.trim()) onLine(line.trim());
     });
     child.on('error', (e) => {
-      recordGit(cwd, args, Date.now() - started, e.message, 1);
+      recordGit(cwd, args, Date.now() - started, e.message, 1, e.message);
       reject(e);
     });
     child.on('close', (code) => {
       if (pending.trim()) onLine(pending.trim());
       // These commands belong in the activity log as much as any other; the
       // progress chatter is on stderr, so only a failure's tail is the reason.
-      recordGit(cwd, args, Date.now() - started, code === 0 ? null : (err.trim() || out.trim()), code);
+      recordGit(cwd, args, Date.now() - started,
+        code === 0 ? null : (err.trim() || out.trim()), code, `${out}\n${err}`);
       if (code !== 0) reject(new Error(err.trim() || out.trim() || `git exited with ${code}`));
       else resolve(out);
     });

@@ -427,6 +427,33 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Melihat apa yang dikatakan git**
+- **Keluaran git tidak pernah disimpan.** `recordGit` hanya mencatat perintah,
+  durasi, dan kode keluarnya; pada keberhasilan `stdout` dibuang, pada kegagalan
+  hanya baris pertama yang dipotong 200 karakter. Jadi tidak ada apa pun untuk
+  ditampilkan sampai sekarang
+- **Yang disimpan hanya perintah yang mengubah sesuatu** — fetch, pull, push,
+  merge, rebase, commit, stash, checkout dan seterusnya. Yang membaca saja
+  (`status`, `log`, `diff`, `rev-parse`) tidak: perintah itu jalan
+  terus-menerus dan keluarannya adalah **data** yang diurai lalu dibuang, bukan
+  narasi untuk dibaca. Menyimpan keduanya berarti menahan puluhan megabita dan
+  mengubur baris yang menarik di antaranya. Lima kata kerja yang bisa keduanya
+  — `stash`, `branch`, `tag`, `remote`, `config` — dikenali dari bendera
+  daftarnya (`list`, `-l`, `--format`, `--get`). Kegagalan **selalu** disimpan,
+  kata kerja apa pun
+- `-c` dan `-C` masing-masing menelan argumen sesudahnya, jadi mencari kata
+  kerja dengan melewati setiap tanda hubung tidak cukup
+- Tiap entri dibatasi 120 baris dan 8.000 karakter
+- **Dialognya muncul setelah aksi selesai, bukan saat mulai.** Dibuka di awal ia
+  akan kosong selama push berlangsung, dan yang ditunggui orang adalah dialog
+  kosong. Kemajuan selama aksi berjalan sudah ditangani label tombol dan status
+  bar
+- **Hanya saat berhasil.** Kegagalan sudah punya dialognya sendiri
+  (`showFailure`) yang menampilkan seluruh keluaran git; membukanya di sini juga
+  berarti dua salinan teks yang sama, satu di belakang yang lain
+- Baris status di pojok kiri bawah kini bisa diklik — ia sudah menampilkan
+  kalimat terakhir dari git, jadi mengkliknya meminta sisanya
+
 **Membuka repositori lewat baris perintah**
 - Kedua berkas desktop menulis `Exec=gitbraid %U` sejak rilis pertama, dan
   argumennya tidak pernah dibaca siapa pun — `gitbraid .` membuka halaman depan

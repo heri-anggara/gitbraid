@@ -15,6 +15,7 @@ const PREF_DEFAULTS = {
   autoPrune: true,
   commitLimit: 400,
   resumeLast: true,
+  showGitOutput: false,       // open the activity log after an action
   dateStyle: 'absolute',
   toolbarLabels: true,
   ghostBadge: true,
@@ -4377,6 +4378,8 @@ async function gitAction(id, verb, fn, done) {
   if (action) { setStatus('Another Git command is still running', 'error'); return; }
   const label = toolLabel(id);
   const startedOn = activeId;
+  // Everything git writes from here on belongs to this action.
+  const startedAt = Date.now();
   action = { id, tab: startedOn, label: label ? label.textContent : '' };
 
   if (label) label.textContent = verb;
@@ -4411,6 +4414,10 @@ async function gitAction(id, verb, fn, done) {
   // spinner for attention. Not awaited: the caller still has a refresh to do,
   // and the repository should be redrawn behind the explanation, not after it.
   if (!ok && lastFailure && activeId === startedOn) showFailure(verb, lastFailure);
+  /* Only on success, and only for the tab still in front. A failure already
+     puts everything git said in a dialog of its own, so doing it here too
+     would stack a second copy of the same text behind the first. */
+  if (ok && prefs.showGitOutput && activeId === startedOn) await showGitOutput(verb, startedAt);
   return ok;
 }
 
@@ -4605,6 +4612,12 @@ function prefPages() {
               button: 'Open activity log',
               help: 'The last 400 git commands GitBraid ran, with how long each took.',
               run: () => { closePrefs(); openLogs(); } },
+            { kind: 'toggle', label: 'Show git output after an action',
+              help: 'Opens the activity log when a fetch, pull, push, merge or the like '
+                + 'succeeds, so you can read what git said. A failure already shows '
+                + 'everything git said in a dialog, with or without this.',
+              get: () => prefs.showGitOutput,
+              set: (v) => { prefs.showGitOutput = v; savePrefs(); } },
           ],
         },
       ],
@@ -5147,15 +5160,20 @@ async function openLogs() {
         const clock = `${String(t.getHours()).padStart(2, '0')}:` +
           `${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`;
         // A non-zero exit with nothing on stderr gets a quiet marker, not a red line.
-        const cls = r.error ? 'failed' : r.code ? 'quiet' : '';
+        const state = r.error ? 'failed' : r.code ? 'quiet' : '';
+        /* Only the commands that narrate keep their output — a fetch or a merge,
+           not the `git status` behind every refresh. Those rows can be opened;
+           the rest have nothing underneath and stay flat. */
+        const cls = [state, r.out ? 'has-out' : ''].filter(Boolean).join(' ');
         return (
-          `<li${cls ? ` class="${cls}"` : ''}>` +
+          `<li${cls ? ` class="${cls}"` : ''}${r.out ? ' tabindex="0"' : ''}>` +
           `<span class="lg-time">${clock}</span>` +
-          `<span class="lg-cmd">${esc(r.command)}` +
+          `<span class="lg-cmd">${r.out ? '<span class="lg-chev">▸</span>' : ''}${esc(r.command)}` +
           (!r.error && r.code ? `<span class="lg-code">exit ${r.code}</span>` : '') +
           '</span>' +
           `<span class="lg-ms">${r.ms} ms</span>` +
           (r.error ? `<span class="lg-err">${esc(r.error)}</span>` : '') +
+          (r.out ? `<pre class="lg-out">${esc(r.out)}</pre>` : '') +
           '</li>'
         );
       }).join('')
@@ -5164,6 +5182,56 @@ async function openLogs() {
 }
 
 const closeLogs = () => { $('logs').hidden = true; };
+
+/* ═════ what one command said ═══════════════════════════════════ */
+
+/* The activity log is the record of every command GitBraid ran. This is the
+   output of the one you just asked for, laid out the way a terminal would have
+   laid it out — the command, then what it answered. */
+let gitOutText = '';
+
+async function showGitOutput(verb, since) {
+  const rows = await call('app:log');
+  if (!rows) return;
+  /* Newest first from main, and only the ones this action wrote. A refresh
+     fires a dozen read-only commands right afterwards; none of them kept
+     output, so none of them can appear here. */
+  const mine = rows.filter((r) => r.at >= since && r.out).reverse();
+  if (!mine.length) return;
+
+  gitOutText = mine.map((r) => `$ ${r.command}\n${r.out}`).join('\n\n');
+  $('gitout-title').textContent = verb;
+  $('gitout-sub').textContent = mine.length === 1
+    ? '1 command' : `${mine.length} commands`;
+  $('gitout-body').innerHTML = mine.map((r) =>
+    `<p class="go-cmd">$ ${esc(r.command)}</p>` +
+    `<pre class="go-out">${esc(r.out)}</pre>`).join('');
+  $('gitout').hidden = false;
+  $('gitout-body').scrollTop = 0;
+}
+
+const closeGitOutput = () => { $('gitout').hidden = true; };
+
+$('gitout-close').addEventListener('click', closeGitOutput);
+$('gitout').addEventListener('click', (e) => { if (e.target === $('gitout')) closeGitOutput(); });
+$('gitout-copy').addEventListener('click', () => {
+  navigator.clipboard.writeText(gitOutText);
+  setStatus('Output copied', 'ok');
+});
+
+/* One listener on the list rather than one per row: the list is redrawn whole
+   every time it opens, and per-row listeners would be rebound with it. */
+$('logs-list').addEventListener('click', (e) => {
+  const row = e.target.closest('li.has-out');
+  if (row) row.classList.toggle('open');
+});
+$('logs-list').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const row = e.target.closest('li.has-out');
+  if (!row) return;
+  e.preventDefault();
+  row.classList.toggle('open');
+});
 
 $('logs-close').addEventListener('click', closeLogs);
 $('logs').addEventListener('click', (e) => { if (e.target === $('logs')) closeLogs(); });
@@ -5177,7 +5245,9 @@ $('logs-copy').addEventListener('click', async () => {
   // The pasted log carries the same three states the screen shows.
   navigator.clipboard.writeText(rows.map((r) => {
     const tail = r.error ? `  !! ${r.error}` : r.code ? `  (exit ${r.code})` : '';
-    return `${new Date(r.at).toISOString()}  ${r.ms}ms  ${r.command}${tail}`;
+    const head = `${new Date(r.at).toISOString()}  ${r.ms}ms  ${r.command}${tail}`;
+    // Indented under its command, so a pasted log still reads as one thing.
+    return r.out ? `${head}\n${r.out.split('\n').map((l) => `    ${l}`).join('\n')}` : head;
   }).join('\n'));
   setStatus('Activity log copied', 'ok');
 });
@@ -5190,6 +5260,13 @@ function renderZoomLevel() {
 
 $('sb-term').addEventListener('click', toggleTerm);
 $('sb-logs').addEventListener('click', openLogs);
+/* The status line is the last thing git said, so clicking it asks for the rest.
+   It sits at the far left of the bar, which is where the eye already is when a
+   command has just finished. */
+$('status-text').addEventListener('click', openLogs);
+$('status-text').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openLogs(); }
+});
 $('sb-zoom-in').addEventListener('click', () => applyZoom(zoomLevel + 1));
 $('sb-zoom-out').addEventListener('click', () => applyZoom(zoomLevel - 1));
 $('sb-zoom-level').addEventListener('click', () => applyZoom(0));
@@ -6873,7 +6950,7 @@ $('chk-amend').addEventListener('change', async () => {
 
 /* The overlays that own the keyboard while they are up — the same set the
    Esc chain below backs out of, in the same order. */
-const KEY_BLOCKERS = ['modal', 'ctxmenu', 'logs', 'prefs', 'about', 'notes', 'fhist'];
+const KEY_BLOCKERS = ['modal', 'ctxmenu', 'gitout', 'logs', 'prefs', 'about', 'notes', 'fhist'];
 
 /* keyboard — Ctrl+O/N/I, the zoom keys, F5 and the panel toggles are all
    menu accelerators now, handled in the main process. */
@@ -6881,6 +6958,7 @@ document.addEventListener('keydown', (e) => {
   // Esc backs out of whatever is covering the history, in front-to-back order.
   if (e.key === 'Escape' && $('modal').hidden) {
     if (!$('ctxmenu').hidden) { closeContextMenu(); return; }
+    if (!$('gitout').hidden) { closeGitOutput(); return; }
     if (!$('logs').hidden) { closeLogs(); return; }
     if (!$('prefs').hidden) { closePrefs(); return; }
     if (!$('about').hidden) { closeAbout(); return; }
