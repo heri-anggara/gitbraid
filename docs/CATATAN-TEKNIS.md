@@ -427,6 +427,34 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Gaya graf dan kerapatan baris**
+- Seluruh identitas visual graf ternyata terkumpul di tujuh angka dan satu
+  fungsi. `const` diubah jadi `let`, ditambah tabel gaya — tidak ada satu pun
+  logika penempatan lajur yang tersentuh
+- **Ketiga bentuk sambungan memakai satu fungsi yang sama.** Masing-masing
+  memakan tinggi vertikal `drop` yang sama dan berakhir di `(x2, y1 + drop)`,
+  jadi geometri di sekitarnya tidak perlu tahu mana yang sedang dipakai — hanya
+  bagian tengahnya yang berbeda. `curve` dua busur seperempat, `angle` dua garis
+  siku, `diagonal` satu garis miring
+- Aturan lama tetap dipenuhi: setiap perintah yang dikeluarkan berakhir pada
+  pasangan `x y` eksplisit, jadi dua angka terakhir sebuah `d` selalu ujung
+  jalur itu — yang menjadi sandaran ujinya
+- **`ROW_H` diekspor sebagai getter, bukan salinan.** Renderer membacanya pada
+  tiap gulir; sebuah salinan akan membeku pada nilai saat dimuat
+- **Dua sumber kebenaran disatukan.** `ROW_H = 31` di `graph.js` dan
+  `--row-h: 31px` di CSS selama ini berdiri sendiri-sendiri; kalau keduanya
+  berselisih, titik graf tergeser dari barisnya. `applyGraphLook()` menulis yang
+  kedua dari yang pertama
+- Kerapatan **compact** memendekkan seluruh baris riwayat, bukan cuma kolom
+  graf — 24px lawan 31px, sekitar sepertiga lebih banyak commit per layar
+- Gaya dinamai menurut **bentuknya**, bukan menurut aplikasi lain. Menamainya
+  "SourceTree" berarti menjanjikan kemiripan piksel yang tidak diusahakan, dan
+  akan jadi bohong begitu aplikasi itu berubah
+- Uji bertambah 9: tiap gaya dikali tiap kerapatan diperiksa masih mendaratkan
+  setiap tepi tepat di titik induknya, ditambah pemeriksaan bahwa ketiganya
+  memang berbeda bentuk, bahwa compact benar-benar lebih pendek, dan bahwa nama
+  gaya yang tidak dikenal jatuh ke bawaan alih-alih rusak
+
 **Melihat apa yang dikatakan git**
 - **Keluaran git tidak pernah disimpan.** `recordGit` hanya mencatat perintah,
   durasi, dan kode keluarnya; pada keberhasilan `stdout` dibuang, pada kegagalan
