@@ -16,6 +16,8 @@ const PREF_DEFAULTS = {
   commitLimit: 400,
   resumeLast: true,
   showGitOutput: false,       // open the activity log after an action
+  graphStyle: 'curved',       // how a line crosses lanes
+  rowDensity: 'comfortable',  // and how tall a history row is
   dateStyle: 'absolute',
   toolbarLabels: true,
   ghostBadge: true,
@@ -4511,6 +4513,8 @@ async function resolveConflict(filePath, side) {
 /** Push the stored preferences into the places that actually read them. */
 function applyPrefs() {
   const root = document.documentElement;
+  // Before anything measures a row: boot comes through here too.
+  applyGraphLook();
   root.style.setProperty('--diff-size', `${prefs.diffFontSize}px`);
   root.style.setProperty('--diff-tab', String(prefs.tabSize));
   if (prefs.diffFont) root.style.setProperty('--diff-font', `"${prefs.diffFont}", var(--mono)`);
@@ -4646,6 +4650,22 @@ function prefPages() {
         {
           title: 'History rows',
           fields: [
+            { kind: 'select', label: 'Graph style',
+              options: [['curved', 'Curved — round bends'],
+                        ['angular', 'Angular — square corners'],
+                        ['diagonal', 'Diagonal — slanted joins']],
+              help: 'How a line crosses from one lane to the next, and how heavy the '
+                + 'dots and lines are with it. The lanes themselves do not move.',
+              get: () => prefs.graphStyle,
+              set: (v) => { prefs.graphStyle = v; savePrefs(); applyGraphLook();
+                if (state.repo) renderHistory(); } },
+            { kind: 'select', label: 'Row height',
+              options: [['comfortable', 'Comfortable — 31px'], ['compact', 'Compact — 24px']],
+              help: 'Compact fits about a third more commits on a screen. It shortens '
+                + 'every row in the history, not only the graph column.',
+              get: () => prefs.rowDensity,
+              set: (v) => { prefs.rowDensity = v; savePrefs(); applyGraphLook();
+                if (state.repo) renderHistory(); } },
             { kind: 'select', label: 'Date and time',
               options: [['absolute', '08/17/2026 @ 10:55 PM'], ['relative', '2h ago']],
               help: 'How the Commit Date and Author Time columns are written.',
@@ -5335,6 +5355,15 @@ $('logs-copy').addEventListener('click', async () => {
 });
 
 /* ═════ status bar ══════════════════════════════════════════════ */
+
+/* The graph's dials and the list's row height are two halves of one setting:
+   the SVG lays rows out from Graph.ROW_H and the list sizes them from --row-h,
+   and a disagreement between the two shears the dots off their rows. */
+function applyGraphLook() {
+  window.Graph.setStyle(prefs.graphStyle);
+  window.Graph.setDensity(prefs.rowDensity);
+  document.documentElement.style.setProperty('--row-h', `${window.Graph.ROW_H}px`);
+}
 
 function renderZoomLevel() {
   $('sb-zoom-level').textContent = `${Math.round(1.2 ** zoomLevel * 100)}%`;

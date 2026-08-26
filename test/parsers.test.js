@@ -688,6 +688,63 @@ check('clean status has no entries', (() => {
   const s = P.parseStatus('# branch.head main\0');
   return s.staged.length === 0 && s.unstaged.length === 0 && s.branch === 'main';
 })());
+/* ── every graph style must still land its edges on the parent dot ─ */
+console.log('\ngraph styles');
+for (const style of Graph.styles) {
+  Graph.setStyle(style);
+  for (const density of Graph.densities) {
+    Graph.setDensity(density);
+    const rowH = Graph.ROW_H;
+    const laneW = Graph.LANE_W;
+    const s2 = Graph.render(layout, idx);
+    const ends = [...s2.matchAll(/<path d="M([\d.]+) ([\d.]+)(.*?)"/g)].map((m) => {
+      const nums = m[3].match(/-?[\d.]+/g) || [];
+      return { start: { x: Number(m[1]), y: Number(m[2]) },
+               end: nums.length >= 2
+                 ? { x: Number(nums[nums.length - 2]), y: Number(nums[nums.length - 1]) } : null,
+               dashed: m[0].includes('dasharray') };
+    });
+    let land = true;
+    layout.rows.forEach((row, ci) => {
+      const from = { x: Graph.PAD_X + row.lane * laneW, y: ci * rowH + rowH / 2 };
+      for (const e of row.edges) {
+        const pi = idx.get(e.parent);
+        if (pi === undefined) continue;
+        const to = { x: Graph.PAD_X + layout.rows[pi].lane * laneW, y: pi * rowH + rowH / 2 };
+        const hit = ends.some((d) => !d.dashed
+          && Math.abs(d.start.x - from.x) < 0.6 && Math.abs(d.start.y - from.y) < 0.6
+          && d.end && Math.abs(d.end.x - to.x) < 0.6 && Math.abs(d.end.y - to.y) < 0.6);
+        if (!hit) land = false;
+      }
+    });
+    check(`${style}/${density}: every edge lands on its parent`, land);
+  }
+}
+// Leave the module the way the application boots it.
+Graph.setStyle('curved');
+Graph.setDensity('comfortable');
+
+check('the three styles differ in shape', (() => {
+  const shape = (st) => { Graph.setStyle(st); return Graph.render(layout, idx); };
+  const a = shape('curved'), b = shape('angular'), c = shape('diagonal');
+  Graph.setStyle('curved');
+  return a !== b && b !== c && a !== c && a.includes('A') && !b.includes(' A');
+})());
+
+check('compact really is shorter', (() => {
+  Graph.setDensity('compact');
+  const short = Graph.ROW_H;
+  Graph.setDensity('comfortable');
+  return short < Graph.ROW_H;
+})());
+
+check('an unknown style falls back rather than breaking', (() => {
+  Graph.setStyle('nonsense-style');
+  const ok = Graph.render(layout, idx).startsWith('<svg');
+  Graph.setStyle('curved');
+  return ok;
+})());
+
 check('layout survives an empty history', Graph.layout([]).rows.length === 0);
 check('single root commit renders', (() => {
   const l = Graph.layout([{ hash: 'x', parents: [] }]);

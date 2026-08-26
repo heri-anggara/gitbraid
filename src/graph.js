@@ -3,13 +3,37 @@
 (function () {
   'use strict';
 
-  const ROW_H = 31;
-  const LANE_W = 22;
+  /* Every one of these is a dial rather than a constant: the three styles below
+     are the same layout drawn with different numbers, and the row height is
+     shared with the commit list, which sizes its rows from --row-h. */
+  let ROW_H = 31;
+  let LANE_W = 22;
   const PAD_X = 16;
-  const DOT_R = 8;      // the coloured disc a commit sits on
-  const AVATAR_R = 6.5; // avatar clipped inside that disc
-  const CORNER = 9;     // radius of a lane-change bend
-  const STROKE = 2.5;
+  let DOT_R = 8;      // the coloured disc a commit sits on
+  let AVATAR_R = 6.5; // avatar clipped inside that disc
+  let CORNER = 9;     // radius of a lane-change bend
+  let STROKE = 2.5;
+  let JOIN = 'curve'; // how a line crosses from one lane to the next
+
+  /* Named for their shape rather than for another application. Calling one
+     "SourceTree" would promise a likeness this does not attempt, and would
+     become a lie the moment that application changed. */
+  const STYLES = {
+    curved:   { CORNER: 9, DOT_R: 8,   AVATAR_R: 6.5, STROKE: 2.5, LANE_W: 22, JOIN: 'curve' },
+    angular:  { CORNER: 9, DOT_R: 6,   AVATAR_R: 5,   STROKE: 1.8, LANE_W: 18, JOIN: 'angle' },
+    diagonal: { CORNER: 9, DOT_R: 5.5, AVATAR_R: 4.5, STROKE: 1.6, LANE_W: 16, JOIN: 'diagonal' },
+  };
+
+  const DENSITIES = { comfortable: 31, compact: 24 };
+
+  function setStyle(name) {
+    const st = STYLES[name] || STYLES.curved;
+    ({ CORNER, DOT_R, AVATAR_R, STROKE, LANE_W, JOIN } = st);
+  }
+
+  function setDensity(name) {
+    ROW_H = DENSITIES[name] || DENSITIES.comfortable;
+  }
 
   // Lane colours, picked to stay legible on both the light and dark ground.
   const LANE_COLORS = [
@@ -88,7 +112,14 @@
    * explicit "x y" pair, so the last two numbers of a `d` string are always
    * that path's endpoint. The test suite leans on this.
    */
-  function bend(x1, y1, x2, r) {
+  function bend(x1, y1, x2, drop) {
+    /* All three shapes eat the same `drop` of vertical space and finish at
+       (x2, y1 + drop), so the geometry around them never has to know which one
+       is in use — only the middle looks different. */
+    if (JOIN === 'diagonal') return ` L${x2} ${y1 + drop}`;
+    if (JOIN === 'angle') return ` L${x1} ${y1 + drop} L${x2} ${y1 + drop}`;
+
+    const r = drop / 2;
     const dir = x2 > x1 ? 1 : -1;
     // Turning down->across is counter-clockwise to the right, clockwise to
     // the left; the second corner turns the other way.
@@ -97,7 +128,7 @@
 
     let d = ` A${r} ${r} 0 0 ${sweepOut} ${x1 + dir * r} ${y1 + r}`;
     if (Math.abs(x2 - x1) > 2 * r) d += ` L${x2 - dir * r} ${y1 + r}`;
-    d += ` A${r} ${r} 0 0 ${sweepIn} ${x2} ${y1 + 2 * r}`;
+    d += ` A${r} ${r} 0 0 ${sweepIn} ${x2} ${y1 + drop}`;
     return d;
   }
 
@@ -112,18 +143,18 @@
     // Nothing to bend around, or a parent that sorted above its child.
     if (bends === 0 || span <= 0) return `M${cx} ${cy} L${px} ${py}`;
 
-    const r = Math.max(2, Math.min(CORNER, LANE_W / 2, span / (2 * bends)));
+    const drop = 2 * Math.max(2, Math.min(CORNER, LANE_W / 2, span / (2 * bends)));
     let d = `M${cx} ${cy}`;
     let cursor = cy;
 
     if (mx !== cx) {
-      d += bend(cx, cursor, mx, r);
-      cursor += 2 * r;
+      d += bend(cx, cursor, mx, drop);
+      cursor += drop;
     }
     if (px !== mx) {
-      const start = Math.max(cursor, py - 2 * r);
+      const start = Math.max(cursor, py - drop);
       if (start > cursor) d += ` L${mx} ${start}`;
-      d += bend(mx, start, px, r);
+      d += bend(mx, start, px, drop);
     } else if (py > cursor) {
       d += ` L${px} ${py}`;
     }
@@ -256,5 +287,14 @@
     );
   }
 
-  window.Graph = { layout, render, laneColor, ROW_H, LANE_W, PAD_X, DOT_R };
+  /* Getters rather than copies: the renderer reads Graph.ROW_H on every scroll
+     and would keep the value it was given at load otherwise. */
+  window.Graph = {
+    layout, render, laneColor, setStyle, setDensity, PAD_X,
+    styles: Object.keys(STYLES),
+    densities: Object.keys(DENSITIES),
+    get ROW_H() { return ROW_H; },
+    get LANE_W() { return LANE_W; },
+    get DOT_R() { return DOT_R; },
+  };
 })();
