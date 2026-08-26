@@ -4359,6 +4359,7 @@ async function gitAction(id, verb, fn, done) {
   // Everything git writes from here on belongs to this action.
   const startedAt = Date.now();
   lastRun = { title: verb, since: startedAt, failed: false };
+  if (prefs.showGitOutput) openGitOutputLive(verb);
   action = { id, tab: startedOn, label: label ? label.textContent : '' };
 
   if (label) label.textContent = verb;
@@ -4400,9 +4401,16 @@ async function gitAction(id, verb, fn, done) {
      reader has to be told about, and the switch is about the quiet successes.
      Either way only for the tab still in front — the other one refreshes itself
      when it comes back. */
+  gitOutLive = false;
   if (activeId === startedOn) {
+    /* The live pane held git's narration, which is stderr only. What was
+       recorded holds both streams, so the finished dialog replaces the running
+       one rather than adding to it — otherwise every line arrives twice. */
     if (!ok) await showGitOutput(`${verb} failed`, startedAt, { failed: true, fallback: lastFailure });
-    else if (prefs.showGitOutput) await showGitOutput(verb, startedAt);
+    else if (prefs.showGitOutput && !gitOutDismissed) await showGitOutput(verb, startedAt);
+    else if (prefs.showGitOutput) closeGitOutput();
+  } else if (prefs.showGitOutput) {
+    closeGitOutput();
   }
   return ok;
 }
@@ -4418,6 +4426,7 @@ window.gitbraid.on('repo:progress', (p) => {
     return;
   }
   tbProgress(p.percent);
+  appendGitOutputLine(p.text);
   const label = toolLabel(action.id);
   if (!label) return;
   if (p.phase) label.textContent = p.percent === null ? p.phase : `${p.phase} ${p.percent}%`;
@@ -4599,9 +4608,9 @@ function prefPages() {
               help: 'The last 400 git commands GitBraid ran, with how long each took.',
               run: () => { closePrefs(); openLogs(); } },
             { kind: 'toggle', label: 'Show git output after an action',
-              help: 'Opens the activity log when a fetch, pull, push, merge or the like '
-                + 'succeeds, so you can read what git said. A failure already shows '
-                + 'everything git said in a dialog, with or without this.',
+              help: 'Opens a window when an action starts and fills it as git talks, '
+                + 'then leaves the whole output there when it finishes. A failure '
+                + 'opens it either way — that is the one you cannot afford to miss.',
               get: () => prefs.showGitOutput,
               set: (v) => { prefs.showGitOutput = v; savePrefs(); } },
           ],
@@ -5182,6 +5191,53 @@ let gitOutText = '';
    for it. */
 let lastRun = null;
 
+/* Open and taking lines as git writes them. Cleared the moment the action ends,
+   because from then on the recorded output is the authority. */
+let gitOutLive = false;
+/* Closed by hand while it was still running. A success respects that and stays
+   shut; a failure reopens anyway, since that is the outcome nobody may miss. */
+let gitOutDismissed = false;
+
+/* git narrates fetch, pull, push and clone on stderr line by line. Everything
+   else this application runs answers in one go and finishes in milliseconds —
+   there is no stream to follow, only a result. */
+function openGitOutputLive(verb) {
+  gitOutLive = true;
+  gitOutDismissed = false;
+  liveHead = null;
+  gitOutText = '';
+  $('gitout-title').textContent = verb;
+  $('gitout-title').classList.remove('is-bad');
+  $('gitout-sub').textContent = 'Running…';
+  $('gitout-body').innerHTML = '<pre class="go-out go-live" id="gitout-live"></pre>';
+  $('gitout').hidden = false;
+}
+
+/* "remote: Compressing objects:  58% (36/62)" and the line before it are the
+   same line rewritten, and a terminal shows one of them. Comparing what is left
+   after the counter tells the two apart from a genuinely new line. */
+const counterHead = (line) => line.replace(/\s*\d+%.*$/, '').trim();
+
+let liveHead = null;
+
+function appendGitOutputLine(text) {
+  if (!gitOutLive) return;
+  const live = $('gitout-live');
+  if (!live) return;
+  const head = counterHead(text);
+  const lines = live.textContent ? live.textContent.split('\n') : [];
+  /* Replace rather than append while a counter climbs, so the pane reads the
+     way the terminal did instead of scrolling a hundred near-identical lines
+     past — and so the running view matches the finished one, which collapses
+     the same rewrites. */
+  if (head && head !== text && head === liveHead && lines.length) lines[lines.length - 1] = text;
+  else lines.push(text);
+  liveHead = head;
+  live.textContent = lines.join('\n');
+  const body = $('gitout-body');
+  body.scrollTop = body.scrollHeight;
+}
+
 function paintGitOutput(title, blocks, failed) {
   gitOutText = blocks
     .map((b) => (b.cmd ? `$ ${b.cmd}\n${b.out}` : b.out))
@@ -5234,7 +5290,10 @@ async function showLastGitOutput() {
     Boolean(newest.code));
 }
 
-const closeGitOutput = () => { $('gitout').hidden = true; };
+const closeGitOutput = () => {
+  $('gitout').hidden = true;
+  if (gitOutLive) gitOutDismissed = true;
+};
 
 $('gitout-close').addEventListener('click', closeGitOutput);
 $('gitout').addEventListener('click', (e) => { if (e.target === $('gitout')) closeGitOutput(); });

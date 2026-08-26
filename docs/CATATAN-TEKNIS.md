@@ -444,10 +444,21 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - `-c` dan `-C` masing-masing menelan argumen sesudahnya, jadi mencari kata
   kerja dengan melewati setiap tanda hubung tidak cukup
 - Tiap entri dibatasi 120 baris dan 8.000 karakter
-- **Dialognya muncul setelah aksi selesai, bukan saat mulai.** Dibuka di awal ia
-  akan kosong selama push berlangsung, dan yang ditunggui orang adalah dialog
-  kosong. Kemajuan selama aksi berjalan sudah ditangani label tombol dan status
-  bar
+- **Dialognya terbuka saat aksi dimulai dan terisi sambil git berbicara.**
+  `gitProgress` sudah menyiarkan tiap baris stderr lewat `repo:progress` untuk
+  fetch, pull, push, dan clone — yang belum ada hanya penampungnya. Perintah
+  lain memakai `execFile` yang baru menyerahkan keluarannya setelah selesai,
+  tapi perintah-perintah itu memang rampung dalam puluhan milidetik
+- **Panel hidup diganti, bukan ditambahi, saat selesai.** Yang mengalir hanya
+  stderr; yang tercatat memuat kedua aliran. Menambahkan berarti tiap baris
+  datang dua kali
+- **Baris penghitung menimpa dirinya sendiri, di kedua tampilan.** git menulis
+  kemajuan dengan `\r` di satu baris; mengubah tiap `\r` jadi baris baru
+  memuaikan satu penghitung jadi puluhan baris hampir serupa. Terukur: satu
+  fetch yang sama menampilkan **131 baris** sebelum diperbaiki dan **6**
+  sesudahnya. Yang tercatat memakai potongan terakhir tiap baris; yang hidup
+  membandingkan sisa teks setelah angka persen untuk tahu apakah baris itu
+  penghitung yang sama
 - **Satu dialog untuk keduanya.** Sebelumnya kegagalan punya dialog sendiri
   (`showFailure`) yang isinya sama tapi bentuknya lain. Dialog itu dihapus:
   pembaca cukup mengenali satu jendela sebagai "apa kata git", bukan dua yang
