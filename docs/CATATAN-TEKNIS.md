@@ -427,6 +427,23 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Aksi yang tidak perlu bicara**
+- Pindah cabang membuka dialog berisi tiga perintah — `stash push`, `checkout`,
+  `stash pop` — dan yang terakhir menjawab dengan status lengkap: berkas
+  termodifikasi, berkas untracked, saran `git add`. Tidak satu pun dari itu yang
+  sedang ditanyakan pembaca
+- Bendera `quiet` pada `gitAction`, bukan daftar kata kerja: kata kerjanya
+  dirakit dari nama cabang (`Checking out qa`), jadi daftar apa pun akan meleset
+  begitu ada nama baru
+- Tiga aksi ditandai: pindah cabang, membuat cabang, dan mengambil salah satu
+  sisi dalam konflik. Semuanya dilakukan **untuk sampai ke suatu tempat**, bukan
+  untuk diberi tahu sesuatu
+- **Kegagalan tetap membuka dialognya**, `quiet` atau tidak — saat gagal,
+  jawabannya justru inti persoalannya. Terukur: checkout ke cabang yang tidak
+  ada, dengan `quiet: true`, tetap memunculkan *"Failed in 7 ms"*
+- Panel hidupnya juga tidak dibuka untuk aksi senyap, bukan hanya panel
+  akhirnya — kalau tidak, dialognya tetap berkedip muncul lalu hilang
+
 **Penanda berjalan dan selesai**
 - Judulnya adalah kata kerja berlangsung yang dipakai memulai aksi — "Pushing",
   "Fetching". Sesudah selesai ia **berbohong**: keluarannya sudah lengkap sampai
