@@ -8,7 +8,7 @@
      shared with the commit list, which sizes its rows from --row-h. */
   let ROW_H = 31;
   let LANE_W = 22;
-  const PAD_X = 16;
+  let PAD_X = 16;      // clear space before the first lane
   let DOT_R = 8;      // the coloured disc a commit sits on
   let AVATAR_R = 6.5; // avatar clipped inside that disc
   let CORNER = 9;     // radius of a lane-change bend
@@ -36,6 +36,7 @@
   function setMetrics(m) {
     if (m.rowH) ROW_H = m.rowH;
     if (m.laneW) LANE_W = m.laneW;
+    if (m.padX) PAD_X = m.padX;
     if (m.stroke) STROKE = m.stroke;
     /* How far a lane change reaches down the column before it is vertical
        again. GitKraken sweeps; SourceTree turns a tight corner and gets back to
@@ -307,8 +308,9 @@
   /* Getters rather than copies: the renderer reads Graph.ROW_H on every scroll
      and would keep the value it was given at load otherwise. */
   window.Graph = {
-    layout, render, laneColor, setStyle, setMetrics, PAD_X,
+    layout, render, laneColor, setStyle, setMetrics,
     styles: Object.keys(STYLES),
+    get PAD_X() { return PAD_X; },
     get ROW_H() { return ROW_H; },
     get LANE_W() { return LANE_W; },
     get DOT_R() { return DOT_R; },
