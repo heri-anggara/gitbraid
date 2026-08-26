@@ -463,6 +463,32 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Subjeknya yang mengalah lebih dulu saat sempit (`text-overflow: ellipsis`),
   bukan nama cabangnya — nama cabang yang terpotong separuh tidak berguna
 
+**Satu setelan gaya, bernama menurut aplikasinya**
+- Tiga tombol terpisah — bentuk sambungan, kerapatan baris, label di samping
+  subjek — diganti satu pilihan bernama. Yang membuat sebuah riwayat terlihat
+  seperti aplikasi tertentu adalah **kombinasi** keempat angka itu, bukan salah
+  satunya; menyerahkannya sebagai empat tuas berarti meminta pembaca menemukan
+  kombinasi yang benar sendiri
+- Kali ini penamaan menurut aplikasi **disengaja**, kebalikan dari keputusan
+  untuk bentuk sambungan. Bedanya: yang ini memang dimaksudkan agar dikenali,
+  jadi kalau salah satunya melenceng dari yang dinamai, itu cacat di presetnya —
+  bukan nama yang buruk
+- `setDensity`/`setLaneWidth` diganti satu `setMetrics` yang menerima sebagian
+  bidang saja; radius avatar mengikuti radius titik alih-alih disetel sendiri,
+  karena wajah yang digambar lebih besar dari cakram yang memuatnya adalah bug
+  yang tinggal menunggu dilaporkan
+- **Titik di bawah 6px digambar tanpa wajah**, apa pun kata preferensinya. Di
+  ukuran itu yang mendarat cuma noda sewarna untuk semua orang. Preferensinya
+  tetap seperti yang pembaca setel; ini gambarnya yang menolak menggambar
+  sesuatu yang tidak bisa dilihat
+- **Cuci warna lajur dimatikan di preset SourceTree.** GitBraid mewarnai tiap
+  baris dengan warna lajurnya — itulah yang mengikat graf dan daftarnya jadi
+  satu; SourceTree membiarkan daftarnya polos dan hanya kolom grafnya yang
+  berwarna. Mempertahankan garis-garis itu akan jadi satu-satunya hal yang
+  membuat preset ini tidak menyerupai namanya
+- Preset SourceGit belum ada, dan sengaja tidak dikarang: menamai sesuatu
+  menurut aplikasi yang belum dilihat contohnya sama saja dengan menebak
+
 **Gaya graf dan kerapatan baris**
 - Seluruh identitas visual graf ternyata terkumpul di tujuh angka dan satu
   fungsi. `const` diubah jadi `let`, ditambah tabel gaya — tidak ada satu pun

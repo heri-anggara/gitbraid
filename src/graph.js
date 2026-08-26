@@ -24,23 +24,23 @@
     diagonal: { CORNER: 9, DOT_R: 5.5, AVATAR_R: 4.5, STROKE: 1.6, LANE_W: 16, JOIN: 'diagonal' },
   };
 
-  const DENSITIES = { comfortable: 31, compact: 24 };
-
   function setStyle(name) {
     const st = STYLES[name] || STYLES.curved;
     ({ CORNER, DOT_R, AVATAR_R, STROKE, LANE_W, JOIN } = st);
   }
 
-  function setDensity(name) {
-    ROW_H = DENSITIES[name] || DENSITIES.comfortable;
-  }
-
-  /* Lane width is the layout's to set, not the style's: with the branch pills
-     moved in beside the subject, the graph is a narrow strip at the left of the
-     row and packs its lanes tighter than it would in a column of its own.
-     Called after setStyle, which has just written the style's own width. */
-  function setLaneWidth(px) {
-    if (px) LANE_W = px;
+  /* What a preset overrides after choosing a join shape: the numbers that make
+     one application's history recognisable are the sizes, not the curve. The
+     avatar radius follows the dot rather than being set on its own — a face
+     drawn larger than the disc holding it is a bug waiting to be filed. */
+  function setMetrics(m) {
+    if (m.rowH) ROW_H = m.rowH;
+    if (m.laneW) LANE_W = m.laneW;
+    if (m.stroke) STROKE = m.stroke;
+    if (m.dotR) {
+      DOT_R = m.dotR;
+      AVATAR_R = Math.max(3, DOT_R - 1.5);
+    }
   }
 
   // Lane colours, picked to stay legible on both the light and dark ground.
@@ -260,7 +260,11 @@
          reporting who wrote something, it is marking something parked. */
       const stash = row.commit.stash === true;
       const color = pending ? 'var(--pending)' : laneColor(row.lane);
-      const avatar = pending || stash ? null : avatarFor(row.commit);
+      /* Below about six pixels the disc is smaller than the smallest legible
+         face, and what lands there is a smear the same colour as everyone
+         else's. The preference stays what the reader set; this is the drawing
+         declining to draw something that cannot be seen. */
+      const avatar = pending || stash || DOT_R < 6 ? null : avatarFor(row.commit);
       // A knocked-out ring keeps lines from running visibly under the dot.
       dots.push(
         `<circle cx="${cx}" cy="${cy}" r="${DOT_R + 1.5}" fill="var(--bg-graph)"/>` +
@@ -298,9 +302,8 @@
   /* Getters rather than copies: the renderer reads Graph.ROW_H on every scroll
      and would keep the value it was given at load otherwise. */
   window.Graph = {
-    layout, render, laneColor, setStyle, setDensity, setLaneWidth, PAD_X,
+    layout, render, laneColor, setStyle, setMetrics, PAD_X,
     styles: Object.keys(STYLES),
-    densities: Object.keys(DENSITIES),
     get ROW_H() { return ROW_H; },
     get LANE_W() { return LANE_W; },
     get DOT_R() { return DOT_R; },
