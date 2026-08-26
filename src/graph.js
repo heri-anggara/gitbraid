@@ -37,6 +37,11 @@
     if (m.rowH) ROW_H = m.rowH;
     if (m.laneW) LANE_W = m.laneW;
     if (m.stroke) STROKE = m.stroke;
+    /* How far a lane change reaches down the column before it is vertical
+       again. GitKraken sweeps; SourceTree turns a tight corner and gets back to
+       a straight line, which is what makes its lanes read as columns rather
+       than as ribbons. */
+    if (m.corner) CORNER = m.corner;
     if (m.dotR) {
       DOT_R = m.dotR;
       AVATAR_R = Math.max(3, DOT_R - 1.5);

@@ -5389,12 +5389,12 @@ $('logs-copy').addEventListener('click', async () => {
    the preset rather than a bad name. */
 const STYLE_PRESETS = {
   gitbraid:   { label: 'GitBraid', join: 'curved', rowH: 31, lane: 22,
-                dot: 8, stroke: 2.5, inline: false },
+                dot: 8, stroke: 2.5, corner: 9, inline: false },
   /* Its graph keeps a column of its own, narrow, with small solid dots and thin
      lines; the branch and tag pills sit in front of the subject in the column
      SourceTree calls Description. Rows are a shade tighter than GitBraid's. */
   sourcetree: { label: 'SourceTree', join: 'curved', rowH: 28, lane: 18,
-                dot: 4, stroke: 2, inline: true },
+                dot: 4, stroke: 2, corner: 4, inline: true },
 };
 
 /* The graph's dials and the list's row height are two halves of one setting:
@@ -5403,7 +5403,8 @@ const STYLE_PRESETS = {
 function applyGraphLook() {
   const st = STYLE_PRESETS[prefs.uiStyle] || STYLE_PRESETS.gitbraid;
   window.Graph.setStyle(st.join);
-  window.Graph.setMetrics({ rowH: st.rowH, laneW: st.lane, dotR: st.dot, stroke: st.stroke });
+  window.Graph.setMetrics({ rowH: st.rowH, laneW: st.lane, dotR: st.dot,
+    stroke: st.stroke, corner: st.corner });
   document.documentElement.style.setProperty('--row-h', `${window.Graph.ROW_H}px`);
   $('app').classList.toggle('refs-inline', st.inline);
   for (const key of Object.keys(STYLE_PRESETS)) {

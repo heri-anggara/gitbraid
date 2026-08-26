@@ -486,6 +486,13 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   satu; SourceTree membiarkan daftarnya polos dan hanya kolom grafnya yang
   berwarna. Mempertahankan garis-garis itu akan jadi satu-satunya hal yang
   membuat preset ini tidak menyerupai namanya
+- **Radius belokan ternyata yang paling menentukan.** Ukuran titik, lebar
+  lajur, dan tinggi baris sudah cocok, tapi grafnya tetap tidak menyerupai
+  SourceTree: GitBraid membelok dengan busur ber-radius 9, yang pada baris
+  setinggi 28 memakan `2 × 9 = 18px` — hampir satu baris penuh, sehingga lajur
+  terbaca sebagai pita yang meliuk. SourceTree membelok pendek lalu kembali
+  lurus, dan itulah yang membuat lajurnya terbaca sebagai **kolom**. Presetnya
+  memakai 4
 - Preset SourceGit belum ada, dan sengaja tidak dikarang: menamai sesuatu
   menurut aplikasi yang belum dilihat contohnya sama saja dengan menebak
 
