@@ -427,6 +427,25 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Penanda berjalan dan selesai**
+- Judulnya adalah kata kerja berlangsung yang dipakai memulai aksi — "Pushing",
+  "Fetching". Sesudah selesai ia **berbohong**: keluarannya sudah lengkap sampai
+  `develop -> develop` sementara judulnya masih bilang sedang mendorong
+- **Judulnya sengaja tidak diubah.** Mengubah "Pushing" jadi "Pushed" butuh
+  aturan yang cepat atau lambat menulis "Resetted"; satu baris keadaan bekerja
+  untuk kata kerja apa pun, termasuk yang belum ada
+- Tiga keadaan: pemintal + *Running…*, centang hijau + *Done in 3.0 s ·
+  1 command*, silang merah + *Failed in 1.2 s*
+- Pemintal, bukan glif diam: satu-satunya keadaan yang harus terlihat seperti
+  waktu berjalan adalah keadaan ketika waktu memang sedang berjalan.
+  `prefers-reduced-motion` memperlambatnya alih-alih mematikannya — berhenti
+  total akan menghapus keterangannya
+- Waktu ditulis "840 ms" di bawah sedetik dan "3.0 s" di atasnya; detik di bawah
+  sedetik akan terbaca 0,8 dan kehilangan ketelitiannya
+- Judul kegagalan tidak lagi `${verb} failed` — itu menghasilkan
+  "Pushing failed". Judulnya tetap kata kerjanya, merah, dan baris keadaan yang
+  mengatakan gagal
+
 **Nama cabang di samping subjek**
 - Susunan yang dipakai SourceTree dan SourceGit berbeda **secara struktural**,
   bukan sekadar bentuk garis: tidak ada kolom Branch/Tag terpisah sama sekali.
