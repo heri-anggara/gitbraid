@@ -3219,7 +3219,7 @@ async function checkout(ref) {
       } else {
         setStatus(`Checked out ${ref}`, 'ok');
       }
-    });
+    }, { quiet: true });
 }
 
 /* One click on a ref moves the history to its tip instead of checking it out.
@@ -3268,7 +3268,8 @@ async function newBranch(startPoint) {
   if (!r || !r.name) return;
   await gitAction('btn-branch', 'Creating',
     () => call('repo:createBranch', repoPath(), r.name, startPoint, r.checkout),
-    async () => { await refresh({ keepSelection: false }); setStatus(`Created ${r.name}`, 'ok'); });
+    async () => { await refresh({ keepSelection: false }); setStatus(`Created ${r.name}`, 'ok'); },
+    { quiet: true });
 }
 
 /* Shared by the sidebar's context menu and the Repository menu. */
@@ -4365,14 +4366,20 @@ function tbProgress(percent) {
  * `fn` returns null when it failed — call() has already said why.
  */
 
-async function gitAction(id, verb, fn, done) {
+/* `quiet` keeps the output dialog shut when the action succeeds. It is for the
+   ones you perform to get somewhere rather than to be told something: switching
+   branches, creating one, taking a side in a conflict. git narrates those the
+   same way it narrates a merge — a stash push, a checkout and a stash pop, each
+   answering with a full status — and none of it is what the reader was asking
+   about. A failure still opens it, because then the answer is the point. */
+async function gitAction(id, verb, fn, done, opts = {}) {
   if (action) { setStatus('Another Git command is still running', 'error'); return; }
   const label = toolLabel(id);
   const startedOn = activeId;
   // Everything git writes from here on belongs to this action.
   const startedAt = Date.now();
   lastRun = { title: verb, since: startedAt, failed: false };
-  if (prefs.showGitOutput) openGitOutputLive(verb);
+  if (prefs.showGitOutput && !opts.quiet) openGitOutputLive(verb);
   action = { id, tab: startedOn, label: label ? label.textContent : '' };
 
   if (label) label.textContent = verb;
@@ -4419,7 +4426,9 @@ async function gitAction(id, verb, fn, done) {
        recorded holds both streams, so the finished dialog replaces the running
        one rather than adding to it — otherwise every line arrives twice. */
     if (!ok) await showGitOutput(verb, startedAt, { failed: true, fallback: lastFailure, took });
-    else if (prefs.showGitOutput && !gitOutDismissed) await showGitOutput(verb, startedAt, { took });
+    else if (prefs.showGitOutput && !opts.quiet && !gitOutDismissed) {
+      await showGitOutput(verb, startedAt, { took });
+    }
     else if (prefs.showGitOutput) closeGitOutput();
   } else if (prefs.showGitOutput) {
     closeGitOutput();
@@ -4512,7 +4521,7 @@ async function resolveConflict(filePath, side) {
     async () => {
       await refresh();
       setStatus(`${baseName(filePath)}: ${side === 'mark' ? 'marked resolved' : side} kept`, 'ok');
-    });
+    }, { quiet: true });
 }
 
 /* ═════ preferences ═════════════════════════════════════════════ */
