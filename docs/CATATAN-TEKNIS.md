@@ -427,6 +427,183 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Aksi yang tidak perlu bicara**
+- Pindah cabang membuka dialog berisi tiga perintah — `stash push`, `checkout`,
+  `stash pop` — dan yang terakhir menjawab dengan status lengkap: berkas
+  termodifikasi, berkas untracked, saran `git add`. Tidak satu pun dari itu yang
+  sedang ditanyakan pembaca
+- Bendera `quiet` pada `gitAction`, bukan daftar kata kerja: kata kerjanya
+  dirakit dari nama cabang (`Checking out qa`), jadi daftar apa pun akan meleset
+  begitu ada nama baru
+- Tiga aksi ditandai: pindah cabang, membuat cabang, dan mengambil salah satu
+  sisi dalam konflik. Semuanya dilakukan **untuk sampai ke suatu tempat**, bukan
+  untuk diberi tahu sesuatu
+- **Kegagalan tetap membuka dialognya**, `quiet` atau tidak — saat gagal,
+  jawabannya justru inti persoalannya. Terukur: checkout ke cabang yang tidak
+  ada, dengan `quiet: true`, tetap memunculkan *"Failed in 7 ms"*
+- Panel hidupnya juga tidak dibuka untuk aksi senyap, bukan hanya panel
+  akhirnya — kalau tidak, dialognya tetap berkedip muncul lalu hilang
+
+**Penanda berjalan dan selesai**
+- Judulnya adalah kata kerja berlangsung yang dipakai memulai aksi — "Pushing",
+  "Fetching". Sesudah selesai ia **berbohong**: keluarannya sudah lengkap sampai
+  `develop -> develop` sementara judulnya masih bilang sedang mendorong
+- **Judulnya sengaja tidak diubah.** Mengubah "Pushing" jadi "Pushed" butuh
+  aturan yang cepat atau lambat menulis "Resetted"; satu baris keadaan bekerja
+  untuk kata kerja apa pun, termasuk yang belum ada
+- Tiga keadaan: pemintal + *Running…*, centang hijau + *Done in 3.0 s ·
+  1 command*, silang merah + *Failed in 1.2 s*
+- Pemintal, bukan glif diam: satu-satunya keadaan yang harus terlihat seperti
+  waktu berjalan adalah keadaan ketika waktu memang sedang berjalan.
+  `prefers-reduced-motion` memperlambatnya alih-alih mematikannya — berhenti
+  total akan menghapus keterangannya
+- Waktu ditulis "840 ms" di bawah sedetik dan "3.0 s" di atasnya; detik di bawah
+  sedetik akan terbaca 0,8 dan kehilangan ketelitiannya
+- Judul kegagalan tidak lagi `${verb} failed` — itu menghasilkan
+  "Pushing failed". Judulnya tetap kata kerjanya, merah, dan baris keadaan yang
+  mengatakan gagal
+
+**Nama cabang di samping subjek**
+- Susunan yang dipakai SourceTree dan SourceGit berbeda **secara struktural**,
+  bukan sekadar bentuk garis: tidak ada kolom Branch/Tag terpisah sama sekali.
+  Label menempel di depan pesan commit, dan kolom graf jadi jalur sempit
+- Kolom `refs` mundur sendiri saat mode ini menyala, **tanpa** dimasukkan ke
+  `cols.hidden` — himpunan itu milik pilihan pembaca dari menu klik-kanan
+  header, dan menulisinya akan menghapus apa yang mereka pilih
+- Lebar lajur jadi urusan susunan, bukan gaya: 12px di mode ini lawan 16–22px
+  saat graf punya kolom sendiri
+- **Badge hantu pindah ke belakang subjek.** Ia tak terlihat sampai kursor lewat
+  tapi tetap memakan ruang; di depan, ia mendorong tiap subjek sejauh lebar nama
+  cabang yang tak seorang pun bisa lihat. Terukur: baris tanpa pill terlihat
+  mulai di **438px** sementara tetangganya mulai di **307px**. Sesudah
+  dipindah, keduanya di 307
+- Subjeknya yang mengalah lebih dulu saat sempit (`text-overflow: ellipsis`),
+  bukan nama cabangnya — nama cabang yang terpotong separuh tidak berguna
+
+**Satu setelan gaya, bernama menurut aplikasinya**
+- Tiga tombol terpisah — bentuk sambungan, kerapatan baris, label di samping
+  subjek — diganti satu pilihan bernama. Yang membuat sebuah riwayat terlihat
+  seperti aplikasi tertentu adalah **kombinasi** keempat angka itu, bukan salah
+  satunya; menyerahkannya sebagai empat tuas berarti meminta pembaca menemukan
+  kombinasi yang benar sendiri
+- Kali ini penamaan menurut aplikasi **disengaja**, kebalikan dari keputusan
+  untuk bentuk sambungan. Bedanya: yang ini memang dimaksudkan agar dikenali,
+  jadi kalau salah satunya melenceng dari yang dinamai, itu cacat di presetnya —
+  bukan nama yang buruk
+- `setDensity`/`setLaneWidth` diganti satu `setMetrics` yang menerima sebagian
+  bidang saja; radius avatar mengikuti radius titik alih-alih disetel sendiri,
+  karena wajah yang digambar lebih besar dari cakram yang memuatnya adalah bug
+  yang tinggal menunggu dilaporkan
+- **Titik di bawah 6px digambar tanpa wajah**, apa pun kata preferensinya. Di
+  ukuran itu yang mendarat cuma noda sewarna untuk semua orang. Preferensinya
+  tetap seperti yang pembaca setel; ini gambarnya yang menolak menggambar
+  sesuatu yang tidak bisa dilihat
+- **Cuci warna lajur dimatikan di preset SourceTree.** GitBraid mewarnai tiap
+  baris dengan warna lajurnya — itulah yang mengikat graf dan daftarnya jadi
+  satu; SourceTree membiarkan daftarnya polos dan hanya kolom grafnya yang
+  berwarna. Mempertahankan garis-garis itu akan jadi satu-satunya hal yang
+  membuat preset ini tidak menyerupai namanya
+- **Lebar lajur diturunkan lagi ke 13px**, dan `PAD_X` — jarak sebelum lajur
+  pertama — berhenti jadi konstanta agar ikut menyempit ke 11. Kolom grafnya
+  menjadi 74px. Sudut kemiringannya menyesuaikan sendiri: `drop` dibatasi
+  `LANE_W / 2`, jadi lajur yang lebih rapat menghasilkan kemiringan yang lebih
+  tegak tanpa angka tambahan
+- **Lalu radius kecil itu sendiri ternyata salah arah.** Radius 4 mengubah tiap
+  perpindahan lajur jadi **kurung siku** — persis satu hal yang tidak pernah
+  dilakukan graf SourceTree. Ia meninggalkan lajur secara **miring** dan
+  menjemput lajur berikutnya sambil turun. Presetnya memakai sambungan
+  `diagonal`, dan angka `corner` di sana bukan lagi radius melainkan jarak jatuh
+  yang boleh ditempuh kemiringan itu — sekitar tiga perempat baris, yang
+  menentukan sudutnya
+- **Radius belokan ternyata yang paling menentukan.** Ukuran titik, lebar
+  lajur, dan tinggi baris sudah cocok, tapi grafnya tetap tidak menyerupai
+  SourceTree: GitBraid membelok dengan busur ber-radius 9, yang pada baris
+  setinggi 28 memakan `2 × 9 = 18px` — hampir satu baris penuh, sehingga lajur
+  terbaca sebagai pita yang meliuk. SourceTree membelok pendek lalu kembali
+  lurus, dan itulah yang membuat lajurnya terbaca sebagai **kolom**. Presetnya
+  memakai 4
+- Preset SourceGit belum ada, dan sengaja tidak dikarang: menamai sesuatu
+  menurut aplikasi yang belum dilihat contohnya sama saja dengan menebak
+
+**Gaya graf dan kerapatan baris**
+- Seluruh identitas visual graf ternyata terkumpul di tujuh angka dan satu
+  fungsi. `const` diubah jadi `let`, ditambah tabel gaya — tidak ada satu pun
+  logika penempatan lajur yang tersentuh
+- **Ketiga bentuk sambungan memakai satu fungsi yang sama.** Masing-masing
+  memakan tinggi vertikal `drop` yang sama dan berakhir di `(x2, y1 + drop)`,
+  jadi geometri di sekitarnya tidak perlu tahu mana yang sedang dipakai — hanya
+  bagian tengahnya yang berbeda. `curve` dua busur seperempat, `angle` dua garis
+  siku, `diagonal` satu garis miring
+- Aturan lama tetap dipenuhi: setiap perintah yang dikeluarkan berakhir pada
+  pasangan `x y` eksplisit, jadi dua angka terakhir sebuah `d` selalu ujung
+  jalur itu — yang menjadi sandaran ujinya
+- **`ROW_H` diekspor sebagai getter, bukan salinan.** Renderer membacanya pada
+  tiap gulir; sebuah salinan akan membeku pada nilai saat dimuat
+- **Dua sumber kebenaran disatukan.** `ROW_H = 31` di `graph.js` dan
+  `--row-h: 31px` di CSS selama ini berdiri sendiri-sendiri; kalau keduanya
+  berselisih, titik graf tergeser dari barisnya. `applyGraphLook()` menulis yang
+  kedua dari yang pertama
+- Kerapatan **compact** memendekkan seluruh baris riwayat, bukan cuma kolom
+  graf — 24px lawan 31px, sekitar sepertiga lebih banyak commit per layar
+- Gaya dinamai menurut **bentuknya**, bukan menurut aplikasi lain. Menamainya
+  "SourceTree" berarti menjanjikan kemiripan piksel yang tidak diusahakan, dan
+  akan jadi bohong begitu aplikasi itu berubah
+- Uji bertambah 9: tiap gaya dikali tiap kerapatan diperiksa masih mendaratkan
+  setiap tepi tepat di titik induknya, ditambah pemeriksaan bahwa ketiganya
+  memang berbeda bentuk, bahwa compact benar-benar lebih pendek, dan bahwa nama
+  gaya yang tidak dikenal jatuh ke bawaan alih-alih rusak
+
+**Melihat apa yang dikatakan git**
+- **Keluaran git tidak pernah disimpan.** `recordGit` hanya mencatat perintah,
+  durasi, dan kode keluarnya; pada keberhasilan `stdout` dibuang, pada kegagalan
+  hanya baris pertama yang dipotong 200 karakter. Jadi tidak ada apa pun untuk
+  ditampilkan sampai sekarang
+- **Yang disimpan hanya perintah yang mengubah sesuatu** — fetch, pull, push,
+  merge, rebase, commit, stash, checkout dan seterusnya. Yang membaca saja
+  (`status`, `log`, `diff`, `rev-parse`) tidak: perintah itu jalan
+  terus-menerus dan keluarannya adalah **data** yang diurai lalu dibuang, bukan
+  narasi untuk dibaca. Menyimpan keduanya berarti menahan puluhan megabita dan
+  mengubur baris yang menarik di antaranya. Lima kata kerja yang bisa keduanya
+  — `stash`, `branch`, `tag`, `remote`, `config` — dikenali dari bendera
+  daftarnya (`list`, `-l`, `--format`, `--get`). Kegagalan **selalu** disimpan,
+  kata kerja apa pun
+- `-c` dan `-C` masing-masing menelan argumen sesudahnya, jadi mencari kata
+  kerja dengan melewati setiap tanda hubung tidak cukup
+- Tiap entri dibatasi 120 baris dan 8.000 karakter
+- **Dialognya terbuka saat aksi dimulai dan terisi sambil git berbicara.**
+  `gitProgress` sudah menyiarkan tiap baris stderr lewat `repo:progress` untuk
+  fetch, pull, push, dan clone — yang belum ada hanya penampungnya. Perintah
+  lain memakai `execFile` yang baru menyerahkan keluarannya setelah selesai,
+  tapi perintah-perintah itu memang rampung dalam puluhan milidetik
+- **Panel hidup diganti, bukan ditambahi, saat selesai.** Yang mengalir hanya
+  stderr; yang tercatat memuat kedua aliran. Menambahkan berarti tiap baris
+  datang dua kali
+- **Baris penghitung menimpa dirinya sendiri, di kedua tampilan.** git menulis
+  kemajuan dengan `\r` di satu baris; mengubah tiap `\r` jadi baris baru
+  memuaikan satu penghitung jadi puluhan baris hampir serupa. Terukur: satu
+  fetch yang sama menampilkan **131 baris** sebelum diperbaiki dan **6**
+  sesudahnya. Yang tercatat memakai potongan terakhir tiap baris; yang hidup
+  membandingkan sisa teks setelah angka persen untuk tahu apakah baris itu
+  penghitung yang sama
+- **Satu dialog untuk keduanya.** Sebelumnya kegagalan punya dialog sendiri
+  (`showFailure`) yang isinya sama tapi bentuknya lain. Dialog itu dihapus:
+  pembaca cukup mengenali satu jendela sebagai "apa kata git", bukan dua yang
+  mirip tapi berperilaku beda. Kegagalan hanya mengganti judulnya jadi
+  *"Push failed"* dan mewarnai barisnya
+- **Kegagalan selalu muncul, apa pun saklarnya.** Itu satu-satunya hasil yang
+  pembaca wajib tahu; saklarnya mengatur keberhasilan yang sunyi
+- Pojok kiri bawah punya glif terminal di sebelah baris status, dan keduanya
+  membuka dialog yang sama. Glifnya ada karena kontrol yang cuma muncul di bawah
+  kursor adalah kontrol yang tidak ditemukan siapa pun
+- `lastRun` dicatat saat aksi **dimulai**, bukan dicari belakangan: penyegaran
+  sesudahnya menembakkan belasan perintah baca-saja, dan tanpa penanda itu yang
+  terbaru bukan yang diminta
+- `config` dan `remote` sengaja tidak ikut disimpan walau keduanya bisa menulis.
+  Bentuk tulisnya tidak mengatakan apa-apa (`git config user.email x` diam), dan
+  bentuk bacanya menjawab dengan nilai — jadi menyimpannya mengumpulkan alamat
+  surel dan URL, bukan narasi. Terukur: sebelum diperbaiki, klik pojok kiri
+  bawah membuka dialog berisi `git config --local user.email`
+
 **Membuka repositori lewat baris perintah**
 - Kedua berkas desktop menulis `Exec=gitbraid %U` sejak rilis pertama, dan
   argumennya tidak pernah dibaca siapa pun — `gitbraid .` membuka halaman depan

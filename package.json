@@ -1,6 +1,6 @@
 {
   "name": "gitbraid",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Read your Git history as coloured lanes",
   "main": "main.js",
   "author": "Heri Anggara <herianggara2409@gmail.com>",

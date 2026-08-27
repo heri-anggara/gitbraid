@@ -7,6 +7,43 @@
  */
 window.Releases = [
   {
+    version: '0.9.0',
+    date: '2026-08-26',
+    title: 'It shows you what git said, and the history can read like SourceTree',
+    summary:
+      'Every action now has an output window that fills while git is still '
+      + 'talking — the thing a terminal would have shown you. And the history '
+      + 'has a Style setting: GitBraid as it was, or SourceTree.',
+    sections: [
+      {
+        heading: 'What git said',
+        items: [
+          'Pulling or pushing from a terminal ends with git telling you what it did. Here that sentence went to the status bar and the rest was dropped: the activity log kept the command, how long it took and the exit code, and threw the output away. There was nothing to show even if something had wanted to show it.',
+          'There is a window now, and it opens when the action starts and fills as the lines arrive rather than waiting for the end. Opened at the end it would have missed the part worth watching; opened at the start and left empty it would have been a thing to stare at.',
+          'It says whether it is still going. A spinner beside “Running…”, a green tick beside “Done in 3.0 s”, a red cross beside “Failed in 1.2 s”. The title stays the verb the action began with — turning “Pushing” into “Pushed” needs a rule that sooner or later writes “Resetted”.',
+          'Failures use the same window, always, whatever the switch says. Success is the part you can choose to be told about; a failed push is not.',
+          'Switching branches says nothing. It runs three commands — a stash, the checkout, a stash pop — and the last answers with a full status listing untracked files and advice about git add, none of which is what you were asking. Creating a branch and taking a side in a conflict are quiet for the same reason. All three are done to get somewhere, not to be told something.',
+          'Preferences → General → Activity log has the switch, off by default. Either way the output is kept: rows in the activity log that have theirs can be opened, Copy takes it along with the commands, and the status line in the bottom-left corner — with a small terminal glyph beside it now — opens the last one on demand.',
+        ],
+      },
+      {
+        heading: 'A history that reads like SourceTree',
+        items: [
+          'Preferences → General → History rows → Style. GitBraid draws it as it always has. SourceTree retires the Branch / Tag column and puts the pills in front of the commit message, packs the lanes to thirteen pixels, shrinks the dots, leaves a lane on a diagonal instead of a curve, and takes the lane colour off the rows.',
+          'That last one matters more than it sounds. GitBraid tints every row in its lane’s colour, which is how its graph and its list stay tied together; SourceTree leaves the list plain and lets the graph carry the colour alone.',
+          'Naming a preset after an application is a promise that it will be recognisable. If one of them drifts from what it is named after, that is a defect in the preset rather than a bad name — and there is deliberately no SourceGit preset yet, because inventing one from memory would be a guess that looked finished.',
+          'A dot smaller than six pixels is drawn without a face on it, whatever the author-picture preference says. At that size what lands is a smudge the same colour as everyone else’s.',
+        ],
+      },
+      {
+        heading: 'Smaller things',
+        items: [
+          'The Flatpak manifest points at a tag rather than a working tree, so it builds the same way on Flathub’s machines as it does here, and it no longer asks for a permission that XDG portals grant every sandbox anyway.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.8.0',
     date: '2026-08-22',
     title: 'It opens the repository you name, and it can be packaged as a Flatpak',
