@@ -15,6 +15,8 @@ const PREF_DEFAULTS = {
   autoPrune: true,
   commitLimit: 400,
   resumeLast: true,
+  showGitOutput: false,       // open the activity log after an action
+  uiStyle: 'gitbraid',        // how the history reads: see STYLE_PRESETS
   dateStyle: 'absolute',
   toolbarLabels: true,
   ghostBadge: true,
@@ -1278,7 +1280,12 @@ const saveColumns = () => {
   } catch { /* ignore */ }
 };
 
-const visibleColumns = () => COLUMNS.filter((c) => !cols.hidden.has(c.key));
+/* With the pills inline the Branch / Tag column has nothing left to hold, so it
+   stands down rather than sitting there empty and 158px wide. It is not added to
+   cols.hidden: that set is the reader's own choice from the header menu, and
+   overwriting it would lose what they picked the moment they tried this. */
+const visibleColumns = () => COLUMNS.filter((c) =>
+  !cols.hidden.has(c.key) && !(refsAreInline() && c.key === 'refs'));
 
 /** Back to the widths and the visibility a fresh install starts with. */
 function resetColumns() {
@@ -1777,7 +1784,14 @@ function renderRows() {
         `style="--lane:${lane}" title="${esc(full)}">` +
         rowCells({
           refs: `<span class="c-refs">${pills}${ghost}</span>`,
-          msg: `<span class="c-msg"><span class="c-msg-text">${highlight(c.subject, q)}</span>` +
+          /* The ghost badge follows the subject rather than leading it. It is
+             invisible until the row is hovered but takes its space either way,
+             and in front it shoved every subject right by the width of a branch
+             name nobody could see. Measured: rows with no visible pill started
+             at 438px where their neighbours started at 307. */
+          msg: `<span class="c-msg">${refsAreInline() ? pills : ''}` +
+            `<span class="c-msg-text">${highlight(c.subject, q)}</span>` +
+            (refsAreInline() ? ghost : '') +
             (c.body ? `<span class="c-msg-body">${highlight(c.body.split('\n')[0], q)}</span>` : '') +
             '</span>',
           author: `<span class="c-author">${authorChip(c)}${highlight(c.author, q)}</span>`,
@@ -3205,7 +3219,7 @@ async function checkout(ref) {
       } else {
         setStatus(`Checked out ${ref}`, 'ok');
       }
-    });
+    }, { quiet: true });
 }
 
 /* One click on a ref moves the history to its tip instead of checking it out.
@@ -3254,7 +3268,8 @@ async function newBranch(startPoint) {
   if (!r || !r.name) return;
   await gitAction('btn-branch', 'Creating',
     () => call('repo:createBranch', repoPath(), r.name, startPoint, r.checkout),
-    async () => { await refresh({ keepSelection: false }); setStatus(`Created ${r.name}`, 'ok'); });
+    async () => { await refresh({ keepSelection: false }); setStatus(`Created ${r.name}`, 'ok'); },
+    { quiet: true });
 }
 
 /* Shared by the sidebar's context menu and the Repository menu. */
@@ -4350,33 +4365,21 @@ function tbProgress(percent) {
  * Runs one git action with the button as its progress display.
  * `fn` returns null when it failed — call() has already said why.
  */
-/* A command that fails deserves more than a line that the next status message
-   scrolls away. This says what was being attempted, the reason git gave, and —
-   when git said more than one line — all of it, because on a rejected push the
-   line that explains is never the first. */
-function showFailure(verb, text) {
-  const lines = String(text).split(/[\r\n]/).map((l) => l.trimEnd()).filter(Boolean);
-  if (!lines.length) return;
-  modal({
-    // "Finishing release did not finish" — the verb already carries the word.
-    title: `${verb} failed`,
-    /* The line that explains, which is rarely the first: git opens a refused
-       push with "To <url>", and the reason is three lines further down. */
-    description: firstLine(text),
-    // Everything git said, in the order it said it, with nothing removed — the
-    // headline is a highlight, not a replacement for the output.
-    html: lines.length > 1
-      ? `<div class="modal-field"><div class="fail-out">${esc(lines.join('\n'))}</div></div>`
-      : '',
-    confirmLabel: 'Close',
-    hideCancel: true,
-  });
-}
 
-async function gitAction(id, verb, fn, done) {
+/* `quiet` keeps the output dialog shut when the action succeeds. It is for the
+   ones you perform to get somewhere rather than to be told something: switching
+   branches, creating one, taking a side in a conflict. git narrates those the
+   same way it narrates a merge — a stash push, a checkout and a stash pop, each
+   answering with a full status — and none of it is what the reader was asking
+   about. A failure still opens it, because then the answer is the point. */
+async function gitAction(id, verb, fn, done, opts = {}) {
   if (action) { setStatus('Another Git command is still running', 'error'); return; }
   const label = toolLabel(id);
   const startedOn = activeId;
+  // Everything git writes from here on belongs to this action.
+  const startedAt = Date.now();
+  lastRun = { title: verb, since: startedAt, failed: false };
+  if (prefs.showGitOutput && !opts.quiet) openGitOutputLive(verb);
   action = { id, tab: startedOn, label: label ? label.textContent : '' };
 
   if (label) label.textContent = verb;
@@ -4410,7 +4413,26 @@ async function gitAction(id, verb, fn, done) {
   // Shown after the toolbar has settled, so the dialog is not fighting a
   // spinner for attention. Not awaited: the caller still has a refresh to do,
   // and the repository should be redrawn behind the explanation, not after it.
-  if (!ok && lastFailure && activeId === startedOn) showFailure(verb, lastFailure);
+  if (lastRun && lastRun.since === startedAt) lastRun.failed = !ok;
+  /* A failure is shown whatever the preference says: it is the one outcome the
+     reader has to be told about, and the switch is about the quiet successes.
+     Either way only for the tab still in front — the other one refreshes itself
+     when it comes back. */
+  gitOutLive = false;
+  const took = Date.now() - startedAt;
+  if (lastRun && lastRun.since === startedAt) lastRun.took = took;
+  if (activeId === startedOn) {
+    /* The live pane held git's narration, which is stderr only. What was
+       recorded holds both streams, so the finished dialog replaces the running
+       one rather than adding to it — otherwise every line arrives twice. */
+    if (!ok) await showGitOutput(verb, startedAt, { failed: true, fallback: lastFailure, took });
+    else if (prefs.showGitOutput && !opts.quiet && !gitOutDismissed) {
+      await showGitOutput(verb, startedAt, { took });
+    }
+    else if (prefs.showGitOutput) closeGitOutput();
+  } else if (prefs.showGitOutput) {
+    closeGitOutput();
+  }
   return ok;
 }
 
@@ -4425,6 +4447,7 @@ window.gitbraid.on('repo:progress', (p) => {
     return;
   }
   tbProgress(p.percent);
+  appendGitOutputLine(p.text);
   const label = toolLabel(action.id);
   if (!label) return;
   if (p.phase) label.textContent = p.percent === null ? p.phase : `${p.phase} ${p.percent}%`;
@@ -4498,7 +4521,7 @@ async function resolveConflict(filePath, side) {
     async () => {
       await refresh();
       setStatus(`${baseName(filePath)}: ${side === 'mark' ? 'marked resolved' : side} kept`, 'ok');
-    });
+    }, { quiet: true });
 }
 
 /* ═════ preferences ═════════════════════════════════════════════ */
@@ -4509,6 +4532,8 @@ async function resolveConflict(filePath, side) {
 /** Push the stored preferences into the places that actually read them. */
 function applyPrefs() {
   const root = document.documentElement;
+  // Before anything measures a row: boot comes through here too.
+  applyGraphLook();
   root.style.setProperty('--diff-size', `${prefs.diffFontSize}px`);
   root.style.setProperty('--diff-tab', String(prefs.tabSize));
   if (prefs.diffFont) root.style.setProperty('--diff-font', `"${prefs.diffFont}", var(--mono)`);
@@ -4605,6 +4630,12 @@ function prefPages() {
               button: 'Open activity log',
               help: 'The last 400 git commands GitBraid ran, with how long each took.',
               run: () => { closePrefs(); openLogs(); } },
+            { kind: 'toggle', label: 'Show git output after an action',
+              help: 'Opens a window when an action starts and fills it as git talks, '
+                + 'then leaves the whole output there when it finishes. A failure '
+                + 'opens it either way — that is the one you cannot afford to miss.',
+              get: () => prefs.showGitOutput,
+              set: (v) => { prefs.showGitOutput = v; savePrefs(); } },
           ],
         },
       ],
@@ -4638,6 +4669,14 @@ function prefPages() {
         {
           title: 'History rows',
           fields: [
+            { kind: 'select', label: 'Style',
+              options: Object.entries(STYLE_PRESETS).map(([k, v]) => [k, v.label]),
+              help: 'How a history reads: the shape of the graph, how tall a row is, '
+                + 'and whether the branch and tag names keep a column of their own or '
+                + 'sit in front of the commit message.',
+              get: () => prefs.uiStyle,
+              set: (v) => { prefs.uiStyle = v; savePrefs(); applyGraphLook();
+                applyColumns(); if (state.repo) renderHistory(); } },
             { kind: 'select', label: 'Date and time',
               options: [['absolute', '08/17/2026 @ 10:55 PM'], ['relative', '2h ago']],
               help: 'How the Commit Date and Author Time columns are written.',
@@ -5147,15 +5186,20 @@ async function openLogs() {
         const clock = `${String(t.getHours()).padStart(2, '0')}:` +
           `${String(t.getMinutes()).padStart(2, '0')}:${String(t.getSeconds()).padStart(2, '0')}`;
         // A non-zero exit with nothing on stderr gets a quiet marker, not a red line.
-        const cls = r.error ? 'failed' : r.code ? 'quiet' : '';
+        const state = r.error ? 'failed' : r.code ? 'quiet' : '';
+        /* Only the commands that narrate keep their output — a fetch or a merge,
+           not the `git status` behind every refresh. Those rows can be opened;
+           the rest have nothing underneath and stay flat. */
+        const cls = [state, r.out ? 'has-out' : ''].filter(Boolean).join(' ');
         return (
-          `<li${cls ? ` class="${cls}"` : ''}>` +
+          `<li${cls ? ` class="${cls}"` : ''}${r.out ? ' tabindex="0"' : ''}>` +
           `<span class="lg-time">${clock}</span>` +
-          `<span class="lg-cmd">${esc(r.command)}` +
+          `<span class="lg-cmd">${r.out ? '<span class="lg-chev">▸</span>' : ''}${esc(r.command)}` +
           (!r.error && r.code ? `<span class="lg-code">exit ${r.code}</span>` : '') +
           '</span>' +
           `<span class="lg-ms">${r.ms} ms</span>` +
           (r.error ? `<span class="lg-err">${esc(r.error)}</span>` : '') +
+          (r.out ? `<pre class="lg-out">${esc(r.out)}</pre>` : '') +
           '</li>'
         );
       }).join('')
@@ -5164,6 +5208,162 @@ async function openLogs() {
 }
 
 const closeLogs = () => { $('logs').hidden = true; };
+
+/* ═════ what git said ═══════════════════════════════════════════ */
+
+/* The activity log is the record of every command GitBraid ran. This is one
+   action's output, laid out the way a terminal would have laid it out. Success
+   and failure share it: a reader should have one window to recognise as "what
+   git said", not two that look alike and behave differently. */
+let gitOutText = '';
+
+/* Which action the bottom-left corner should show when asked. Set when one
+   starts, so a refresh's dozen read-only commands afterwards cannot be mistaken
+   for it. */
+let lastRun = null;
+
+/* Open and taking lines as git writes them. Cleared the moment the action ends,
+   because from then on the recorded output is the authority. */
+let gitOutLive = false;
+/* Closed by hand while it was still running. A success respects that and stays
+   shut; a failure reopens anyway, since that is the outcome nobody may miss. */
+let gitOutDismissed = false;
+
+/* git narrates fetch, pull, push and clone on stderr line by line. Everything
+   else this application runs answers in one go and finishes in milliseconds —
+   there is no stream to follow, only a result. */
+function openGitOutputLive(verb) {
+  gitOutLive = true;
+  gitOutDismissed = false;
+  liveHead = null;
+  gitOutText = '';
+  $('gitout-title').textContent = verb;
+  $('gitout-title').classList.remove('is-bad');
+  setGitOutputState('running', 'Running…');
+  $('gitout-body').innerHTML = '<pre class="go-out go-live" id="gitout-live"></pre>';
+  $('gitout').hidden = false;
+}
+
+/* "remote: Compressing objects:  58% (36/62)" and the line before it are the
+   same line rewritten, and a terminal shows one of them. Comparing what is left
+   after the counter tells the two apart from a genuinely new line. */
+const counterHead = (line) => line.replace(/\s*\d+%.*$/, '').trim();
+
+let liveHead = null;
+
+function appendGitOutputLine(text) {
+  if (!gitOutLive) return;
+  const live = $('gitout-live');
+  if (!live) return;
+  const head = counterHead(text);
+  const lines = live.textContent ? live.textContent.split('\n') : [];
+  /* Replace rather than append while a counter climbs, so the pane reads the
+     way the terminal did instead of scrolling a hundred near-identical lines
+     past — and so the running view matches the finished one, which collapses
+     the same rewrites. */
+  if (head && head !== text && head === liveHead && lines.length) lines[lines.length - 1] = text;
+  else lines.push(text);
+  liveHead = head;
+  live.textContent = lines.join('\n');
+  const body = $('gitout-body');
+  body.scrollTop = body.scrollHeight;
+}
+
+/* Whether it is still going, and how it ended. The title stays the verb the
+   action was started with: turning "Pushing" into "Pushed" needs a rule that
+   sooner or later writes "Resetted", and a line that says so plainly works for
+   any verb at all. */
+function setGitOutputState(kind, text) {
+  const mark = $('gitout-mark');
+  mark.className = `go-mark go-${kind}`;
+  mark.textContent = kind === 'done' ? '✓' : kind === 'failed' ? '✕' : '';
+  $('gitout-state').textContent = text;
+}
+
+/** "3.0 s" past a second, "840 ms" below it — seconds there would read 0.8. */
+const elapsed = (ms) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`);
+
+function paintGitOutput(title, blocks, failed, took) {
+  gitOutText = blocks
+    .map((b) => (b.cmd ? `$ ${b.cmd}\n${b.out}` : b.out))
+    .join('\n\n');
+  $('gitout-title').textContent = title;
+  $('gitout-title').classList.toggle('is-bad', !!failed);
+  const count = blocks.length === 1 ? '1 command' : `${blocks.length} commands`;
+  setGitOutputState(failed ? 'failed' : 'done',
+    [failed ? 'Failed' : 'Done', took ? `in ${elapsed(took)}` : '', `· ${count}`]
+      .filter(Boolean).join(' '));
+  $('gitout-body').innerHTML = blocks.map((b) =>
+    (b.cmd ? `<p class="go-cmd">$ ${esc(b.cmd)}</p>` : '') +
+    `<pre class="go-out${b.bad ? ' bad' : ''}">${esc(b.out)}</pre>`).join('');
+  $('gitout').hidden = false;
+  $('gitout-body').scrollTop = 0;
+}
+
+/** Everything written since `since` that kept its output, oldest first. */
+async function outputSince(since) {
+  const rows = await call('app:log');
+  // Newest first from main. A refresh fires read-only commands right after an
+  // action; none of them keeps output, so none of them can appear here.
+  return (rows || [])
+    .filter((r) => r.at >= since && r.out)
+    .reverse()
+    .map((r) => ({ cmd: r.command, out: r.out, bad: Boolean(r.code) }));
+}
+
+async function showGitOutput(title, since, opts = {}) {
+  const took = opts.took;
+  let blocks = await outputSince(since);
+  /* A failure whose command kept nothing still has the message the renderer was
+     handed — better a dialog with only that than no dialog at all. */
+  if (!blocks.length && opts.fallback) {
+    blocks = [{ cmd: null, out: String(opts.fallback), bad: true }];
+  }
+  if (!blocks.length) return false;
+  paintGitOutput(title, blocks, opts.failed, took);
+  return true;
+}
+
+/* The corner asks for the last action, whenever it ran. */
+async function showLastGitOutput() {
+  if (lastRun && await showGitOutput(lastRun.title, lastRun.since,
+    { failed: lastRun.failed, took: lastRun.took })) return;
+  const rows = await call('app:log');
+  const newest = (rows || []).find((r) => r.out);
+  if (!newest) {
+    paintGitOutput('Git output', [{ cmd: null, out: 'Nothing has run yet.' }], false);
+    setGitOutputState('idle', '');
+    return;
+  }
+  paintGitOutput(newest.command.replace(/^git /, ''),
+    [{ cmd: newest.command, out: newest.out, bad: Boolean(newest.code) }],
+    Boolean(newest.code));
+}
+
+const closeGitOutput = () => {
+  $('gitout').hidden = true;
+  if (gitOutLive) gitOutDismissed = true;
+};
+
+$('gitout-close').addEventListener('click', closeGitOutput);
+$('gitout').addEventListener('click', (e) => { if (e.target === $('gitout')) closeGitOutput(); });
+$('gitout-copy').addEventListener('click', () => {
+  navigator.clipboard.writeText(gitOutText);
+  setStatus('Output copied', 'ok');
+});
+/* One listener on the list rather than one per row: the list is redrawn whole
+   every time it opens, and per-row listeners would be rebound with it. */
+$('logs-list').addEventListener('click', (e) => {
+  const row = e.target.closest('li.has-out');
+  if (row) row.classList.toggle('open');
+});
+$('logs-list').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const row = e.target.closest('li.has-out');
+  if (!row) return;
+  e.preventDefault();
+  row.classList.toggle('open');
+});
 
 $('logs-close').addEventListener('click', closeLogs);
 $('logs').addEventListener('click', (e) => { if (e.target === $('logs')) closeLogs(); });
@@ -5177,12 +5377,58 @@ $('logs-copy').addEventListener('click', async () => {
   // The pasted log carries the same three states the screen shows.
   navigator.clipboard.writeText(rows.map((r) => {
     const tail = r.error ? `  !! ${r.error}` : r.code ? `  (exit ${r.code})` : '';
-    return `${new Date(r.at).toISOString()}  ${r.ms}ms  ${r.command}${tail}`;
+    const head = `${new Date(r.at).toISOString()}  ${r.ms}ms  ${r.command}${tail}`;
+    // Indented under its command, so a pasted log still reads as one thing.
+    return r.out ? `${head}\n${r.out.split('\n').map((l) => `    ${l}`).join('\n')}` : head;
   }).join('\n'));
   setStatus('Activity log copied', 'ok');
 });
 
 /* ═════ status bar ══════════════════════════════════════════════ */
+
+/* One name for a whole way of reading a history, rather than four dials the
+   reader has to combine correctly. Each preset says how a line crosses lanes,
+   how tall a row is, how wide a lane is, and whether the branch pills keep a
+   column of their own — the four together are what makes a history look like
+   one application rather than another.
+
+   Named after the applications they are drawn from, which is a promise worth
+   making here in a way it was not for the join shapes: these are meant to be
+   recognisable, and if one drifts from what it is named after that is a bug in
+   the preset rather than a bad name. */
+const STYLE_PRESETS = {
+  gitbraid:   { label: 'GitBraid', join: 'curved', rowH: 31, lane: 22,
+                dot: 8, stroke: 2.5, corner: 9, padX: 16, inline: false },
+  /* Its graph keeps a column of its own, narrow, with small solid dots and thin
+     lines; the branch and tag pills sit in front of the subject in the column
+     SourceTree calls Description. Rows are a shade tighter than GitBraid's. */
+  /* A slant, not a corner. A tight radius turned every lane change into a
+     square bracket, which is the one thing SourceTree's graph never does: it
+     leaves a lane on a diagonal and picks the next one up on the way down. The
+     corner figure is what that diagonal is allowed to fall through — about
+     three-quarters of a row, which sets the angle. */
+  sourcetree: { label: 'SourceTree', join: 'diagonal', rowH: 28, lane: 13,
+                dot: 4, stroke: 2, corner: 11, padX: 11, inline: true },
+};
+
+/* The graph's dials and the list's row height are two halves of one setting:
+   the SVG lays rows out from Graph.ROW_H and the list sizes them from --row-h,
+   and a disagreement between the two shears the dots off their rows. */
+function applyGraphLook() {
+  const st = STYLE_PRESETS[prefs.uiStyle] || STYLE_PRESETS.gitbraid;
+  window.Graph.setStyle(st.join);
+  window.Graph.setMetrics({ rowH: st.rowH, laneW: st.lane, dotR: st.dot,
+    stroke: st.stroke, corner: st.corner, padX: st.padX });
+  document.documentElement.style.setProperty('--row-h', `${window.Graph.ROW_H}px`);
+  $('app').classList.toggle('refs-inline', st.inline);
+  for (const key of Object.keys(STYLE_PRESETS)) {
+    $('app').classList.toggle(`style-${key}`, prefs.uiStyle === key);
+  }
+}
+
+/** The preset decides whether the pills keep a column; nothing else reads it. */
+const refsAreInline = () =>
+  (STYLE_PRESETS[prefs.uiStyle] || STYLE_PRESETS.gitbraid).inline;
 
 function renderZoomLevel() {
   $('sb-zoom-level').textContent = `${Math.round(1.2 ** zoomLevel * 100)}%`;
@@ -5190,6 +5436,15 @@ function renderZoomLevel() {
 
 $('sb-term').addEventListener('click', toggleTerm);
 $('sb-logs').addEventListener('click', openLogs);
+/* The status line is the last thing git said, so clicking it asks for the rest.
+   It sits at the far left of the bar, which is where the eye already is when a
+   command has just finished — and the glyph beside it is there because a
+   control that only appears under the pointer is one nobody finds. */
+$('status-text').addEventListener('click', showLastGitOutput);
+$('sb-out').addEventListener('click', showLastGitOutput);
+$('status-text').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showLastGitOutput(); }
+});
 $('sb-zoom-in').addEventListener('click', () => applyZoom(zoomLevel + 1));
 $('sb-zoom-out').addEventListener('click', () => applyZoom(zoomLevel - 1));
 $('sb-zoom-level').addEventListener('click', () => applyZoom(0));
@@ -6873,7 +7128,7 @@ $('chk-amend').addEventListener('change', async () => {
 
 /* The overlays that own the keyboard while they are up — the same set the
    Esc chain below backs out of, in the same order. */
-const KEY_BLOCKERS = ['modal', 'ctxmenu', 'logs', 'prefs', 'about', 'notes', 'fhist'];
+const KEY_BLOCKERS = ['modal', 'ctxmenu', 'gitout', 'logs', 'prefs', 'about', 'notes', 'fhist'];
 
 /* keyboard — Ctrl+O/N/I, the zoom keys, F5 and the panel toggles are all
    menu accelerators now, handled in the main process. */
@@ -6881,6 +7136,7 @@ document.addEventListener('keydown', (e) => {
   // Esc backs out of whatever is covering the history, in front-to-back order.
   if (e.key === 'Escape' && $('modal').hidden) {
     if (!$('ctxmenu').hidden) { closeContextMenu(); return; }
+    if (!$('gitout').hidden) { closeGitOutput(); return; }
     if (!$('logs').hidden) { closeLogs(); return; }
     if (!$('prefs').hidden) { closePrefs(); return; }
     if (!$('about').hidden) { closeAbout(); return; }

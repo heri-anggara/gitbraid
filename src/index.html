@@ -907,7 +907,18 @@
 
   <!-- ── status bar ──────────────────────────────────────────── -->
   <footer class="statusbar">
-    <span id="status-text" class="status-text">Ready</span>
+    <!-- A terminal glyph, because what it opens is what a terminal would have
+         printed. Beside the status line rather than over on the right: the two
+         say the same thing at different lengths. -->
+    <button class="sb-btn sb-out" id="sb-out" title="What git said — the output of the last action">
+      <svg class="sb-i" viewBox="0 0 14 14" aria-hidden="true">
+        <path d="M3 4.2 5.6 7 3 9.8M7.4 9.8h3.6"
+              fill="none" stroke="currentColor" stroke-width="1.4"
+              stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <span id="status-text" class="status-text" role="button" tabindex="0"
+          title="What git said — the output of the last action">Ready</span>
     <span id="status-spinner" class="spinner" hidden></span>
 
     <span class="sb-right">
@@ -956,6 +967,33 @@
 </div>
 
 <!-- activity log -->
+<!-- What git said, in the order it said it. The activity log is the record of
+     every command; this is one command's output, shown the way a terminal would
+     have shown it. -->
+<div id="gitout" class="logs" hidden>
+  <div class="logs-card gitout-card" role="dialog" aria-modal="true" aria-label="Git output">
+    <header class="logs-head">
+      <div>
+        <h3 id="gitout-title">Git output</h3>
+        <p class="logs-sub gitout-state" id="gitout-sub">
+          <span class="go-mark" id="gitout-mark"></span>
+          <span id="gitout-state"></span>
+        </p>
+      </div>
+      <span class="logs-tools">
+        <button class="btn btn-sm" id="gitout-copy">Copy</button>
+        <button class="fv-ib fv-close" id="gitout-close" title="Close (Esc)">
+          <svg class="fv-i" viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M3 3 9 9M9 3 3 9" fill="none" stroke="currentColor"
+                  stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </span>
+    </header>
+    <div class="gitout-body" id="gitout-body"></div>
+  </div>
+</div>
+
 <div id="logs" class="logs" hidden>
   <div class="logs-card" role="dialog" aria-modal="true" aria-label="Activity log">
     <header class="logs-head">

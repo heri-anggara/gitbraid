@@ -1905,6 +1905,103 @@ textarea {
 .logs-tools { margin-left: auto; display: flex; align-items: center; gap: 6px; }
 .logs-count { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
 
+/* One command's output, set like a terminal: the command line it came from,
+   then the answer under it, monospaced and unwrapped-looking. Narrower than the
+   activity log because output lines are short and a wide column makes them
+   drift apart. */
+.gitout-card { max-width: 760px; }
+/* A failed action says so in its own title rather than in a second window. */
+#gitout-title.is-bad { color: var(--del-ink); }
+/* Still going, or over and how it went. The mark carries the colour so the
+   words stay readable at the weight the rest of the subtitle is set in. */
+.gitout-state { display: flex; align-items: center; gap: 6px; }
+.go-mark { flex: none; font-size: 11px; line-height: 1; }
+.go-done { color: var(--add-ink); }
+.go-failed { color: var(--del-ink); }
+/* A spinner rather than a glyph: the one state that has to look like time
+   passing is the one where time is passing. */
+.go-running {
+  width: 10px; height: 10px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .go-running { animation-duration: 2.4s; } }
+.go-out.bad { color: var(--del-ink); }
+/* The glyph beside the status line, quieter than the ones on the right because
+   the words next to it already carry the message. */
+.sb-out { margin-right: 2px; }
+/* While it runs. Dimmer than the finished output, because these are git's
+   progress counters rather than its answer, and a minimum height keeps the
+   dialog from growing line by line under the reader's eyes. */
+.go-live { min-height: 120px; color: var(--text-dim); }
+
+/* ── the SourceTree preset ─────────────────────────────────────── */
+/* Its pills are squarer than GitBraid's and lean on a border rather than a
+   wash, which is what lets a row carry three of them without the colour
+   drowning the sentence they sit in front of. */
+.style-sourcetree .pill {
+  border-radius: 2px;
+  padding: 0 5px;
+  background: color-mix(in srgb, var(--pc) 12%, transparent);
+  border-color: color-mix(in srgb, var(--pc) 70%, transparent);
+}
+/* The checked-out branch keeps its solid fill — that is the one thing in the
+   column worth shouting, and both applications shout it. */
+.style-sourcetree .pill.current { background: var(--pc); border-color: var(--pc); }
+/* No lane wash across the rows. GitBraid stripes each row in its lane's colour,
+   which is how its graph and its list stay tied together; SourceTree leaves the
+   list plain and lets the graph column carry the colour on its own. Keeping the
+   stripes here would be the one thing that stopped this looking like what it is
+   named after. */
+.style-sourcetree #commit-list .commit-row { --lane-tint: 0%; }
+
+/* ── branch names beside the subject ───────────────────────────── */
+/* The pills sit in the message cell, so the cell has to lay them out in a row
+   with the text rather than let them stack. Baseline alignment keeps a pill
+   from riding above the words it belongs to. */
+.refs-inline .c-msg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+/* The subject takes what is left and gives way first: a long branch name should
+   not be the thing that gets cut. */
+.refs-inline .c-msg-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.refs-inline .c-msg .pill { flex: none; }
+/* Body text is a second line's worth of detail and has no room left here. */
+.refs-inline .c-msg-body { display: none; }
+.gitout-body {
+  margin: 0;
+  padding: 10px 12px 14px;
+  overflow: auto;
+  background: var(--surface-2);
+}
+.go-cmd {
+  margin: 14px 0 4px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+.go-cmd:first-child { margin-top: 0; }
+.go-out {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .logs-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; }
 .logs-list li {
   display: grid;
@@ -1917,6 +2014,38 @@ textarea {
   font-size: 11.5px;
 }
 .logs-list li:hover { background: var(--surface-2); }
+
+/* A row that kept its output opens to show it. The chevron is the only hint
+   the row is more than a line, so it turns rather than appearing on hover —
+   a control that shows up only under the pointer is a control nobody finds. */
+.logs-list li.has-out { cursor: pointer; }
+.logs-list li.has-out:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.lg-chev {
+  display: inline-block;
+  width: 10px;
+  margin-right: 4px;
+  color: var(--text-faint);
+  transition: transform 120ms ease;
+}
+.logs-list li.open .lg-chev { transform: rotate(90deg); }
+.lg-out {
+  display: none;
+  grid-column: 2 / -1;
+  margin: 4px 0 2px;
+  padding: 6px 8px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.logs-list li.open .lg-out { display: block; }
 .lg-time { color: var(--text-faint); }
 .lg-cmd { color: var(--text-dim); overflow-wrap: anywhere; }
 .lg-ms { color: var(--text-faint); text-align: right; font-variant-numeric: tabular-nums; }
@@ -3462,7 +3591,18 @@ mark {
   font-size: 11px;
   color: var(--text-faint);
 }
-.status-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Clickable, but not dressed as a button: it is a line of prose that happens
+   to open the log, and a bordered control here would compete with the status
+   itself for the corner. The hover underline is the whole affordance. */
+.status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.status-text:hover { text-decoration: underline; text-underline-offset: 2px; }
+.status-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .status-text.error { color: var(--danger); }
 .status-text.ok { color: var(--add); }
 
@@ -3547,23 +3687,6 @@ mark {
 .modal-field input:focus { border-color: var(--accent); outline: none; }
 .modal-field .with-button { display: flex; gap: .45em; }
 .modal-field .with-button input[type="text"] { flex: 1; min-width: 0; }
-/* What git actually printed. Monospace because it is output, scrollable because
-   a rejected push can run to a dozen lines, and selectable because the first
-   thing anyone does with an error is paste it somewhere. */
-.fail-out {
-  max-height: 220px;
-  padding: 9px 10px;
-  overflow: auto;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  font-family: var(--mono);
-  font-size: 11.5px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  color: var(--text-dim);
-  user-select: text;
-}
 
 .modal-note {
   margin: .15em 0 0;
