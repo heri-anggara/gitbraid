@@ -134,8 +134,11 @@ const SOMETIMES = new Set(['stash', 'branch', 'tag']);
 const LISTING = new Set(['list', '-l', '--list', '--format', '--get', '--get-all',
   '--get-regexp', '-v', '--verbose', '--points-at', '--merged', '--no-merged']);
 
-const OUT_MAX_LINES = 120;
-const OUT_MAX_CHARS = 8000;
+/* Room for a real operation rather than a demonstration: a merge across two
+   hundred files prints a line for each, and cutting that at 120 hides the half
+   of the change the reader is most likely scrolling to find. */
+const OUT_MAX_LINES = 400;
+const OUT_MAX_CHARS = 24000;
 
 function keepsOutput(args, code) {
   // A failure is worth reading whatever ran, including the read-only commands.
@@ -186,8 +189,94 @@ handle('app:log', async () => gitLog.slice().reverse());
 handle('app:clearLog', async () => { gitLog.length = 0; return true; });
 
 /** `extraEnv` is for the few commands that need to drive git's editors. */
+/* Whole lines only. git writes progress by rewriting one line with \r, so a
+   chunk can carry half a line, several lines, or a counter climbing over
+   itself; the caller wants what a terminal would have had on screen. */
+function lineFeeder(onLine) {
+  let pending = '';
+  return {
+    push(chunk) {
+      pending += chunk;
+      const parts = pending.split('\n');
+      pending = parts.pop();
+      for (const part of parts) {
+        const shown = part.split('\r').pop().trimEnd();
+        if (shown) onLine(shown);
+      }
+    },
+    end() {
+      const shown = pending.split('\r').pop().trim();
+      if (shown) onLine(shown);
+      pending = '';
+    },
+  };
+}
+
+/* Sent as the command runs, for the window that shows what git said. Separate
+   from repo:progress, which carries phases and percentages for the toolbar
+   button: this one is the raw transcript and would swamp a button's label. */
+function sendOutput(payload) {
+  win?.webContents.send('repo:output', payload);
+}
+
+/* The streaming half of git(). Only the commands that narrate come through
+   here — a merge, a push, a git-flow finish that runs four of them — because
+   `git status` runs on every refresh and its answer is data being parsed, not
+   a transcript anyone reads. */
+function gitStreaming(cwd, args, extraEnv, started) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', args, {
+      cwd, env: extraEnv ? { ...gitEnv(), ...extraEnv } : gitEnv(),
+    });
+    sendOutput({ kind: 'cmd', text: `git ${args.join(' ')}` });
+
+    let out = '';
+    let err = '';
+    let over = false;
+    /* execFile enforced maxBuffer for us and spawn does not. Past the cap the
+       process is left alone to finish — killing it half way through a merge
+       would be a far worse outcome than a truncated transcript. */
+    const room = () => out.length + err.length < MAX_BUFFER;
+    const feedOut = lineFeeder((line) => sendOutput({ kind: 'line', text: line }));
+    const feedErr = lineFeeder((line) => sendOutput({ kind: 'line', text: line }));
+
+    child.stdout.on('data', (d) => {
+      if (room()) out += d; else over = true;
+      feedOut.push(String(d));
+    });
+    child.stderr.on('data', (d) => {
+      if (room()) err += d; else over = true;
+      feedErr.push(String(d));
+    });
+    child.on('error', (e) => {
+      recordGit(cwd, args, Date.now() - started, e.message, 1, e.message);
+      reject(e);
+    });
+    child.on('close', (code) => {
+      feedOut.end();
+      feedErr.end();
+      if (over) out += '\n… output truncated';
+      const both = `${out}\n${err}`;
+      if (code !== 0) {
+        // Same rule as the buffered path: take whichever stream actually spoke.
+        const said = err.trim() || out.trim();
+        const e = new Error(said || `git exited with ${code}`);
+        e.stderr = err;
+        e.stdout = out;
+        recordGit(cwd, args, Date.now() - started, said, code, both);
+        reject(e);
+        return;
+      }
+      recordGit(cwd, args, Date.now() - started, null, 0, both);
+      resolve(out);
+    });
+  });
+}
+
 function git(cwd, args, extraEnv = null) {
   const started = Date.now();
+  // The ones worth watching are exactly the ones worth keeping.
+  if (keepsOutput(args, 0)) return gitStreaming(cwd, args, extraEnv, started);
   return new Promise((resolve, reject) => {
     execFile(
       'git',

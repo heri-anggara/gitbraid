@@ -427,6 +427,35 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Semua perintah yang bercerita kini mengalir, dan keluarannya diberi warna**
+- Sebelumnya hanya fetch/pull/push/clone yang mengalir, lewat `gitProgress`.
+  Sisanya memakai `execFile` yang baru menyerahkan keluarannya setelah selesai —
+  dan itu termasuk **git-flow finish**, yang menjalankan empat perintah
+  berurutan selama 3,4 detik lalu menumpahkan semuanya sekaligus
+- Saya sempat menolak ini dengan alasan "90 pemanggilan `git()` demi 20
+  milidetik". **Taksiran itu salah dua kali**: yang berubah cuma satu fungsi,
+  pemanggilnya tidak tersentuh sama sekali; dan operasi berlapis memakan detik,
+  bukan milidetik
+- `git()` bercabang pada `keepsOutput()` — daftar yang sama yang menentukan
+  keluaran mana yang disimpan. Yang bercerita memakai `spawn` dan mengalir; yang
+  membaca saja tetap `execFile`. `git status` jalan pada tiap penyegaran, dan
+  menyiarkannya baris demi baris akan membanjiri IPC tanpa ada yang membacanya
+- Saluran **`repo:output` terpisah dari `repo:progress`**. Yang kedua membawa
+  fase dan persentase untuk label tombol; menaruh transkrip mentah di sana akan
+  menenggelamkan label sebuah tombol
+- `execFile` menegakkan `maxBuffer`, `spawn` tidak. Melewati batas, prosesnya
+  **dibiarkan selesai** dan transkripnya yang dipotong — membunuh git di tengah
+  merge jelas hasil yang jauh lebih buruk daripada catatan yang terpotong
+- Batas catatan dinaikkan 120 → 400 baris. Merge dua ratus berkas mencetak satu
+  baris per berkas, dan memotongnya di 120 menyembunyikan separuh perubahan yang
+  justru paling dicari
+- **Pewarnaannya sengaja dangkal.** Keluaran git bukan bahasa, dan aturan yang
+  terlalu bersemangat akan mewarnai merah kalimat biasa pertama kali seseorang
+  menamai cabangnya "error". Lima aturan saja, ditambah tanda plus dan minus di
+  diffstat — satu-satunya tempat git sendiri sudah mengharapkan warna
+- Terukur pada merge 240 berkas: **481 baris mengalir** saat berjalan, "Running…"
+  tertangkap, selesai dalam 6,0 detik, **480 span berwarna**
+
 **Aksi yang tidak perlu bicara**
 - Pindah cabang membuka dialog berisi tiga perintah — `stash push`, `checkout`,
   `stash pop` — dan yang terakhir menjawab dengan status lengkap: berkas
