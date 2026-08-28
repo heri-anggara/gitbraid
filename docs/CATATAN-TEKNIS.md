@@ -427,6 +427,33 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Celah di antara perintah, dan urutan transkripnya**
+- Celah itu bukan soal urutan melainkan **ruang kosong**. `min-height: 120px`
+  saya pasang di kelas `.go-live` supaya dialognya tidak tumbuh baris demi baris
+  saat perintah pertama mulai bicara — tapi kelas itu melekat pada **semua**
+  panel, bukan hanya yang sedang terisi. Perintah yang menjawab satu baris
+  (`Deleted branch fix/order-detail`) tetap menyisakan kotak 120px di bawahnya
+- Terukur, saat berjalan: panel selesai berisi 1 baris setinggi **120px** di
+  samping panel aktif berisi 482 baris setinggi 8962px. Sesudah aturannya
+  dipindah ke `#gitout-live`, panel yang sama jadi **19px**
+- Kelas `.go-live` lalu tidak menata apa pun lagi, jadi dihapus dari markup
+  alih-alih ditinggalkan sebagai kelas yang tidak berarti
+- **Urutan transkripnya memang salah, terpisah dari itu.** `stdout` dan `stderr`
+  digabung sebagai `${out}\n${err}` — seluruh stdout dulu, baru seluruh stderr,
+  apa pun yang bicara lebih dahulu. Untuk `git push` hampir semuanya di stderr
+  jadi tak terlihat; untuk perintah yang memakai keduanya, tersusun ulang
+- Penampung **ketiga** ditambahkan, dan itu tidak mubazir: `out` dan `err` adalah
+  kontrak — pemanggil yang gagal menerima `e.stdout` dan `e.stderr`, dan dua
+  tempat di `main.js` membedakannya. Yang ketiga adalah transkrip, diisi
+  **baris utuh** dalam urutan kedua aliran benar-benar bicara
+- Baris utuh, bukan potongan mentah: sebuah potongan bisa berakhir di tengah
+  baris, dan menyelang-nyeling dua potongan seperti itu akan menyambung satu
+  baris ke dalam baris lain
+- Yang **tidak** bisa dijanjikan: urutan sempurna. Dua pipa punya dua penyangga
+  di kernel, dan terminal pun tidak mendapat jaminan itu. Yang dijanjikan adalah
+  sama benarnya dengan terminal. Terukur pada merge 40 berkas: empat baris
+  pertama dan dua baris terakhir catatan **identik** dengan keluaran terminal
+
 **Semua perintah yang bercerita kini mengalir, dan keluarannya diberi warna**
 - Sebelumnya hanya fetch/pull/push/clone yang mengalir, lewat `gitProgress`.
   Sisanya memakai `execFile` yang baru menyerahkan keluarannya setelah selesai —

@@ -1935,7 +1935,11 @@ textarea {
 /* While it runs. Dimmer than the finished output, because these are git's
    progress counters rather than its answer, and a minimum height keeps the
    dialog from growing line by line under the reader's eyes. */
-.go-live { min-height: 120px; }
+/* Only the pane still being written to. It was on every pane, so a command
+   answering with one line — "Deleted branch fix/order-detail" — left a hundred
+   and twenty pixels of nothing under it, and a run of short commands read as a
+   list of gaps. Measured: an empty pane 120px tall beside a full one at 8962. */
+#gitout-live { min-height: 120px; }
 /* Coloured for what a line says. Restrained on purpose: git's output is mostly
    ordinary sentences, and a transcript where every second line is tinted is
    harder to read than a plain one, not easier. */

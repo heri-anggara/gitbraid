@@ -5241,7 +5241,7 @@ function openGitOutputLive(verb) {
   $('gitout-title').classList.remove('is-bad');
   setGitOutputState('running', 'Running…');
   // Filled command by command as they run, in the shape the finished view uses.
-  $('gitout-body').innerHTML = '<pre class="go-out go-live" id="gitout-live"></pre>';
+  $('gitout-body').innerHTML = '<pre class="go-out" id="gitout-live"></pre>';
   $('gitout').hidden = false;
 }
 
@@ -5263,7 +5263,7 @@ function appendGitOutputCommand(text) {
   head.textContent = `$ ${text}`;
   body.appendChild(head);
   const pane = document.createElement('pre');
-  pane.className = 'go-out go-live';
+  pane.className = 'go-out';
   pane.id = 'gitout-live';
   body.appendChild(pane);
   liveHead = null;
