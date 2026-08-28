@@ -1935,7 +1935,18 @@ textarea {
 /* While it runs. Dimmer than the finished output, because these are git's
    progress counters rather than its answer, and a minimum height keeps the
    dialog from growing line by line under the reader's eyes. */
-.go-live { min-height: 120px; color: var(--text-dim); }
+.go-live { min-height: 120px; }
+/* Coloured for what a line says. Restrained on purpose: git's output is mostly
+   ordinary sentences, and a transcript where every second line is tinted is
+   harder to read than a plain one, not easier. */
+.o-bad   { color: var(--del-ink); }
+.o-warn  { color: var(--pending-text); }
+.o-faint { color: var(--text-faint); }
+.o-good  { color: var(--add-ink); }
+/* The plusses and minuses in a diffstat, which are the one place git already
+   expects colour. */
+.o-add { color: var(--add-ink); }
+.o-del { color: var(--del-ink); }
 
 /* ── the SourceTree preset ─────────────────────────────────────── */
 /* Its pills are squarer than GitBraid's and lean on a border rather than a

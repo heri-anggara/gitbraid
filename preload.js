@@ -37,7 +37,7 @@ const CHANNELS = new Set([
 
 /* Main-to-renderer pushes. Kept separate from CHANNELS: nothing here may be
    invoked, and nothing there may be subscribed to. */
-const EVENTS = new Set(['repo:progress', 'menu:action', 'term:out', 'term:exit',
+const EVENTS = new Set(['repo:progress', 'repo:output', 'menu:action', 'term:out', 'term:exit',
   'update:progress']);
 
 contextBridge.exposeInMainWorld('gitbraid', {

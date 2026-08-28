@@ -5240,9 +5240,68 @@ function openGitOutputLive(verb) {
   $('gitout-title').textContent = verb;
   $('gitout-title').classList.remove('is-bad');
   setGitOutputState('running', 'Running…');
+  // Filled command by command as they run, in the shape the finished view uses.
   $('gitout-body').innerHTML = '<pre class="go-out go-live" id="gitout-live"></pre>';
   $('gitout').hidden = false;
 }
+
+/* A command starting: its own header, the way a shell echoes one, and a fresh
+   pane under it. The old pane gives up the id before the new one takes it —
+   two elements answering to `gitout-live` at once is the kind of thing that
+   works until the day it does not. */
+function appendGitOutputCommand(text) {
+  if (!gitOutLive) return;
+  const body = $('gitout-body');
+  const previous = $('gitout-live');
+  if (previous) {
+    previous.id = '';
+    // An empty pane means the command before it said nothing at all.
+    if (!previous.textContent) previous.remove();
+  }
+  const head = document.createElement('p');
+  head.className = 'go-cmd';
+  head.textContent = `$ ${text}`;
+  body.appendChild(head);
+  const pane = document.createElement('pre');
+  pane.className = 'go-out go-live';
+  pane.id = 'gitout-live';
+  body.appendChild(pane);
+  liveHead = null;
+  body.scrollTop = body.scrollHeight;
+}
+
+window.gitbraid.on('repo:output', (m) => {
+  if (m.kind === 'cmd') appendGitOutputCommand(m.text);
+  else appendGitOutputLine(m.text);
+});
+
+/* What each line of git's output is, so it can be coloured for what it says
+   rather than for where it appeared. Deliberately shallow: git's output is not
+   a language, and a rule that guesses too eagerly will paint an ordinary
+   sentence red the first time someone names a branch "error". */
+const OUT_RULES = [
+  [/^(fatal|error|CONFLICT)\b/, 'bad'],
+  [/^(warning|hint)\b/, 'warn'],
+  [/^remote:/, 'faint'],
+  [/^(Switched to|Already on|Your branch|Deleted branch|Dropped |Saved working)/, 'good'],
+  [/\bdone\.$/, 'faint'],
+];
+
+/** A diffstat's bar: "src/app.ts | 24 ++++----" — its plusses and minuses. */
+const STAT_BAR = /^(\s*\S.*?\|\s*\d+\s*)(\++)(-*)(\s*)$/;
+
+function outLineHtml(line) {
+  const bar = STAT_BAR.exec(line);
+  if (bar) {
+    return `${esc(bar[1])}<span class="o-add">${esc(bar[2])}</span>` +
+      `<span class="o-del">${esc(bar[3])}</span>${esc(bar[4])}`;
+  }
+  const hit = OUT_RULES.find(([re]) => re.test(line));
+  return hit ? `<span class="o-${hit[1]}">${esc(line)}</span>` : esc(line);
+}
+
+/** A whole block of recorded output, line by line. */
+const outHtml = (text) => String(text).split('\n').map(outLineHtml).join('\n');
 
 /* "remote: Compressing objects:  58% (36/62)" and the line before it are the
    same line rewritten, and a terminal shows one of them. Comparing what is left
@@ -5257,6 +5316,7 @@ function appendGitOutputLine(text) {
   if (!live) return;
   const head = counterHead(text);
   const lines = live.textContent ? live.textContent.split('\n') : [];
+  // textContent, never innerHTML: the markup is paint, the text is the record.
   /* Replace rather than append while a counter climbs, so the pane reads the
      way the terminal did instead of scrolling a hundred near-identical lines
      past — and so the running view matches the finished one, which collapses
@@ -5264,7 +5324,7 @@ function appendGitOutputLine(text) {
   if (head && head !== text && head === liveHead && lines.length) lines[lines.length - 1] = text;
   else lines.push(text);
   liveHead = head;
-  live.textContent = lines.join('\n');
+  live.innerHTML = lines.map(outLineHtml).join('\n');
   const body = $('gitout-body');
   body.scrollTop = body.scrollHeight;
 }
@@ -5295,7 +5355,7 @@ function paintGitOutput(title, blocks, failed, took) {
       .filter(Boolean).join(' '));
   $('gitout-body').innerHTML = blocks.map((b) =>
     (b.cmd ? `<p class="go-cmd">$ ${esc(b.cmd)}</p>` : '') +
-    `<pre class="go-out${b.bad ? ' bad' : ''}">${esc(b.out)}</pre>`).join('');
+    `<pre class="go-out${b.bad ? ' bad' : ''}">${outHtml(b.out)}</pre>`).join('');
   $('gitout').hidden = false;
   $('gitout-body').scrollTop = 0;
 }
