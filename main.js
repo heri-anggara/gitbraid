@@ -232,13 +232,29 @@ function gitStreaming(cwd, args, extraEnv, started) {
 
     let out = '';
     let err = '';
+    /* A third accumulator, and not redundant. `out` and `err` are the contract:
+       a caller that fails gets e.stdout and e.stderr, and two places in this
+       file tell them apart. `said` is the transcript — the same lines in the
+       order the two streams actually spoke, which is what a reader watching the
+       window sees and what a terminal would have shown. Concatenating the two
+       afterwards, as this did, always put the whole of stdout before the whole
+       of stderr no matter which came first. */
+    let said = '';
     let over = false;
     /* execFile enforced maxBuffer for us and spawn does not. Past the cap the
        process is left alone to finish — killing it half way through a merge
        would be a far worse outcome than a truncated transcript. */
     const room = () => out.length + err.length < MAX_BUFFER;
-    const feedOut = lineFeeder((line) => sendOutput({ kind: 'line', text: line }));
-    const feedErr = lineFeeder((line) => sendOutput({ kind: 'line', text: line }));
+    /* Whole lines into `said`, not raw chunks: a chunk can end mid-line, and
+       interleaving two of those would splice one line into another. */
+    const emit = (line) => {
+      said += `${line}\n`;
+      sendOutput({ kind: 'line', text: line });
+    };
+    // One feeder per stream, because a newline in one does not end a partial
+    // line in the other — but both empty into the same transcript, in turn.
+    const feedOut = lineFeeder(emit);
+    const feedErr = lineFeeder(emit);
 
     child.stdout.on('data', (d) => {
       if (room()) out += d; else over = true;
@@ -255,8 +271,8 @@ function gitStreaming(cwd, args, extraEnv, started) {
     child.on('close', (code) => {
       feedOut.end();
       feedErr.end();
-      if (over) out += '\n… output truncated';
-      const both = `${out}\n${err}`;
+      if (over) said += '\n… output truncated';
+      const both = said;
       if (code !== 0) {
         // Same rule as the buffered path: take whichever stream actually spoke.
         const said = err.trim() || out.trim();
