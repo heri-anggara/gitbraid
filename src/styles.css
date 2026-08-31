@@ -2980,22 +2980,8 @@ mark {
 }
 .history-head > span:first-child { border-left: 0; }
 
-/* Its own compositing layer, so scrolling can shift one rather than repaint the
-   window. Traced while scrolling maximised: painting cost about 5 ms a frame,
-   and hiding the entire commit list only brought that to 2.6 — the remaining
-   2.6 belonged to the sidebar and toolbar, which do not move at all. Whatever
-   else is true, repainting them on every scroll frame is waste.
-
-   `contain: paint` promises the browser nothing inside draws outside this box,
-   which is already true: the graph layer clips itself to its column and the
-   rows cannot leave. */
 .history-scroll {
-  grid-row: 2;
-  position: relative;
-  overflow: auto;
-  contain: paint;
-  will-change: scroll-position;
-}
+  grid-row: 2; position: relative; overflow: auto; }
 
 /* The SVG sits behind the rows, shifted past the branch column and below the
    sticky header. */
