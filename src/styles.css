@@ -217,6 +217,101 @@
                                uses, so the conflict marker adds no sixth hue */
 }
 
+/* Night Sky. Eight colours running blue to violet to pink, and the whole
+   palette is cool — there is no green in it, no amber and no red. That decides
+   two things, and both are written where they happen: the semantic colours a
+   diff needs are the only ones derived from outside it, and the ground is one
+   of the eight taken darker rather than used as it came.
+
+   The ground first. #1e0f75 is the darkest of the eight and would serve, but
+   measured against it the mid blue reaches only 3.99:1 and could never be
+   writing — the one colour in the set built to be clicked would have been the
+   one that could not be read. Taken down to #0e0a3c it reaches 4.89:1, and
+   #1e0f75 keeps a place of its own as the highest raised surface. Every one of
+   the eight now has a role.
+
+   The surface ramp and the rules are pitched at the figures the other two
+   themes already use, so a reader moving between them finds the same window:
+   surfaces 1.09 to 1.22 against the ground where the dark theme runs 1.08 to
+   1.29, rules at 1.42 and 1.61 where it has 1.34 and 1.68. */
+:root[data-theme="night"] {
+  --bg:          #0e0a3c;   /* the palette's indigo, taken darker */
+  --bg-graph:    #100b45;
+  --surface:     #150e55;
+  --surface-2:   #1a0f68;
+  --surface-3:   #1e0f75;   /* the palette's indigo, untouched */
+  --line:        #2a1f80;
+  --line-soft:   #191159;
+  --line-strong: #1c1dab;   /* the palette's blue-violet, untouched */
+  --scroll:      #2a1f80;
+  --scroll-hi:   #3d34b8;
+
+  /* 12.9:1 and 10.7:1, both straight from the palette — the two palest of the
+     eight were always going to be the writing. The faint rank is the dim one
+     taken down, at 5.7:1. */
+  --text:        #cbd8e8;
+  --text-dim:    #aec6e5;
+  --text-faint:  #7f8cc4;
+
+  /* 4.9:1, and the reason the ground was darkened at all. Its ink is the night
+     below the ground rather than white: nothing else in this theme is white,
+     and one white thing would be the only glare in it. */
+  --accent:      #3785d8;
+  --accent-hi:   #5a9ce4;
+  --accent-ink:  #0b0730;
+  --accent-text: #3785d8;
+
+  /* No green, no amber, no red anywhere in the eight, and a diff whose
+     additions and deletions are both pink cannot be read. So exactly two
+     colours here come from outside the palette, and both are drawn toward it:
+     a mint that sits with the blues, and a rose pulled out of the palette's own
+     pink until it is unmistakably the warmer of the two. Pending takes the
+     lilac, which is in the palette and separates cleanly from both. */
+  --pending-text: #c08ce2;   /* 7.2:1 */
+  --pending:     #c08ce2;
+  --add:         #5fd6b0;    /* 10.4:1 */
+  --del:         #f2617f;    /* 6.0:1 */
+  --map-add:     #3ee0ae;
+  --map-del:     #ff5573;
+  --danger:      #f2617f;
+
+  /* .18 where both other themes use .10, and for the same reason the selected
+     row in Shore needed more: a ground this saturated eats a wash laid over
+     it. At .10 the added line came out only 7 points greener than it was red,
+     against the dark theme's 14, and the two washes sat 31 apart in RGB —
+     close enough that a diff read as one colour. At .18 the added line is 18
+     points greener, the two are 58 apart, and the text over them still holds
+     9:1. */
+  --add-bg:      rgba(95, 214, 176, .18);
+  --del-bg:      rgba(242, 97, 127, .18);
+  --add-ink:     #9ce8cf;
+  --del-ink:     #f9a8ba;
+
+  /* .26 of the accent, which lands 1.38:1 above the ground — the same step
+     Shore's selected row makes and a little more than the dark theme's 1.25.
+     It has to be the accent and not one of the paler eight: the ground is
+     already blue, and a pale wash over it reads as haze rather than as a row
+     someone chose. */
+  --row-hover:   rgba(55, 133, 216, .10);
+  --row-sel:     rgba(55, 133, 216, .26);
+  --lane-tint:   14%;
+  --pill-fill:   22%;
+  --pill-line:   55%;
+
+  /* Ahead reads on the accent blue, behind on the lilac, both with the night
+     as their ink: 5.1:1 and 6.0:1. */
+  --badge-up-1:   #5a9ce4;
+  --badge-up-2:   #3785d8;
+  --badge-up-ink: #0b0730;
+  --badge-dn-1:   #cb9de8;
+  --badge-dn-2:   #c08ce2;
+  --badge-dn-ink: #260c3f;
+
+  --ink-on-fill: #0b0730;
+  --status-u:    #e793c6;   /* the palette's pink, 8.3:1 — a step lighter than
+                               --del so a conflict and a deletion stay apart */
+}
+
 /* The toggle shows the theme you would switch *to*. Shore is daylight, so it
    stands where light stands: the button leaves it for dark and returns to it. */
 .ic-sun { display: none; }
@@ -2994,6 +3089,24 @@ textarea {
   --hl-attr: #7a5218;
   --hl-prop: #17706a;
   --hl-op:   #6a453b;
+}
+/* Five of these are the palette itself — keywords take the lilac, literals the
+   pink, numbers the soft pink. The three the palette cannot supply are the
+   ones code needs and a night sky does not have: a mint for strings, a cyan
+   for types, a teal for properties, each pulled toward the blues so they read
+   as part of the same sky. */
+:root[data-theme="night"] {
+  --hl-com:  #6f7ab0;
+  --hl-str:  #6fd8b4;
+  --hl-num:  #ebb2c3;
+  --hl-key:  #c08ce2;
+  --hl-lit:  #e793c6;
+  --hl-type: #63cfe8;
+  --hl-fn:   #7fb0ee;
+  --hl-tag:  #f2617f;
+  --hl-attr: #d9a7e8;
+  --hl-prop: #6fd8d0;
+  --hl-op:   #9aa6d8;
 }
 .hl-com  { color: var(--hl-com); font-style: italic; }
 .hl-str  { color: var(--hl-str); }
