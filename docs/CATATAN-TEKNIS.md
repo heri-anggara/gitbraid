@@ -427,6 +427,33 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Gulir riwayat pada layar 120Hz**
+- Anggaran satu frame di 120Hz adalah **8,33 ms**. Terukur pada riwayat 247
+  baris, satu `renderRows()` memakan **12,90 ms** — jadi tiap kali overscan
+  habis, tepatnya tiap 24 baris tergulir, satu frame terlewat
+- **Grafnya bukan penyebabnya**, walau itu tebakan pertama yang wajar:
+  membangun seluruh string SVG 0,11 ms, menempelkannya 0,44 ms
+- Penempelan HTML daftarnya juga murah — 1,28 ms. Yang mahal **menata ulang**:
+  menempel lalu memaksa tata letak 12,51 ms. Tiap baris adalah grid berisi 5–7
+  sel dengan pill, avatar, dan teks berellipsis, dan 48 di antaranya ditata
+  padahal cuma sekitar 26 yang terlihat
+- Empat kandidat diukur, bukan dipilih dari ingatan:
+
+  | | |
+  |---|---|
+  | dasar | 12,90 ms |
+  | `contain: layout style` | 13,40 ms |
+  | `contain: strict` | 12,00 ms |
+  | `contain` pada daftarnya | 12,70 ms |
+  | **`content-visibility: auto`** | **3,90 ms** |
+
+- Yang menang membuang tata letak untuk baris overscan yang memang tidak
+  terlihat. Aman di sini karena tinggi baris **ditetapkan** (`height:
+  var(--row-h)`), bukan diturunkan dari isinya — melewati isinya tidak bisa
+  menggeser scrollbar
+- Diperiksa setelahnya: tinggi gulir tetap 7714, klik tetap memilih, titik graf
+  tetap sejajar dengan barisnya setelah menggulir jauh, nol galat
+
 **Celah di antara perintah, dan urutan transkripnya**
 - Celah itu bukan soal urutan melainkan **ruang kosong**. `min-height: 120px`
   saya pasang di kelas `.go-live` supaya dialognya tidak tumbuh baris demi baris
