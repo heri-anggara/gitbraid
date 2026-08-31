@@ -427,6 +427,33 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Gulir riwayat, babak ketiga: yang bisa dan tidak bisa diukur dari sini**
+- Setelah daur ulang baris, kerja yang bisa dikendalikan tinggal **140 ms dari
+  645 ms** selama ~1,1 detik menggulir dalam mode maksimal — dan tidak lagi
+  tumbuh mengikuti ukuran jendela: skrip 42 lawan 43 ms, gaya 51 lawan 51
+- Jejak Chromium menyebut sisanya dengan nama: `RealSwapBuffers` **518 ms / 115
+  swap = 4,5 ms per swap**, dan melukis **4,6 ms per frame**. Berdua sudah
+  melewati anggaran 8,33 ms sebelum kode kita ikut dihitung
+- **Teori GPU ganda saya salah, dan sempat saya nyatakan sebagai temuan.**
+  `getGPUInfo()` melaporkan NVIDIA `active: true`, dan itu saya baca sebagai
+  bukti aplikasi menggambar di sana sementara compositor di Intel. Ternyata itu
+  cuma pencacahan PCI — dan saya menanyakannya **tanpa pernah membuka jendela**,
+  jadi GL belum diinisialisasi (`glImplementationParts: "(gl=none,angle=none)"`).
+  Ditanya lewat WebGL dengan jendela terbuka, jawabannya
+  `ANGLE (Intel, Mesa Intel(R) UHD Graphics)` — **GPU yang sama dengan
+  compositor.** Tidak ada penyalinan antar-GPU
+- Yang tetap berdiri: menyembunyikan **seluruh** daftar commit hanya memangkas
+  lukisan dari 4,97 ke 2,60 ms per frame. Sisa 2,60 ms itu sidebar dan toolbar —
+  yang tidak bergerak sedikit pun saat riwayat digulir
+- `contain: paint` dan `will-change: scroll-position` diberikan ke scroller-nya
+  atas dasar itu. Janjinya sudah benar sejak dulu: lapisan graf menggunting diri
+  ke kolomnya sendiri, dan baris tidak bisa keluar dari kotaknya
+- **Tidak terkonfirmasi.** Derau di lingkungan ini terlalu besar untuk
+  memutuskan selisih sebesar ini — konfigurasi yang sama memberi 197 lalu 152 ms
+  di dua jalan berurutan. Dan gejala yang dilaporkan — maksimal berbingkai
+  tersendat sementara layar penuh mulus — **tidak bisa direproduksi di sini**:
+  keduanya terukur sama, 663 lawan 640 ms lalu 641 lawan 656 ms
+
 **Gulir riwayat, babak kedua: padding yang membatalkan segalanya**
 - `content-visibility` menolong tapi tidak cukup. Pada repositori 400 baris dan
   12 lajur, `renderRows()` masih 13–15 ms — dan tebakan yang wajar semuanya
