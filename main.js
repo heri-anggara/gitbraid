@@ -92,9 +92,26 @@ const LOG_MAX = 400;
  * keeps the log from shouting about a question that just had no answer. */
 /* git buries the reason: a rejected push opens with "To <url>", which explains
    nothing. Same choice the status bar makes, so the log and the bar agree. */
+/* Two failures hide behind a fatal that says nothing. Measured against real
+   output: a refused SSH key prints `Permission denied (publickey).` and then
+   `fatal: Could not read from remote repository.`, and a changed host key
+   prints `Host key verification failed.` before the same fatal. Taking the
+   fatal in either case leaves the reader with a true sentence and no idea what
+   to do, which is the thing this function exists to prevent. Everything else
+   git says is already carried by its fatal — `Authentication failed for <url>`,
+   `could not read Username for <url>` — so nothing else belongs here. */
+const WHY_FIRST = [
+  /permission denied/i,
+  /host key verification failed/i,
+];
+
 function reasonLine(text) {
   const lines = String(text || '').split(/[\r\n]/).map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return '';
+  for (const re of WHY_FIRST) {
+    const hit = lines.find((l) => re.test(l));
+    if (hit) return hit;
+  }
   return (
     lines.find((l) => /^fatal:/i.test(l)) ||
     lines.find((l) => /^!\s|\[rejected\]/i.test(l)) ||
