@@ -1483,6 +1483,53 @@ console.log('\nthemes');
       .test(rendererSrc));
 }
 
+/* ── why a remote refused ──────────────────────────────────────── */
+/* Authentication is the one thing GitBraid cannot do for the reader, so when it
+   fails the message has to say which door was shut. git writes the useful
+   sentence and then buries it under a fatal that does not. */
+console.log('\nremote refusals');
+{
+  const R = {};
+  const src = mainSrc.slice(mainSrc.indexOf('const WHY_FIRST'),
+    mainSrc.indexOf('\n}\n', mainSrc.indexOf('function reasonLine(text)')) + 3);
+  vm.runInNewContext(src + '\nthis.reasonLine = reasonLine;', R);
+
+  /* Exactly as git prints them — captured from real runs against github.com,
+     not paraphrased. */
+  const CASES = [
+    ['a refused SSH key names the key, not the socket',
+     'git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.\n'
+     + 'Please make sure you have the correct access rights\nand the repository exists.',
+     /Permission denied \(publickey\)/],
+    ['a changed host key says so rather than blaming the repository',
+     '@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.\n'
+     + 'fatal: Could not read from remote repository.',
+     /Host key verification failed/],
+    ['an HTTPS remote with no credential helper still reads as git wrote it',
+     "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+     /could not read Username/],
+    ['a wrong password keeps the url that was refused',
+     'remote: Support for password authentication was removed on August 13, 2021.\n'
+     + "fatal: Authentication failed for 'https://github.com/x/y.git/'",
+     /Authentication failed for 'https:\/\/github\.com\/x\/y\.git\/'/],
+    ['a missing repository keeps the url too',
+     "remote: Repository not found.\nfatal: repository 'https://github.com/x/y.git/' not found",
+     /repository 'https:\/\/github\.com\/x\/y\.git\/' not found/],
+    ['a rejected push still reports the rejection, not the "To <url>" line',
+     'To github.com:x/y.git\n ! [rejected]        main -> main (fetch first)',
+     /\[rejected\]/],
+  ];
+  for (const [name, out, want] of CASES) {
+    check(name, want.test(R.reasonLine(out)), R.reasonLine(out));
+  }
+  /* The two that come first must not step in front of anything else: a fatal
+     that already explains itself keeps its place. */
+  check('and the new rule stays out of the way of a plain fatal',
+    R.reasonLine('fatal: not a git repository') === 'fatal: not a git repository');
+  check('an empty stream yields nothing rather than undefined',
+    R.reasonLine('') === '' && R.reasonLine(null) === '');
+}
+
 fs.rmSync(REPO, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
