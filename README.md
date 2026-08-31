@@ -126,6 +126,12 @@ sudo apt remove gitbraid      # or just delete the AppImage
 You need `git` on your `PATH`. GitBraid does not bundle one — it drives the same
 git your terminal uses, so your config, hooks and credentials all apply.
 
+If a remote wants a password, GitBraid asks for it in a dialog: an HTTPS
+username and token, or the passphrase for an SSH key. Tick "remember" and it is
+handed to your git credential helper, or kept until GitBraid quits if you have
+no helper configured. Nothing is stored by GitBraid itself, and no secret is
+ever written to a file or passed on a command line.
+
 ---
 
 ## Build from source

@@ -1530,6 +1530,104 @@ console.log('\nremote refusals');
     R.reasonLine('') === '' && R.reasonLine(null) === '');
 }
 
+/* ── asking for a secret ───────────────────────────────────────── */
+/* git and ssh ask by running a program and reading a line back. What that
+   program is handed, and what the application is allowed to do with the answer,
+   is the whole of the security here — so it is checked rather than described. */
+console.log('\ncredentials');
+{
+  const A = {};
+  const src = mainSrc.slice(mainSrc.indexOf('function askKind(prompt)'),
+    mainSrc.indexOf('const askKey ='));
+  /* URL is a Node global rather than a JavaScript one, and a fresh vm context
+     has neither — without it askTarget would throw and answer null for every
+     url, which is exactly the failure it is meant to catch. */
+  Object.assign(A, { URL });
+  vm.runInNewContext(src + '\nthis.askKind = askKind; this.askTarget = askTarget;', A);
+
+  /* Written exactly as git and ssh write them — taken from real runs against
+     github.com, not from memory. */
+  const K = [
+    ["Username for 'https://github.com': ", 'username', false, 'https://github.com'],
+    ["Password for 'https://octo@github.com': ", 'password', true, 'https://octo@github.com'],
+    ["Enter passphrase for key '/home/x/.ssh/id_ed25519': ", 'passphrase', true,
+     '/home/x/.ssh/id_ed25519'],
+    ['Are you sure you want to continue connecting (yes/no)?', 'other', false, ''],
+  ];
+  for (const [prompt, field, secret, target] of K) {
+    const got = A.askKind(prompt);
+    check(`${field} is recognised in git's own wording`,
+      got.field === field && got.secret === secret && got.target === target, got);
+  }
+  /* A password is never shown, and nothing else ever is hidden: a masked
+     username would make a typo impossible to find. */
+  check('only the two secrets are treated as secret',
+    K.filter(([, , s]) => s).length === 2
+    && A.askKind("Username for 'https://x': ").secret === false);
+
+  const t = A.askTarget('https://octo@github.com');
+  check('a credential is addressed by protocol, host and user, all read from the prompt',
+    t.protocol === 'https' && t.host === 'github.com' && t.username === 'octo', t);
+  check('and a prompt that is not a url yields nothing to store',
+    A.askTarget('/home/x/.ssh/id_ed25519') === null);
+
+  /* The guarantee that predates all of this and must survive it: git can ask
+     the window, and can still never block on a prompt nobody can see. */
+  check('terminal prompts stay disabled even now that the window can answer',
+    /GIT_TERMINAL_PROMPT: '0',/.test(mainSrc));
+  check('git and ssh are both pointed at the same stub',
+    /env\.GIT_ASKPASS = askStub;/.test(mainSrc) && /env\.SSH_ASKPASS = askStub;/.test(mainSrc));
+  /* ssh only reaches for an askpass program on its own when DISPLAY is set,
+     which a Wayland session does not promise. */
+  check('and ssh is told to use it whether or not DISPLAY exists',
+    /SSH_ASKPASS_REQUIRE = 'force'/.test(mainSrc));
+
+  /* The answer travels over a socket. As an argument it would sit in
+     /proc/<pid>/cmdline for every process on the machine to read. */
+  const askpassSrc = fs.readFileSync(path.join(__dirname, '..', 'src/askpass.js'), 'utf8');
+  check('the helper is handed the question, never the answer',
+    /process\.argv\[2\]/.test(askpassSrc) && !/process\.argv\[3\]/.test(askpassSrc));
+  check('and says nothing at all when it cannot reach the window',
+    /if \(!answer\) giveUp\(\);/.test(askpassSrc) && /conn\.on\('error', giveUp\)/.test(askpassSrc));
+  check('the stub and the socket are readable by nobody else',
+    /mode: 0o700/.test(mainSrc) && /chmodSync\(askSockPath, 0o600\)/.test(mainSrc)
+    && /fs\.chmodSync\(dir, 0o700\)/.test(mainSrc));
+
+  /* A password that was just refused must not be kept: remembering it would
+     lock the reader out of the next attempts without ever showing them why. */
+  check('a credential is kept only after the server accepted it',
+    /if \(!ok \|\| !rec\.remember\) return;/.test(mainSrc));
+  check('and every git runner reports which way its command went',
+    (mainSrc.match(/askpassFinish\(/g) || []).length >= 6);
+  /* `git credential approve` exits 0 and stores nothing when no helper is
+     configured, so the offer to remember has to know which it is. */
+  check('remembering falls back to this run alone when git has nowhere to write',
+    /askSession\.set\(askKey\(rec\.cred\), \{ username, password \}\)/.test(mainSrc));
+
+  /* A runtime directory outlives a crash, and the next start is the only thing
+     that will ever come looking for it. */
+  check('a runtime directory left by a dead process is swept at the next start',
+    mainSrc.includes('^gitbraid-(\\d+)-')
+    && mainSrc.includes('process.kill(Number(m[1]), 0)')
+    && mainSrc.includes('`gitbraid-${process.pid}-`'));
+
+  /* The dialog. A secret is typed into a masked box, and unlike every other
+     field in this application it is not trimmed: a passphrase may legitimately
+     begin or end with a space. */
+  check('a secret gets a masked box that offers to fill in nothing',
+    /f\.type === 'password'[\s\S]{0,200}type="password"[\s\S]{0,120}autocomplete="off"/
+      .test(rendererSrc));
+  check('and is the one field that keeps its spaces',
+    /out\[i\.dataset\.field\] = i\.type === 'password' \? i\.value : i\.value\.trim\(\);/
+      .test(rendererSrc));
+  /* One question at a time: #modal is a single element, and git can wait. */
+  check('questions queue rather than overwrite a dialog already open',
+    /askChain = askChain\.then/.test(rendererSrc)
+    && /while \(!\$\('modal'\)\.hidden\)/.test(rendererSrc));
+  check('cancelling tells git nothing, which fails it exactly as before',
+    /call\('askpass:answer', q\.id, res \? res\.value : null/.test(rendererSrc));
+}
+
 fs.rmSync(REPO, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

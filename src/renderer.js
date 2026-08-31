@@ -436,9 +436,14 @@ function fieldHtml(f) {
   /* Branch names, URLs and paths are identifiers, not prose; underlining them
      in red says they are wrong when they are not. The commit message keeps its
      spell check, being the one box here whose words other people read. */
-  const input =
-    `<input type="text" id="mf-${f.name}" data-field="${f.name}" spellcheck="false" ` +
-    `value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}">`;
+  /* A secret is typed, never shown, and never filled in from anywhere: there
+     is no value to prefill and autocomplete would offer one from the browser's
+     own store, which is not where this application keeps anything. */
+  const input = f.type === 'password'
+    ? `<input type="password" id="mf-${f.name}" data-field="${f.name}" ` +
+      `autocomplete="off" spellcheck="false" placeholder="${esc(f.placeholder || '')}">`
+    : `<input type="text" id="mf-${f.name}" data-field="${f.name}" spellcheck="false" ` +
+      `value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}">`;
   // A folder is picked, not typed — but stays editable for anyone who'd rather paste.
   const body =
     f.type === 'directory'
@@ -481,7 +486,11 @@ function modal({
       const out = {};
       wrap.querySelectorAll('[data-field]').forEach((i) => {
         if (i.type === 'radio') { if (i.checked) out[i.dataset.field] = i.value; return; }
-        out[i.dataset.field] = i.type === 'checkbox' ? i.checked : i.value.trim();
+        if (i.type === 'checkbox') { out[i.dataset.field] = i.checked; return; }
+        /* Everything else here is an identifier, and a stray space in one is a
+           typo. A secret is not: a passphrase may legitimately begin or end
+           with a space, and trimming it would refuse a correct answer. */
+        out[i.dataset.field] = i.type === 'password' ? i.value : i.value.trim();
       });
       return out;
     };
@@ -527,8 +536,9 @@ function modal({
     validate();
 
     const firstEmpty =
-      [...wrap.querySelectorAll('input[type="text"]')].find((i) => !i.value) ||
-      el('input[type="text"]', wrap);
+      [...wrap.querySelectorAll('input[type="text"],input[type="password"]')]
+        .find((i) => !i.value) ||
+      el('input[type="text"],input[type="password"]', wrap);
     if (firstEmpty) { firstEmpty.focus(); firstEmpty.select(); }
 
     const close = (value) => {
@@ -554,6 +564,62 @@ function modal({
     $('modal-cancel').addEventListener('click', onCancel);
     document.addEventListener('keydown', onKey);
   });
+}
+
+/* ═════ credentials ═════════════════════════════════════════════ */
+
+/* git and ssh ask for a secret by running a program and reading a line back.
+   The main process is the other end of that program, and it puts the question
+   here.
+
+   Two rules shape this. One question at a time, because #modal is a single
+   element and two in it at once would leave both unanswerable. And never on
+   top of a dialog already open: git is waiting on a program that has not
+   printed yet, so it can wait a moment longer, whereas overwriting a dialog
+   somebody is halfway through cannot be undone. */
+let askChain = Promise.resolve();
+
+const ASK_TITLE = {
+  username: 'Username',
+  password: 'Password',
+  passphrase: 'Key passphrase',
+};
+
+window.gitbraid.on('askpass:ask', (q) => {
+  askChain = askChain.then(() => askpassDialog(q)).catch(() => {});
+});
+
+async function askpassDialog(q) {
+  while (!$('modal').hidden) {
+    await new Promise((r) => setTimeout(r, 150));
+  }
+
+  /* What "remember" would mean here, asked rather than assumed: with no
+     credential helper configured git has nowhere to write one, and a checkbox
+     that promised otherwise would be a lie. */
+  const storage = q.canRemember ? await call('askpass:storage', state.repo) : null;
+
+  const res = await modal({
+    title: ASK_TITLE[q.field] || 'The remote is asking',
+    description: q.host
+      ? `${q.host} wants it before this can go through.`
+      : q.target || '',
+    fields: [
+      { name: 'value', label: q.prompt.replace(/\s*:\s*$/, ''), required: true,
+        type: q.secret ? 'password' : 'text' },
+      ...(q.canRemember ? [{
+        name: 'remember', type: 'checkbox',
+        label: storage === 'helper'
+          ? 'Remember it — git stores it with your credential helper'
+          : 'Remember it until GitBraid quits',
+      }] : []),
+    ],
+    confirmLabel: 'Continue',
+  });
+
+  /* Cancelled: git is told nothing, and fails exactly as it did before any of
+     this existed. */
+  await call('askpass:answer', q.id, res ? res.value : null, Boolean(res && res.remember));
 }
 
 const confirmAction = (title, description, confirmLabel = 'Confirm', danger = true) =>
