@@ -186,13 +186,43 @@ function absoluteTime(ms) {
 
 /* ═════ theme ═══════════════════════════════════════════════════ */
 
+/* Themes that read as daylight. The toolbar button is a two-way switch and
+   stays one: it flips between dark and whichever of these was chosen last, so
+   picking Shore in Preferences and then reaching for the button does not
+   quietly strand the reader back on plain light. */
+const DAY_THEMES = ['light', 'shore'];
+
+/* Lane colours a theme replaces outright; a theme absent from here keeps the
+   set graph.js ships. Shore's ground is cream and those were picked against a
+   dark one, so it brings the same eight hues drawn into its own palette, each
+   measured at 4.1:1 or better on that ground so no lane goes faint. */
+const THEME_LANES = {
+  shore: ['#1c477f', '#a83b2a', '#17654d', '#8a5a18',
+          '#5e4a8a', '#1f6a86', '#6a453b', '#5f7233'],
+};
+
 function applyTheme(name) {
   document.documentElement.dataset.theme = name;
-  try { localStorage.setItem('gitbraid-theme', name); } catch { /* private mode */ }
+  window.Graph.setLanes(THEME_LANES[name]);
+  try {
+    localStorage.setItem('gitbraid-theme', name);
+    if (DAY_THEMES.includes(name)) localStorage.setItem('gitbraid-day-theme', name);
+  } catch { /* private mode */ }
+  /* Lane colours are written into the SVG markup itself, which no stylesheet
+     can reach into afterwards, so a theme change has to redraw the graph. */
+  if (state.repo) renderHistory();
 }
 
 function storedTheme() {
   try { return localStorage.getItem('gitbraid-theme') || 'dark'; } catch { return 'dark'; }
+}
+
+/* Which daylight theme the toolbar button comes back to. */
+function storedDayTheme() {
+  try {
+    const v = localStorage.getItem('gitbraid-day-theme');
+    return DAY_THEMES.includes(v) ? v : 'light';
+  } catch { return 'light'; }
 }
 
 /* ═════ zoom ════════════════════════════════════════════════════ */
@@ -3578,7 +3608,7 @@ async function initRepo() {
 
 applyTheme(storedTheme());
 $('btn-theme').addEventListener('click', () =>
-  applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light')
+  applyTheme(document.documentElement.dataset.theme === 'dark' ? storedDayTheme() : 'dark')
 );
 
 $('card-open').addEventListener('click', () => openRepoAt(null));
@@ -4717,7 +4747,10 @@ function prefPages() {
           title: 'Appearance',
           fields: [
             { kind: 'select', label: 'Theme',
-              options: [['dark', 'GitBraid Dark'], ['light', 'GitBraid Light']],
+              options: [['dark', 'GitBraid Dark'], ['light', 'GitBraid Light'],
+                        ['shore', 'GitBraid Shore']],
+              help: 'Shore is a daylight theme on warm paper: cream ground, sand '
+                + 'rules, driftwood text, and the two blues on everything you can act on.',
               get: () => storedTheme(),
               set: (v) => { applyTheme(v); renderPrefs(); } },
             { kind: 'zoom', label: 'Zoom',

@@ -1285,6 +1285,161 @@ console.log('\na stash in the history');
   git(['checkout', '--', '.']);
 }
 
+/* ── themes ────────────────────────────────────────────────────── */
+/* A theme is a list of custom properties and nothing else: styles.css says so
+   at the top, and these checks are what make that true rather than aspirational.
+   Contrast is computed here rather than trusted, because a colour that reads
+   well in a screenshot can still fail a reader who needs the ratio. */
+console.log('\nthemes');
+{
+  const lum = (hex) => {
+    const h = hex.replace('#', '');
+    const part = (i) => {
+      const v = parseInt(h.slice(i, i + 2), 16) / 255;
+      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    };
+    return 0.2126 * part(0) + 0.7152 * part(2) + 0.0722 * part(4);
+  };
+  const ratio = (a, b) => {
+    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  /* An rgba() wash laid over a solid ground, so a selected row can be measured
+     as the reader actually sees it rather than as the two colours it is made
+     from. */
+  const over = (wash, ground) => {
+    const m = wash.match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*\.?(\d+)\)/);
+    if (!m) return wash;
+    const a = Number('0.' + m[4]);
+    const g = (i) => parseInt(ground.replace('#', '').slice(i, i + 2), 16);
+    const mix = (c, i) => Math.round(Number(c) * a + g(i) * (1 - a));
+    return '#' + [mix(m[1], 0), mix(m[2], 2), mix(m[3], 4)]
+      .map((v) => v.toString(16).padStart(2, '0')).join('');
+  };
+  /* Every declaration under a selector, gathered across all of its blocks —
+     the tokens and the syntax colours are two separate blocks per theme. */
+  const tokensOf = (theme) => {
+    const sel = theme === 'dark'
+      ? ':root\\s*\\{' : `:root\\[data-theme="${theme}"\\]\\s*\\{`;
+    const out = {};
+    const re = new RegExp(sel + '([^}]*)\\}', 'g');
+    let m;
+    while ((m = re.exec(styleSrc))) {
+      for (const d of m[1].split(';')) {
+        const kv = d.match(/(--[\w-]+)\s*:\s*([^;]+)/);
+        if (kv) out[kv[1]] = kv[2].trim();
+      }
+    }
+    return out;
+  };
+
+  const dark = tokensOf('dark');
+  const light = tokensOf('light');
+  const shore = tokensOf('shore');
+  check('each theme is read as a whole list', Object.keys(dark).length > 50
+    && Object.keys(light).length > 40 && Object.keys(shore).length > 40,
+    [Object.keys(dark).length, Object.keys(light).length, Object.keys(shore).length]);
+
+  check('Shore exists as a third theme', Object.keys(shore).length > 40,
+    Object.keys(shore).length);
+  /* A token the light theme restates and Shore does not would silently fall
+     through to the dark value — a dark colour on a cream ground. */
+  const missing = Object.keys(light).filter((k) => !(k in shore));
+  check('Shore restates every token the light theme restates', missing.length === 0, missing);
+  const extra = Object.keys(shore).filter((k) => !(k in light));
+  check('and invents none the other themes do not have', extra.length === 0, extra);
+
+  /* The claim at the top of styles.css: nothing is hardcoded outside the token
+     lists. A third theme is only a complete theme while that holds. */
+  const outside = styleSrc
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^:root(\[data-theme="[a-z]+"\])?\s*\{[^}]*\}/gm, '');
+  const loose = outside.match(/#[0-9a-fA-F]{3,8}\b/g) || [];
+  /* One exception, and it is written into the head of styles.css: the initials
+     disc takes its ground from a hash of an email address, so it is the same
+     colour in every theme and its ink does not belong to any of them. Two
+     rules draw that disc. Anything else appearing here is a colour that will
+     not follow the theme it is sitting in. */
+  check('the only colours outside the token lists are the initials disc',
+    loose.length === 2 && loose.every((c) => c === '#fff'), loose);
+
+  /* Ratios a reader depends on, checked in all three themes rather than only
+     the new one — a shared floor is worth more than a note about one theme. */
+  const PAIRS = [
+    ['--text', '--bg', 4.5], ['--text-dim', '--bg', 4.5], ['--text-faint', '--bg', 3],
+    ['--accent-text', '--bg', 4.5], ['--pending-text', '--bg', 4.5],
+    ['--add', '--bg', 4.5], ['--del', '--bg', 4.5], ['--status-u', '--bg', 4.5],
+    ['--accent-ink', '--accent', 4.5], ['--ink-on-fill', '--danger', 4.5],
+    ['--badge-up-ink', '--badge-up-2', 4.5], ['--badge-dn-ink', '--badge-dn-2', 4.5],
+  ];
+  /* Shore answers to the AA floor for body text, because it is new and every
+     value in it was picked against that figure. The two older themes answer to
+     3:1, which is a real floor and a real guard against a colour drifting
+     paler — and is not an endorsement. Measured today, the light theme misses
+     4.5:1 on --add (3.88), --del (4.43) and --accent-ink over --accent (4.13),
+     and the dark theme on --ink-on-fill over --danger (3.00). Lifting those
+     changes how a theme someone already uses looks, which is its owner's call
+     and not a repair to fold in beside a new theme. */
+  for (const [name, t, floor] of [
+    ['dark', dark, 3], ['light', { ...dark, ...light }, 3],
+    ['Shore', { ...dark, ...shore }, 4.5],
+  ]) {
+    const bad = PAIRS
+      .map(([fg, bg, aa]) => [fg, bg, Math.min(aa, floor), ratio(t[fg], t[bg])])
+      .filter(([, , want, got]) => got < want)
+      .map(([fg, bg, want, got]) => `${fg} on ${bg} ${got.toFixed(2)} < ${want}`);
+    check(`${name} keeps every reading colour above ${floor}:1`, bad.length === 0, bad);
+  }
+
+  /* The selected row is a wash, and washing a colour over the ground is where a
+     theme most easily loses its text. Shore's is .42 because .46 drops the dim
+     rank below 4.5:1 — this is the check that decided the figure. */
+  for (const [name, t] of [['dark', dark], ['light', { ...dark, ...light }],
+                           ['Shore', { ...dark, ...shore }]]) {
+    const sel = over(t['--row-sel'], t['--bg']);
+    check(`${name} keeps dim text readable on a selected row`,
+      ratio(t['--text-dim'], sel) >= 4.5, ratio(t['--text-dim'], sel).toFixed(2));
+  }
+
+  /* Lane colours are drawn into the SVG, so they answer to no stylesheet. A
+     theme that changes the ground has to bring its own or go faint on it. */
+  const laneSrc = rendererSrc.match(/const THEME_LANES = \{([\s\S]*?)\n\};/);
+  check('the renderer names the lane colours a theme replaces', !!laneSrc);
+  const shoreLanes = (laneSrc ? laneSrc[1].match(/#[0-9a-f]{6}/g) : []) || [];
+  check('Shore brings a full set of eight', shoreLanes.length === 8, shoreLanes.length);
+  const faint = shoreLanes.filter((c) => ratio(c, shore['--bg']) < 3)
+    .map((c) => `${c} ${ratio(c, shore['--bg']).toFixed(2)}`);
+  check('and every lane clears 3:1 on the cream ground', faint.length === 0, faint);
+  check('with eight distinguishable hues', new Set(shoreLanes).size === 8);
+
+  /* The swap itself, through the real module rather than its source text. */
+  const before = Graph.laneColor(0);
+  Graph.setLanes(shoreLanes);
+  check('setLanes swaps the palette the graph draws with',
+    Graph.laneColor(0) === shoreLanes[0] && Graph.laneColor(0) !== before);
+  check('and wraps around the new set, not the old one',
+    Graph.laneColor(8) === shoreLanes[0]);
+  Graph.setLanes();
+  check('passing nothing restores the set graph.js ships',
+    Graph.laneColor(0) === before);
+  Graph.setLanes([]);
+  check('and so does an empty one, rather than dividing by zero',
+    Graph.laneColor(0) === before);
+
+  /* Reachable, and reachable without losing the theme you picked. */
+  check('Preferences offers the theme by name',
+    /\['shore', 'GitBraid Shore'\]/.test(rendererSrc));
+  check('the toolbar button returns to the daylight theme that was chosen',
+    /dataset\.theme === 'dark' \? storedDayTheme\(\) : 'dark'/.test(rendererSrc));
+  check('Shore counts as daylight, so the sun icon shows on it',
+    /:root\[data-theme="shore"\] \.ic-sun/.test(styleSrc));
+  /* Lane colours are baked into markup, so a theme change that does not redraw
+     leaves the old ones on screen. */
+  check('changing theme redraws the graph rather than only restyling it',
+    /window\.Graph\.setLanes\(THEME_LANES\[name\]\);[\s\S]{0,400}?if \(state\.repo\) renderHistory\(\);/
+      .test(rendererSrc));
+}
+
 fs.rmSync(REPO, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
