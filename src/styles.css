@@ -136,45 +136,72 @@
   --status-u:    #b02a5e;   /* 5.4:1, where the dark theme's pink reaches 3.0 */
 }
 
-/* Shore. Five colours and nothing invented: a cream ground, sand for every
-   rule and edge, driftwood brown for the writing, and the two blues carrying
-   everything a reader can act on. The warm neutrals hold still and the cool
-   accents move, which is the whole reason the palette does not fight itself.
+/* ── the three added themes ──────────────────────────────────
+   All three below follow one rule that the first cut of them did not, and it
+   is the rule that decides whether a theme can be looked at all day.
 
-   Where a role needed a shade the five do not contain, it is the nearest of
-   them taken darker — never a sixth hue. Contrast against the cream ground is
-   measured, and written beside the lines where it decided something. */
+   A contrast ratio says nothing about how *coloured* a surface is, and the
+   first versions of these three were built on contrast alone: each took its
+   palette's ground colour at full strength, so the largest areas on screen —
+   the page, the surfaces, every rule — carried the most saturated colour in
+   the theme. Measured afterwards in CIE Lab, the mean chroma across those
+   large-area tokens came to 60.3 for Night Sky, 32.0 for Mango Fresh and 18.6
+   for Shore, against 10.7 in GitBraid's own dark theme and 5.5 in its light
+   one. Night Sky's strongest rule reached 88. They were tiring to sit in, and
+   the measurement says plainly why.
+
+   So the grounds and the rules now carry their palette's *hue* at a fraction
+   of its chroma, and the palette keeps its full strength where it belongs: the
+   accents, the lanes, the badges, the syntax — everything small, everything
+   you look at rather than look through. Chroma at the ground is 8.4, 10.2 and
+   9.5, which sits between GitHub Dark's 4.2 and Solarized Dark's 14.5 — themes
+   people read in for eight hours at a stretch. The accents were not touched
+   and still run 36 to 70.
+
+   Lightness was preserved token for token while chroma came down, so every
+   contrast figure quoted below survived the change unchanged or improved. */
+
+/* Shore. Warm paper: a cream ground, sand for every rule and edge, driftwood
+   brown for the writing, and the palette's two blues carrying everything a
+   reader can act on. The warm neutrals hold still and the cool accents move,
+   which is why it does not fight itself.
+
+   Its ground also gained lightness, not only lost chroma. At L 89.9 the first
+   cream was both tinted and dim, which reads as dinge rather than as paper —
+   the warm light themes that are comfortable to live in sit at L 95 to 97.
+   This one is at 94.1, level with GitBraid's own light theme. */
 :root[data-theme="shore"] {
-  --bg:          #e9e2ce;   /* the palette's cream, untouched */
-  --bg-graph:    #e9e2ce;
-  --surface:     #e1d8c0;
-  --surface-2:   #d8cdb0;
-  --surface-3:   #cec09f;
-  --line:        #c9b795;
-  --line-soft:   #dbd1b7;
-  --line-strong: #ceaa7a;   /* the palette's sand, untouched */
-  --scroll:      #c6b08a;
-  --scroll-hi:   #ae9260;
+  --bg:          #f3eede;   /* the palette's cream at a fifth of its chroma */
+  --bg-graph:    #f3eedf;
+  --surface:     #eae4d3;
+  --surface-2:   #e0d8c6;
+  --surface-3:   #d4cbb7;
+  --line:        #cdc2af;
+  --line-soft:   #e3dccc;
+  --line-strong: #c9b7a1;   /* the palette's sand, likewise */
+  --scroll:      #c7bba9;
+  --scroll-hi:   #ac9d86;
 
-  /* 10.0:1, 6.4:1, 4.3:1. The middle rank is the palette's brown exactly;
-     body text is that same brown taken darker, so the dim rank still has
-     somewhere to stand below it. */
-  --text:        #452b22;
-  --text-dim:    #6a453b;
-  --text-faint:  #86604f;
+  /* 10.0:1, 6.4:1 and 4.3:1 — the same three figures the first cut reached,
+     because lightness was held while chroma came down. They are the palette's
+     brown in hue and a fraction of it in strength: writing is the one thing on
+     screen a reader never stops looking at. */
+  --text:        #45352f;
+  --text-dim:    #64514c;
+  --text-faint:  #7e6c65;
 
-  /* Navy is the only one of the five that carries 7.2:1 on the cream, so it
-     takes every role that has to be read as well as pressed. Its ink is the
-     cream itself: the palette closing on its own. */
+  /* Navy at full strength, 8.0:1, and the only one of the five that can be
+     read as well as pressed. Its ink is the ground: the palette closing on
+     its own. */
   --accent:      #1c477f;
   --accent-hi:   #14375f;
-  --accent-ink:  #e9e2ce;
+  --accent-ink:  #f3eedf;
   --accent-text: #1c477f;
-  --pending-text: #7a5218;   /* sand is 1.7:1 and cannot be writing — 5.3:1 */
+  --pending-text: #7a5218;   /* sand cannot be writing anywhere — 5.9:1 */
   --pending:     #ceaa7a;
-  --add:         #17654d;    /* 5.4:1 */
-  --del:         #a83b2a;    /* 4.9:1, and a terracotta that sits beside the
-                                brown rather than shouting across it */
+  --add:         #17654d;    /* 6.0:1 */
+  --del:         #a83b2a;    /* 5.4:1, a terracotta that sits beside the brown
+                                rather than shouting across it */
   --map-add:     #12946e;
   --map-del:     #d14a2e;
   --danger:      #a83b2a;
@@ -184,89 +211,70 @@
   --add-ink:     #0e4c3a;
   --del-ink:     #7e2a1d;
 
-  /* The mid blue reaches only 2.3:1 here and can never be writing. As a wash
-     it is the one thing it is perfect for, and this is where the palette asks
-     for more alpha than either other theme: blue laid over a yellow-warm cream
-     neutralises toward grey, and at the .17 the light theme uses the selected
-     row came out putty rather than blue. Swept from .30 up, .42 is the last
-     step where the dim text rank still clears 4.5:1 — 4.61:1 — and by then the
-     wash is 16 points bluer than it is red, which is enough to read as a
-     colour and not as dirt. Warm alternatives were tried and dropped: a sand
-     wash blends into the cream beautifully and then collides with --pending,
-     which already marks the uncommitted row. */
-  --row-hover:   rgba(115, 153, 189, .20);
-  --row-sel:     rgba(115, 153, 189, .42);
+  /* .26 now rather than the .42 the saturated cream needed. A ground this near
+     neutral no longer swallows the blue laid over it, so the selected row
+     reads at 1.25:1 above it — the figure GitBraid's dark theme has always
+     used — instead of the 1.45 it was shouting at. */
+  --row-hover:   rgba(115, 153, 189, .12);
+  --row-sel:     rgba(115, 153, 189, .26);
   --lane-tint:   12%;
   --pill-fill:   18%;
   --pill-line:   48%;
 
-  /* Ahead reads cream on navy, 7.2:1. Behind reads a dark ink on the sand,
-     6.8:1 — the same split the other themes use, in this palette's colours. */
+  /* Ahead reads the ground on navy at 8.0:1, behind a dark ink on the sand at
+     4.6:1 — the same split the other themes use, in this palette's colours. */
   --badge-up-1:   #2c5c94;
   --badge-up-2:   #1c477f;
-  --badge-up-ink: #e9e2ce;
+  --badge-up-ink: #f3eedf;
   --badge-dn-1:   #ceaa7a;
   --badge-dn-2:   #be9257;
-  --badge-dn-ink: #3a2408;
+  --badge-dn-ink: #382f26;
 
-  /* The cream again, not white: laid on a lane colour or on --danger it holds
-     4.1:1 at the weakest lane, and white here would be the one bright spot in
+  /* The ground again, not white: on a lane colour or on --danger it holds
+     5.1:1 at the weakest lane, and white here would be the one bright spot in
      a theme that has no other. */
-  --ink-on-fill: #e9e2ce;
-  --status-u:    #9b3d6b;   /* 5.0:1, and the plum the syntax palette already
+  --ink-on-fill: #f3eedf;
+  --status-u:    #9b3d6b;   /* 5.5:1, and the plum the syntax palette already
                                uses, so the conflict marker adds no sixth hue */
 }
 
 /* Night Sky. Eight colours running blue to violet to pink, and the whole
-   palette is cool — there is no green in it, no amber and no red. That decides
-   two things, and both are written where they happen: the semantic colours a
-   diff needs are the only ones derived from outside it, and the ground is one
-   of the eight taken darker rather than used as it came.
+   palette is cool — no green in it, no amber, no red. That decided one thing
+   outright: the semantic colours a diff needs are the only ones derived from
+   outside it, because a diff whose additions and deletions are both pink
+   cannot be read. Exactly two are, and both are drawn toward the palette — a
+   mint that sits with the blues, and a rose pulled out of the palette's own
+   pink until it is unmistakably the warmer of the two. Pending takes the
+   lilac, which is in the palette and separates cleanly from both.
 
-   The ground first. #1e0f75 is the darkest of the eight and would serve, but
-   measured against it the mid blue reaches only 3.99:1 and could never be
-   writing — the one colour in the set built to be clicked would have been the
-   one that could not be read. Taken down to #0e0a3c it reaches 4.89:1, and
-   #1e0f75 keeps a place of its own as the highest raised surface. Every one of
-   the eight now has a role.
-
-   The surface ramp and the rules are pitched at the figures the other two
-   themes already use, so a reader moving between them finds the same window:
-   surfaces 1.09 to 1.22 against the ground where the dark theme runs 1.08 to
-   1.29, rules at 1.42 and 1.61 where it has 1.34 and 1.68. */
+   The ground carries the palette's indigo hue at 10.2 chroma against the 36.5
+   the first cut used. See the note above the Shore block for why. */
 :root[data-theme="night"] {
-  --bg:          #0e0a3c;   /* the palette's indigo, taken darker */
-  --bg-graph:    #100b45;
-  --surface:     #150e55;
-  --surface-2:   #1a0f68;
-  --surface-3:   #1e0f75;   /* the palette's indigo, untouched */
-  --line:        #2a1f80;
-  --line-soft:   #191159;
-  --line-strong: #1c1dab;   /* the palette's blue-violet, untouched */
-  --scroll:      #2a1f80;
-  --scroll-hi:   #3d34b8;
+  --bg:          #15101e;
+  --bg-graph:    #181322;
+  --surface:     #1e1929;
+  --surface-2:   #251f30;
+  --surface-3:   #292236;
+  --line:        #342e42;
+  --line-soft:   #211c2c;
+  --line-strong: #3d354f;
+  --scroll:      #342e42;
+  --scroll-hi:   #4e4662;
 
-  /* 12.9:1 and 10.7:1, both straight from the palette — the two palest of the
-     eight were always going to be the writing. The faint rank is the dim one
-     taken down, at 5.7:1. */
-  --text:        #cbd8e8;
-  --text-dim:    #aec6e5;
-  --text-faint:  #7f8cc4;
+  /* 12.9:1, 10.7:1 and 5.8:1. The palette's two palest were always going to be
+     the writing; they keep their hue and give up most of their chroma, which
+     is what a page of text asks for. */
+  --text:        #ccd8e7;
+  --text-dim:    #bac5d4;
+  --text-faint:  #8c8e9e;
 
-  /* 4.9:1, and the reason the ground was darkened at all. Its ink is the night
-     below the ground rather than white: nothing else in this theme is white,
-     and one white thing would be the only glare in it. */
+  /* 4.9:1, at full strength. Its ink is a night below the ground rather than
+     white: nothing else in this theme is white, and one white thing would be
+     the only glare in it. */
   --accent:      #3785d8;
   --accent-hi:   #5a9ce4;
-  --accent-ink:  #0b0730;
+  --accent-ink:  #0f0c19;
   --accent-text: #3785d8;
-
-  /* No green, no amber, no red anywhere in the eight, and a diff whose
-     additions and deletions are both pink cannot be read. So exactly two
-     colours here come from outside the palette, and both are drawn toward it:
-     a mint that sits with the blues, and a rose pulled out of the palette's own
-     pink until it is unmistakably the warmer of the two. Pending takes the
-     lilac, which is in the palette and separates cleanly from both. */
   --pending-text: #c08ce2;   /* 7.2:1 */
   --pending:     #c08ce2;
   --add:         #5fd6b0;    /* 10.4:1 */
@@ -275,40 +283,31 @@
   --map-del:     #ff5573;
   --danger:      #f2617f;
 
-  /* .18 where both other themes use .10, and for the same reason the selected
-     row in Shore needed more: a ground this saturated eats a wash laid over
-     it. At .10 the added line came out only 7 points greener than it was red,
-     against the dark theme's 14, and the two washes sat 31 apart in RGB —
-     close enough that a diff read as one colour. At .18 the added line is 18
-     points greener, the two are 58 apart, and the text over them still holds
-     9:1. */
-  --add-bg:      rgba(95, 214, 176, .18);
-  --del-bg:      rgba(242, 97, 127, .18);
+  /* .10, the same as every other theme. The first cut needed .18 here because
+     a ground at 36 chroma ate any wash laid over it; at 10 it does not, and
+     the two washes stand 31 apart in RGB — the dark theme's own figure. */
+  --add-bg:      rgba(95, 214, 176, .10);
+  --del-bg:      rgba(242, 97, 127, .10);
   --add-ink:     #9ce8cf;
   --del-ink:     #f9a8ba;
 
-  /* .26 of the accent, which lands 1.38:1 above the ground — the same step
-     Shore's selected row makes and a little more than the dark theme's 1.25.
-     It has to be the accent and not one of the paler eight: the ground is
-     already blue, and a pale wash over it reads as haze rather than as a row
-     someone chose. */
-  --row-hover:   rgba(55, 133, 216, .10);
-  --row-sel:     rgba(55, 133, 216, .26);
+  --row-hover:   rgba(55, 133, 216, .08);
+  --row-sel:     rgba(55, 133, 216, .20);   /* 1.26:1 above the ground */
   --lane-tint:   14%;
   --pill-fill:   22%;
   --pill-line:   55%;
 
   /* Ahead reads on the accent blue, behind on the lilac, both with the night
-     as their ink: 5.1:1 and 6.0:1. */
+     as their ink: 5.1:1 and 6.7:1. */
   --badge-up-1:   #5a9ce4;
   --badge-up-2:   #3785d8;
-  --badge-up-ink: #0b0730;
+  --badge-up-ink: #0f0c19;
   --badge-dn-1:   #cb9de8;
   --badge-dn-2:   #c08ce2;
-  --badge-dn-ink: #260c3f;
+  --badge-dn-ink: #1e1822;
 
-  --ink-on-fill: #0b0730;
-  --status-u:    #e793c6;   /* the palette's pink, 8.3:1 — a step lighter than
+  --ink-on-fill: #0f0c19;
+  --status-u:    #e793c6;   /* the palette's pink, 8.4:1 — a step lighter than
                                --del so a conflict and a deletion stay apart */
 }
 
@@ -316,46 +315,40 @@
    green, with one deep leaf green under them. It is a dark theme, and that was
    measured rather than felt: laid on a pale mango cream, four of the five reach
    between 1.3:1 and 3.9:1 and none of them could be writing — the whole palette
-   would have become decoration around one usable colour. Laid on its own deep
-   green, three of the four bright ones already clear 4.5:1.
+   would have become decoration around one usable colour.
 
-   This is the first of the four palettes to hand over the semantic colours for
-   free. Additions take the palette's green and deletions its orange-red; no
-   theme before this one could take both from the palette it was given.
+   It is also the only one of the four palettes to hand over the semantic
+   colours for free. Additions take the palette's green and deletions its
+   orange-red; no theme before this one could take both from what it was given.
 
-   Two figures had to move, and both are the same rule the other themes used —
-   the nearest colour, adjusted only as far as legibility demanded. The ground
-   is the deep green taken darker, because on the palette's own #1e3a07 the
-   orange-red reaches 3.02:1. And the orange-red itself is taken one step
-   lighter, because it reaches only 5.02:1 on pure black: no green ground could
-   ever have carried it as it came. At #102004 and #e85218 it reads 4.59:1.
-
-   The one thing the palette cannot supply is a pale neutral. Nothing in it can
-   be a page of body text, so the three text ranks are derived — a warm off-white
-   with the ground's green still in it, and two steps down from there. */
+   One figure had to move on its own account. The palette's orange-red reaches
+   only 5.02:1 on pure black, so no green ground could ever have carried it as
+   it came; it is taken one step lighter, to 4.6:1 here. The ground carries the
+   leaf green's hue at 9.5 chroma against the 18.7 of the first cut — see the
+   note above the Shore block. */
 :root[data-theme="mango"] {
-  --bg:          #102004;   /* the palette's leaf green, taken darker */
-  --bg-graph:    #122505;
-  --surface:     #162b06;
-  --surface-2:   #1a3307;
-  --surface-3:   #1e3a07;   /* the palette's leaf green, untouched */
-  --line:        #1f3c06;
-  --line-soft:   #173005;
-  --line-strong: #274a08;
-  --scroll:      #224207;
-  --scroll-hi:   #35630e;
+  --bg:          #161e12;
+  --bg-graph:    #1a2315;
+  --surface:     #1f2819;
+  --surface-2:   #26301e;
+  --surface-3:   #2c3623;
+  --line:        #2e3824;
+  --line-soft:   #232d1d;
+  --line-strong: #38462b;
+  --scroll:      #333d29;
+  --scroll-hi:   #4e5c41;
 
-  /* 13.8:1, 9.0:1 and 5.1:1. Derived, because a palette of fruit has no pale
-     neutral in it and yellow is no colour to read a day's commits in. */
-  --text:        #ece7d3;
-  --text-dim:    #bcbf9e;
-  --text-faint:  #8b9070;
+  /* 13.8:1, 9.0:1 and 5.1:1. Derived: a palette of fruit has no pale neutral
+     in it, and yellow is no colour to read a day's commits in. */
+  --text:        #ebe7d6;
+  --text-dim:    #bcbead;
+  --text-faint:  #8c8e7f;
 
   /* The yellow is the ripest thing here and takes everything that can be
      pressed, at 12.2:1, with the ground itself as its ink. */
   --accent:      #ffd64c;
   --accent-hi:   #ffe173;
-  --accent-ink:  #102004;
+  --accent-ink:  #171e14;
   --accent-text: #ffd64c;
 
   /* The palette's own ramp does the semantic work: yellow acts, orange waits,
@@ -368,37 +361,33 @@
   --map-del:     #ff5a1f;
   --danger:      #e85218;
 
-  /* Different alphas for the two, which no other theme needed. A green wash on
-     a green ground is helped by it and an orange-red one is fought by it: at a
-     shared .10 the added line came out 22 points greener than red while the
-     removed line managed 1 point redder than green — an olive, indistinguishable
-     from the ground it sat on. At .14 and .26 they read +25 and +27, and stand
-     57 apart in RGB, which is where Night Sky sits and nearly twice the dark
-     theme's 31. */
-  --add-bg:      rgba(139, 215, 79, .14);
-  --del-bg:      rgba(232, 82, 24, .26);
+  /* .10 for both, where the first cut needed .14 and .26. On a ground at 18.7
+     chroma a green wash was helped by it and an orange-red one was fought by
+     it — the removed line came out one point redder than green, an olive
+     indistinguishable from what it sat on. At 9.5 the asymmetry is gone and
+     the two washes stand 29 apart, level with the light theme's own. */
+  --add-bg:      rgba(139, 215, 79, .10);
+  --del-bg:      rgba(232, 82, 24, .10);
   --add-ink:     #b9e58c;
   --del-ink:     #f5a181;
 
-  /* .14 of the yellow, landing 1.40:1 above the ground — the figure the other
-     three themes agree on to within a hundredth. */
-  --row-hover:   rgba(255, 214, 76, .06);
-  --row-sel:     rgba(255, 214, 76, .14);
+  --row-hover:   rgba(255, 214, 76, .04);
+  --row-sel:     rgba(255, 214, 76, .10);   /* 1.26:1 above the ground */
   --lane-tint:   14%;
   --pill-fill:   22%;
   --pill-line:   55%;
 
   --badge-up-1:   #ffe173;
   --badge-up-2:   #ffd64c;
-  --badge-up-ink: #102004;
+  --badge-up-ink: #171e14;
   --badge-dn-1:   #f4a942;
   --badge-dn-2:   #ef9825;
-  --badge-dn-ink: #2a1a03;
+  --badge-dn-ink: #241c13;
 
-  --ink-on-fill: #102004;
+  --ink-on-fill: #171e14;
   /* Derived, and the third theme in a row to need it: every hue this palette
      owns is already spoken for, and a conflict that reads as a deletion is
-     worse than a conflict that reads as a colour the mango never had. */
+     worse than one that reads as a colour the mango never had. */
   --status-u:    #ef5aa0;   /* 5.4:1 */
 }
 
