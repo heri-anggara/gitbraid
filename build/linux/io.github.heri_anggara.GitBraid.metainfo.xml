@@ -96,6 +96,21 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.10.0" date="2026-08-31">
+      <description>
+        <p>
+          A remote that wants a password now gets a dialog rather than an error
+          you cannot answer: an HTTPS username and token, or the passphrase for
+          an SSH key. Nothing is stored by GitBraid itself, and no secret is
+          written to a file or passed on a command line.
+        </p>
+        <p>
+          Three new themes, five in all. The output window fills line by line
+          while git is still talking and colours what it says, and scrolling a
+          long history costs a fraction of what it did.
+        </p>
+      </description>
+    </release>
     <release version="0.9.0" date="2026-08-26">
       <description>
         <p>

@@ -7,6 +7,55 @@
  */
 window.Releases = [
   {
+    version: '0.10.0',
+    date: '2026-08-31',
+    title: 'It asks for the password now, and there are five themes to read it in',
+    summary:
+      'A remote that wants a password gets a dialog instead of an error you '
+      + 'cannot answer. The output window fills as git speaks and colours what '
+      + 'it says. And three new themes, each built from a palette and then '
+      + 'measured until it was comfortable to sit in for a day.',
+    sections: [
+      {
+        heading: 'Asking for a password',
+        items: [
+          'A remote reached over HTTPS wants a username and a token, and a private key can want a passphrase. Until now GitBraid could fail politely at both and ask for neither: git stopped with “could not read Username … terminal prompts disabled”, and there was nowhere to type anything. That message was GitBraid’s own doing — the setting exists so that git can never stall on a prompt nobody can see.',
+          'There is a dialog now, and the setting stays exactly as it was. git consults an askpass program whether or not terminal prompts are disabled, so the window gained a way to ask without giving up the guarantee that it can never hang waiting for one. With the window gone, git still fails in half a second.',
+          'The same dialog covers an SSH key passphrase, because ssh asks for secrets the same way git does. A key already held by your agent is not affected: nothing is asked that was not going to be asked anyway.',
+          'Tick “remember” and the credential goes to your git credential helper, which is where git keeps such things. With no helper configured there is nowhere to write it, and the box says so instead — “remember until GitBraid quits” — and keeps it in memory for the run. `git credential approve` exits successfully and stores nothing when no helper exists, so a box that promised more would have been a lie.',
+          'A credential is only kept once the server has accepted it. Remembering one that was just refused would lock you out of the next few attempts without ever showing you why.',
+          'No secret is written to a file or passed on a command line. The answer travels over a socket only your account can open: as an argument it would sit in /proc for every process on the machine to read for as long as git ran.',
+          'When a remote refuses, the reason is the line that names the door. A refused SSH key writes “Permission denied (publickey)” and then “Could not read from remote repository”, and it was the second that reached the status bar — true, and no help at all.',
+        ],
+      },
+      {
+        heading: 'What git said, as it says it',
+        items: [
+          'The output window fills line by line while the command is still running, rather than all at once when it ends. A merge across 240 files streamed 481 lines as they arrived.',
+          'It is coloured: what git warns about, what it counts, what a diffstat added and removed. Every line of a composite action is kept in the order the two streams actually spoke, which is what a terminal would have shown — concatenating them afterwards always put the whole of one before the whole of the other, no matter which came first.',
+          'Progress that overwrites itself with a carriage return is collapsed to the last thing it said. One fetch went from 131 lines to six.',
+        ],
+      },
+      {
+        heading: 'Five themes',
+        items: [
+          'Shore is daylight on warm paper: a cream ground, sand rules, driftwood text, and blue on everything you can act on. Night Sky is a deep indigo with lilac and pink where the dark theme puts amber and green. Mango Fresh is a leaf-green ground under a ripe orange-to-yellow ramp.',
+          'Each was built from a palette by measuring, not by eye: every colour that has to be read clears 4.5:1 on its own ground, and where a role needed a shade the palette did not contain it is the nearest one taken darker or lighter, never a new hue.',
+          'The first cut of all three was tiring to look at, and the measurement said why. A contrast ratio says nothing about how coloured a surface is, and each theme had put its most saturated colour on the largest areas on screen. Mean chroma across the ground, surfaces and rules came to 60 for Night Sky against 11 in the dark theme. They now carry their palette’s hue at a fraction of its strength, in the band that themes people read in all day occupy, while the accents and the graph keep every bit of theirs.',
+          'The theme button is still a two-way switch and now crosses between families — the two daylight themes and the three night ones — landing on whichever member of the other family you last chose. Picking Night Sky in Preferences and then reaching for the button no longer strands you on plain light.',
+          'The graph brings its own eight lane colours per theme, because a set drawn for a near-black ground goes flat on a cream one.',
+        ],
+      },
+      {
+        heading: 'A history that scrolls',
+        items: [
+          'Only the rows on screen are in the document, and the ones that leave are reused rather than rebuilt. Moving the list is a transform rather than a change of padding: measured, padding invalidated the whole list’s layout at 10.1 ms a frame where the transform costs nothing.',
+          'Rendering a scroll frame went from 15.2 ms to 2.8 ms.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.9.0',
     date: '2026-08-26',
     title: 'It shows you what git said, and the history can read like SourceTree',
