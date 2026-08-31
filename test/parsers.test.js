@@ -688,6 +688,39 @@ check('clean status has no entries', (() => {
   const s = P.parseStatus('# branch.head main\0');
   return s.staged.length === 0 && s.unstaged.length === 0 && s.branch === 'main';
 })());
+/* ── the history scroller's shape, which is what makes it fast ──── */
+console.log('\nhistory scrolling');
+{
+  const htmlSrc = fs.readFileSync(path.join(__dirname, '..', 'src/index.html'), 'utf8');
+  const rendererSrcNow = fs.readFileSync(path.join(__dirname, '..', 'src/renderer.js'), 'utf8');
+
+  // The spacer carries the height so nothing about the rows has to.
+  check('a spacer stands in for the rows that are not drawn',
+    /id="history-spacer"/.test(htmlSrc));
+  check('and the list is out of the flow, at the graph layer\'s origin',
+    /\.commit-list \{[^}]*position: absolute;[^}]*top: var\(--head-h\);/s.test(styleSrc));
+
+  /* Padding on the list invalidated its whole layout on every scroll step —
+     measured at 10.10 ms against 0.00 for the transform that replaced it. */
+  check('rows are moved by transform, not by padding',
+    /list\.style\.transform = `translateY/.test(rendererSrcNow)
+    && !/list\.style\.paddingTop/.test(rendererSrcNow));
+
+  // The recycler's whole safety argument is that markup describes a row fully.
+  check('rows are reused when their markup is unchanged',
+    /cached && cached\.html === html/.test(rendererSrcNow));
+  check('and dropped when the window leaves them behind',
+    /i < first \|\| i >= last/.test(rendererSrcNow));
+
+  /* Which only holds while nothing else edits a row. paintSelection does, so
+     that one class is deliberately not in the markup. */
+  check('the selected class stays out of a row\'s markup',
+    !/selected ' : ''/.test(rendererSrcNow.slice(
+      rendererSrcNow.indexOf('function rowHtml'), rendererSrcNow.indexOf('function renderRows'))));
+  check('and renderRows hands it back to paintSelection',
+    /paintSelection\(\);\n\}/.test(rendererSrcNow.slice(rendererSrcNow.indexOf('function renderRows'))));
+}
+
 /* ── every graph style must still land its edges on the parent dot ─ */
 console.log('\ngraph styles');
 /* The metric sets the presets actually ship, plus an extreme of each, so a

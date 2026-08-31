@@ -2999,14 +2999,21 @@ mark {
 }
 .graph-svg { display: block; }
 
+/* Out of the flow, at the same origin as the graph layer so the two cannot
+   drift apart, and moved down its column with a transform. The spacer beside it
+   is what the scrollbar measures. */
 .commit-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  position: relative;
+  position: absolute;
+  top: var(--head-h);
+  left: 0;
+  right: 0;
   z-index: 1;
   min-width: var(--hist-min);
 }
+.history-spacer { min-width: var(--hist-min); pointer-events: none; }
 
 .commit-row {
   /* The rows drawn beyond the viewport — the overscan the virtualiser keeps so

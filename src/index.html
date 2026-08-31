@@ -555,6 +555,11 @@
         <div class="history-head" id="history-head"
              title="Drag a divider to resize · right-click to choose columns"></div>
         <div class="graph-layer" id="graph-layer"></div>
+        <!-- Carries the full height of the history so the scrollbar has a range
+             to run over. The rows themselves are out of the flow and moved into
+             place with a transform, which costs no layout; padding on the list
+             did the same job and cost 10 ms of reflow on every scroll step. -->
+        <div class="history-spacer" id="history-spacer"></div>
         <ul class="commit-list" id="commit-list"></ul>
         <button id="btn-more" class="btn btn-quiet load-more" hidden>Load more commits</button>
       </div>

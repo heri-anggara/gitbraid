@@ -427,6 +427,44 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Gulir riwayat, babak kedua: padding yang membatalkan segalanya**
+- `content-visibility` menolong tapi tidak cukup. Pada repositori 400 baris dan
+  12 lajur, `renderRows()` masih 13–15 ms — dan tebakan yang wajar semuanya
+  meleset. Membangun SVG 0,20 ms. Menempelkannya 0,40 ms. Menempel HTML daftar
+  0,90 ms. Seluruh pembantu per-baris — pill, avatar, tanggal, sorotan, tooltip
+  — 0,7 ms untuk 48 baris. Mematikannya satu per satu tidak menggeser apa pun
+- **Penyebabnya `paddingTop`.** Mengubahnya membatalkan tata letak seluruh
+  daftar, jadi 48 baris ditata ulang tiap langkah gulir sekecil apa pun.
+  Terukur, terpisah dari yang lain: mengubah padding saja **10,10 ms**;
+  mengubah `transform` saja **0,00 ms**
+- Pendekatan naif — tinggi tetap pada daftar plus transform — **merusak
+  jangkauan gulir**: elemen yang ditransformasi ikut menambah luapan yang bisa
+  digulir, dan `scrollHeight` melonjak 12.494 → 24.516. Diuji sebagai prototipe
+  sebelum ditulis, bukan sesudah
+- Yang dipakai: **pengganjal di aliran normal** memegang tinggi total, daftarnya
+  keluar dari aliran pada `top: var(--head-h)` — titik asal yang sama dengan
+  lapisan graf, supaya keduanya tidak bisa berselisih — dan digeser dengan
+  transform. Jangkauan gulir terukur tetap di lima posisi
+- **Daur ulang baris.** Kunci cache-nya adalah markup baris itu sendiri: dua
+  string identik berarti dua baris identik, jadi tidak ada daftar properti yang
+  harus diingat untuk dibandingkan
+- Dengan **satu pengecualian yang disengaja**: kelas `selected` tidak ada di
+  markup. `paintSelection()` memasang dan mencabutnya langsung di DOM, jadi
+  markup dan layar akan berselisih begitu ada yang mengklik. Mengeluarkannya
+  memberi kelas itu satu pemilik — dan efek sampingnya, memilih sebuah commit
+  tidak lagi membatalkan satu pun baris tercache
+- Hasilnya, gulir kecil: **15,20 → 2,80 ms** di repositori berat, 4,80 → 2,80 di
+  yang ringan. Keduanya di bawah anggaran 8,33 ms
+- Jaring pengamannya ditulis **dan dijalankan terhadap kode lama lebih dulu** —
+  189 pemeriksaan, nol gagal — karena harness yang cuma lulus sesudah perubahan
+  tidak membuktikan apa pun. Sesudahnya 311 pemeriksaan di dua repositori, nol
+  gagal, dengan tambahan pemeriksaan tinggi pengganjal, geseran, penyelarasan
+  titik graf, dan kestabilan jangkauan gulir
+- Satu kegagalan harness sempat muncul dan ternyata milik harness itu sendiri:
+  backslash regex-nya termakan dua lapis, Python lalu template literal JS,
+  sehingga `\d` menjadi `d`. Yang menyelamatkan: pemeriksaan penyelarasan graf
+  **lulus** di saat yang sama, dan itu mustahil kalau geserannya benar-benar nol
+
 **Gulir riwayat pada layar 120Hz**
 - Anggaran satu frame di 120Hz adalah **8,33 ms**. Terukur pada riwayat 247
   baris, satu `renderRows()` memakan **12,90 ms** — jadi tiap kali overscan

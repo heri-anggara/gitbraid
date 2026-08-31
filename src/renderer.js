@@ -1714,6 +1714,95 @@ function renderHistory() {
 /* Builds the markup for the visible band only. A ten-thousand-commit history
    put over a hundred thousand nodes in the document, and the browser paid for
    every one of them on every scroll; this keeps it to about a screenful. */
+/* One row's markup, complete. Everything a row is — which commit, its lane
+   colour, whether it is selected, faded by a search or the current hit, its
+   pills, its tooltip — is in this string and nowhere else. That is what lets
+   the recycler below compare two strings and know whether a row has changed,
+   without a list of properties to keep in step.
+
+   With one exception, and it is deliberate: the `selected` class is not here.
+   paintSelection() puts it on and takes it off directly, so a row's markup and
+   the row on screen would disagree the moment anybody clicked. Leaving it out
+   gives that class exactly one owner, and has the side benefit that selecting a
+   commit no longer invalidates a single cached row. */
+function rowHtml(row, find) {
+  const c = row.commit;
+  if (c.pending) {
+    const n = state.status.staged.length + state.status.unstaged.length +
+              state.status.untracked.length + state.status.conflicted.length;
+    return (
+      '<li class="commit-row pending" data-wip="1" style="--lane:var(--pending)">' +
+      rowCells({
+        msg: '<span class="c-msg"><span class="c-msg-text">Uncommitted changes</span>' +
+          `<span class="c-msg-body">${n} file${n === 1 ? '' : 's'}</span></span>`,
+        cdate: '<span class="c-date">now</span>',
+        sha: '<span class="c-sha">—</span>',
+      }) + '</li>'
+    );
+  }
+  const lane = window.Graph.laneColor(row.lane);
+  // While a search is running, rows that miss it fade rather than vanish:
+  // dropping them would tear holes in the graph beside them.
+  const q = find.query.trim();
+  const hit = find.hitSet.has(c.hash);
+  const cls =
+    (q && !hit ? ' faded' : '') +
+    (q && hit && find.hits[find.index] === c.hash ? ' find-current' : '');
+  const pills = refPills(c, lane);
+  // Shown only while the row is hovered, and only when no real badge is
+  // already there: it answers "which branch is this on?" without adding
+  // permanent noise to every row.
+  const ghost = pills || !prefs.ghostBadge ? '' : (() => {
+    const b = ghostBranch(c.hash);
+    return b
+      ? `<span class="pill ghost" style="--pc:${lane}" title="${esc(c.hash.slice(0, 7))} is on ${esc(b)}">` +
+        `${REF_ICON.local}<span class="pill-name">${esc(b)}</span></span>`
+      : '';
+  })();
+  const full = prefs.hoverMessage
+    ? clipForTip(c.body ? `${c.subject}\n\n${c.body}` : c.subject)
+    : '';
+  return (
+    `<li class="commit-row${cls}" data-hash="${c.hash}" ` +
+    `style="--lane:${lane}" title="${esc(full)}">` +
+    rowCells({
+      refs: `<span class="c-refs">${pills}${ghost}</span>`,
+      /* The ghost badge follows the subject rather than leading it. It is
+         invisible until the row is hovered but takes its space either way,
+         and in front it shoved every subject right by the width of a branch
+         name nobody could see. Measured: rows with no visible pill started
+         at 438px where their neighbours started at 307. */
+      msg: `<span class="c-msg">${refsAreInline() ? pills : ''}` +
+        `<span class="c-msg-text">${highlight(c.subject, q)}</span>` +
+        (refsAreInline() ? ghost : '') +
+        (c.body ? `<span class="c-msg-body">${highlight(c.body.split('\n')[0], q)}</span>` : '') +
+        '</span>',
+      author: `<span class="c-author">${authorChip(c)}${highlight(c.author, q)}</span>`,
+      adate: `<span class="c-adate">${stamp(c.authorDate)}</span>`,
+      cdate: `<span class="c-date">${stamp(c.commitDate)}</span>`,
+      /* A stash has a real hash, and it is worth more here than a commit's:
+         a commit can be found again through a branch, a dropped stash
+         through nothing else at all. It is also local and never pushed, so
+         it says both. */
+      sha: `<span class="c-sha"${c.stash
+        ? ' title="Local to this machine — and the only way back to this work if the stash is dropped"'
+        : ''}>${c.hash.slice(0, 7)}</span>`,
+    }) + '</li>'
+  );
+}
+
+/* Rebuilding the whole window cost 13 ms of layout on a wide history — more
+   than a 120Hz frame allows — while a scroll usually moves two or three rows.
+   The cache is keyed on a row's own markup, so two identical strings are two
+   identical rows and there is no property list to keep in step. */
+const rowPool = { layout: null, rows: new Map() };
+const rowMaker = document.createElement('template');
+
+function makeRow(html) {
+  rowMaker.innerHTML = html;
+  return rowMaker.content.firstElementChild;
+}
+
 function renderRows() {
   const layout = state.layout;
   if (!layout) return;
@@ -1730,84 +1819,57 @@ function renderRows() {
     ? ''
     : window.Graph.render(layout, state.rowIndex, { avatarFor, first, last });
 
-  const sel = state.selection;
   const list = $('commit-list');
-  // The rows that were skipped still have to take up their space, or the
-  // scrollbar would shrink and the graph behind would slide out of step.
-  list.style.paddingTop = `${first * rowH}px`;
-  list.style.paddingBottom = `${(total - last) * rowH}px`;
-  // Walk the laid-out rows, not rowsData, so each row knows its lane colour.
-  list.innerHTML = layout.rows
-    .slice(first, last)
-    .map((row) => {
-      const c = row.commit;
-      if (c.pending) {
-        const n = state.status.staged.length + state.status.unstaged.length +
-                  state.status.untracked.length + state.status.conflicted.length;
-        return (
-          `<li class="commit-row pending${sel?.kind === 'wip' ? ' selected' : ''}" ` +
-          'data-wip="1" style="--lane:var(--pending)">' +
-          rowCells({
-            msg: '<span class="c-msg"><span class="c-msg-text">Uncommitted changes</span>' +
-              `<span class="c-msg-body">${n} file${n === 1 ? '' : 's'}</span></span>`,
-            cdate: '<span class="c-date">now</span>',
-            sha: '<span class="c-sha">—</span>',
-          }) + '</li>'
-        );
-      }
-      const lane = window.Graph.laneColor(row.lane);
-      const selected = sel?.kind === 'commit' && sel.hash === c.hash;
-      // While a search is running, rows that miss it fade rather than vanish:
-      // dropping them would tear holes in the graph beside them.
-      const q = find.query.trim();
-      const hit = find.hitSet.has(c.hash);
-      const cls =
-        (selected ? ' selected' : '') +
-        (q && !hit ? ' faded' : '') +
-        (q && hit && find.hits[find.index] === c.hash ? ' find-current' : '');
-      const pills = refPills(c, lane);
-      // Shown only while the row is hovered, and only when no real badge is
-      // already there: it answers "which branch is this on?" without adding
-      // permanent noise to every row.
-      const ghost = pills || !prefs.ghostBadge ? '' : (() => {
-        const b = ghostBranch(c.hash);
-        return b
-          ? `<span class="pill ghost" style="--pc:${lane}" title="${esc(c.hash.slice(0, 7))} is on ${esc(b)}">` +
-            `${REF_ICON.local}<span class="pill-name">${esc(b)}</span></span>`
-          : '';
-      })();
-      const full = prefs.hoverMessage
-        ? clipForTip(c.body ? `${c.subject}\n\n${c.body}` : c.subject)
-        : '';
-      return (
-        `<li class="commit-row${cls}" data-hash="${c.hash}" ` +
-        `style="--lane:${lane}" title="${esc(full)}">` +
-        rowCells({
-          refs: `<span class="c-refs">${pills}${ghost}</span>`,
-          /* The ghost badge follows the subject rather than leading it. It is
-             invisible until the row is hovered but takes its space either way,
-             and in front it shoved every subject right by the width of a branch
-             name nobody could see. Measured: rows with no visible pill started
-             at 438px where their neighbours started at 307. */
-          msg: `<span class="c-msg">${refsAreInline() ? pills : ''}` +
-            `<span class="c-msg-text">${highlight(c.subject, q)}</span>` +
-            (refsAreInline() ? ghost : '') +
-            (c.body ? `<span class="c-msg-body">${highlight(c.body.split('\n')[0], q)}</span>` : '') +
-            '</span>',
-          author: `<span class="c-author">${authorChip(c)}${highlight(c.author, q)}</span>`,
-          adate: `<span class="c-adate">${stamp(c.authorDate)}</span>`,
-          cdate: `<span class="c-date">${stamp(c.commitDate)}</span>`,
-          /* A stash has a real hash, and it is worth more here than a commit's:
-             a commit can be found again through a branch, a dropped stash
-             through nothing else at all. It is also local and never pushed, so
-             it says both. */
-          sha: `<span class="c-sha"${c.stash
-            ? ' title="Local to this machine — and the only way back to this work if the stash is dropped"'
-            : ''}>${c.hash.slice(0, 7)}</span>`,
-        }) + '</li>'
-      );
-    })
-    .join('');
+  /* The spacer holds the height, and only changes when the history does. The
+     rows ride a transform, which the browser can do without laying anything out
+     again — measured, changing paddingTop instead cost 10.10 ms a step because
+     it invalidated the whole list, while the transform costs 0.00. */
+  const spacerH = `${total * rowH}px`;
+  const spacer = $('history-spacer');
+  if (spacer.style.height !== spacerH) spacer.style.height = spacerH;
+  list.style.transform = `translateY(${first * rowH}px)`;
+
+  /* A renumbering makes every cached index a lie, so start clean rather than
+     work out which ones still mean what. */
+  if (rowPool.layout !== layout) {
+    rowPool.layout = layout;
+    rowPool.rows.clear();
+    list.textContent = '';
+  }
+
+  // Rows the window has left behind.
+  for (const [i, entry] of rowPool.rows) {
+    if (i < first || i >= last) { entry.el.remove(); rowPool.rows.delete(i); }
+  }
+
+  /* `node` is the first element not yet placed. A row whose markup is unchanged
+     is left exactly where it is — untouched elements are the whole point, since
+     it is the writing, not the building, that costs a frame. */
+  let node = list.firstElementChild;
+  for (let i = first; i < last; i += 1) {
+    const html = rowHtml(layout.rows[i], find);
+    const cached = rowPool.rows.get(i);
+    if (cached && cached.html === html) {
+      if (node === cached.el) node = node.nextElementSibling;
+      else list.insertBefore(cached.el, node);
+      continue;
+    }
+    if (cached) {
+      // Advance past it before it goes, or the pointer is left dangling.
+      if (node === cached.el) node = node.nextElementSibling;
+      cached.el.remove();
+    }
+    const el = makeRow(html);
+    list.insertBefore(el, node);
+    rowPool.rows.set(i, { html, el });
+  }
+  /* Nothing should be left, since everything out of range went above and
+     everything in range was placed. Swept anyway: a stray row is a row showing
+     another commit's message. */
+  while (node) { const next = node.nextElementSibling; node.remove(); node = next; }
+
+  // The class rowHtml deliberately does not carry.
+  paintSelection();
 }
 
 /* ═════ detail panel ════════════════════════════════════════════ */
