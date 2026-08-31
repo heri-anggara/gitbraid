@@ -186,13 +186,63 @@ function absoluteTime(ms) {
 
 /* ═════ theme ═══════════════════════════════════════════════════ */
 
+/* The two families a theme can belong to. The toolbar button is a two-way
+   switch and stays one however many themes there are: it crosses to the other
+   family and lands on whichever member of it was chosen last, so picking Shore
+   or Night Sky in Preferences and then reaching for the button does not
+   quietly strand the reader on the plain one. */
+const DAY_THEMES = ['light', 'shore'];
+const NIGHT_THEMES = ['dark', 'night', 'mango'];
+
+/* Lane colours a theme replaces outright; a theme absent from here keeps the
+   set graph.js ships. Shore's ground is cream and those were picked against a
+   dark one, so it brings the same eight hues drawn into its own palette, each
+   measured at 4.1:1 or better on that ground so no lane goes faint. */
+const THEME_LANES = {
+  shore: ['#1c477f', '#a83b2a', '#17654d', '#8a5a18',
+          '#5e4a8a', '#1f6a86', '#6a453b', '#586a2c'],
+  /* Night Sky's ground is a deep indigo rather than the near-black the shipped
+     set was drawn for, and against it that set's own blue and violet sit too
+     close to the ground to tell apart. These eight come from the palette's own
+     range, the weakest 6.0:1 above that ground. */
+  night: ['#5a9ce4', '#8f86ee', '#c08ce2', '#e793c6',
+          '#f2617f', '#5fd6b0', '#63cfe8', '#aec6e5'],
+  /* Four of these are the mango itself and four are not, which is as far as
+     that palette stretches: eight lanes have to be told apart at a glance, and
+     five colours running orange to green cannot supply eight hues that are.
+     The four borrowed ones are the fruit's neighbours rather than strangers —
+     a jade, a sky, a violet and a berry — and the weakest of the eight sits
+     4.6:1 above the ground. */
+  mango: ['#ffd64c', '#ef9825', '#e85218', '#8bd74f',
+          '#3fc9a0', '#52b6ec', '#b184f0', '#f472b6'],
+};
+
 function applyTheme(name) {
   document.documentElement.dataset.theme = name;
-  try { localStorage.setItem('gitbraid-theme', name); } catch { /* private mode */ }
+  window.Graph.setLanes(THEME_LANES[name]);
+  try {
+    localStorage.setItem('gitbraid-theme', name);
+    localStorage.setItem(
+      `gitbraid-${DAY_THEMES.includes(name) ? 'day' : 'night'}-theme`, name);
+  } catch { /* private mode */ }
+  /* Lane colours are written into the SVG markup itself, which no stylesheet
+     can reach into afterwards, so a theme change has to redraw the graph. */
+  if (state.repo) renderHistory();
 }
 
 function storedTheme() {
   try { return localStorage.getItem('gitbraid-theme') || 'dark'; } catch { return 'dark'; }
+}
+
+/* Which member of a family the toolbar button comes back to. The first of each
+   list is the fallback, so a reader who has never chosen one gets the theme
+   GitBraid shipped with rather than nothing. */
+function storedFamilyTheme(family) {
+  const list = family === 'day' ? DAY_THEMES : NIGHT_THEMES;
+  try {
+    const v = localStorage.getItem(`gitbraid-${family}-theme`);
+    return list.includes(v) ? v : list[0];
+  } catch { return list[0]; }
 }
 
 /* ═════ zoom ════════════════════════════════════════════════════ */
@@ -386,9 +436,14 @@ function fieldHtml(f) {
   /* Branch names, URLs and paths are identifiers, not prose; underlining them
      in red says they are wrong when they are not. The commit message keeps its
      spell check, being the one box here whose words other people read. */
-  const input =
-    `<input type="text" id="mf-${f.name}" data-field="${f.name}" spellcheck="false" ` +
-    `value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}">`;
+  /* A secret is typed, never shown, and never filled in from anywhere: there
+     is no value to prefill and autocomplete would offer one from the browser's
+     own store, which is not where this application keeps anything. */
+  const input = f.type === 'password'
+    ? `<input type="password" id="mf-${f.name}" data-field="${f.name}" ` +
+      `autocomplete="off" spellcheck="false" placeholder="${esc(f.placeholder || '')}">`
+    : `<input type="text" id="mf-${f.name}" data-field="${f.name}" spellcheck="false" ` +
+      `value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}">`;
   // A folder is picked, not typed — but stays editable for anyone who'd rather paste.
   const body =
     f.type === 'directory'
@@ -431,7 +486,11 @@ function modal({
       const out = {};
       wrap.querySelectorAll('[data-field]').forEach((i) => {
         if (i.type === 'radio') { if (i.checked) out[i.dataset.field] = i.value; return; }
-        out[i.dataset.field] = i.type === 'checkbox' ? i.checked : i.value.trim();
+        if (i.type === 'checkbox') { out[i.dataset.field] = i.checked; return; }
+        /* Everything else here is an identifier, and a stray space in one is a
+           typo. A secret is not: a passphrase may legitimately begin or end
+           with a space, and trimming it would refuse a correct answer. */
+        out[i.dataset.field] = i.type === 'password' ? i.value : i.value.trim();
       });
       return out;
     };
@@ -477,8 +536,9 @@ function modal({
     validate();
 
     const firstEmpty =
-      [...wrap.querySelectorAll('input[type="text"]')].find((i) => !i.value) ||
-      el('input[type="text"]', wrap);
+      [...wrap.querySelectorAll('input[type="text"],input[type="password"]')]
+        .find((i) => !i.value) ||
+      el('input[type="text"],input[type="password"]', wrap);
     if (firstEmpty) { firstEmpty.focus(); firstEmpty.select(); }
 
     const close = (value) => {
@@ -504,6 +564,62 @@ function modal({
     $('modal-cancel').addEventListener('click', onCancel);
     document.addEventListener('keydown', onKey);
   });
+}
+
+/* ═════ credentials ═════════════════════════════════════════════ */
+
+/* git and ssh ask for a secret by running a program and reading a line back.
+   The main process is the other end of that program, and it puts the question
+   here.
+
+   Two rules shape this. One question at a time, because #modal is a single
+   element and two in it at once would leave both unanswerable. And never on
+   top of a dialog already open: git is waiting on a program that has not
+   printed yet, so it can wait a moment longer, whereas overwriting a dialog
+   somebody is halfway through cannot be undone. */
+let askChain = Promise.resolve();
+
+const ASK_TITLE = {
+  username: 'Username',
+  password: 'Password',
+  passphrase: 'Key passphrase',
+};
+
+window.gitbraid.on('askpass:ask', (q) => {
+  askChain = askChain.then(() => askpassDialog(q)).catch(() => {});
+});
+
+async function askpassDialog(q) {
+  while (!$('modal').hidden) {
+    await new Promise((r) => setTimeout(r, 150));
+  }
+
+  /* What "remember" would mean here, asked rather than assumed: with no
+     credential helper configured git has nowhere to write one, and a checkbox
+     that promised otherwise would be a lie. */
+  const storage = q.canRemember ? await call('askpass:storage', state.repo) : null;
+
+  const res = await modal({
+    title: ASK_TITLE[q.field] || 'The remote is asking',
+    description: q.host
+      ? `${q.host} wants it before this can go through.`
+      : q.target || '',
+    fields: [
+      { name: 'value', label: q.prompt.replace(/\s*:\s*$/, ''), required: true,
+        type: q.secret ? 'password' : 'text' },
+      ...(q.canRemember ? [{
+        name: 'remember', type: 'checkbox',
+        label: storage === 'helper'
+          ? 'Remember it — git stores it with your credential helper'
+          : 'Remember it until GitBraid quits',
+      }] : []),
+    ],
+    confirmLabel: 'Continue',
+  });
+
+  /* Cancelled: git is told nothing, and fails exactly as it did before any of
+     this existed. */
+  await call('askpass:answer', q.id, res ? res.value : null, Boolean(res && res.remember));
 }
 
 const confirmAction = (title, description, confirmLabel = 'Confirm', danger = true) =>
@@ -1714,6 +1830,95 @@ function renderHistory() {
 /* Builds the markup for the visible band only. A ten-thousand-commit history
    put over a hundred thousand nodes in the document, and the browser paid for
    every one of them on every scroll; this keeps it to about a screenful. */
+/* One row's markup, complete. Everything a row is — which commit, its lane
+   colour, whether it is selected, faded by a search or the current hit, its
+   pills, its tooltip — is in this string and nowhere else. That is what lets
+   the recycler below compare two strings and know whether a row has changed,
+   without a list of properties to keep in step.
+
+   With one exception, and it is deliberate: the `selected` class is not here.
+   paintSelection() puts it on and takes it off directly, so a row's markup and
+   the row on screen would disagree the moment anybody clicked. Leaving it out
+   gives that class exactly one owner, and has the side benefit that selecting a
+   commit no longer invalidates a single cached row. */
+function rowHtml(row, find) {
+  const c = row.commit;
+  if (c.pending) {
+    const n = state.status.staged.length + state.status.unstaged.length +
+              state.status.untracked.length + state.status.conflicted.length;
+    return (
+      '<li class="commit-row pending" data-wip="1" style="--lane:var(--pending)">' +
+      rowCells({
+        msg: '<span class="c-msg"><span class="c-msg-text">Uncommitted changes</span>' +
+          `<span class="c-msg-body">${n} file${n === 1 ? '' : 's'}</span></span>`,
+        cdate: '<span class="c-date">now</span>',
+        sha: '<span class="c-sha">—</span>',
+      }) + '</li>'
+    );
+  }
+  const lane = window.Graph.laneColor(row.lane);
+  // While a search is running, rows that miss it fade rather than vanish:
+  // dropping them would tear holes in the graph beside them.
+  const q = find.query.trim();
+  const hit = find.hitSet.has(c.hash);
+  const cls =
+    (q && !hit ? ' faded' : '') +
+    (q && hit && find.hits[find.index] === c.hash ? ' find-current' : '');
+  const pills = refPills(c, lane);
+  // Shown only while the row is hovered, and only when no real badge is
+  // already there: it answers "which branch is this on?" without adding
+  // permanent noise to every row.
+  const ghost = pills || !prefs.ghostBadge ? '' : (() => {
+    const b = ghostBranch(c.hash);
+    return b
+      ? `<span class="pill ghost" style="--pc:${lane}" title="${esc(c.hash.slice(0, 7))} is on ${esc(b)}">` +
+        `${REF_ICON.local}<span class="pill-name">${esc(b)}</span></span>`
+      : '';
+  })();
+  const full = prefs.hoverMessage
+    ? clipForTip(c.body ? `${c.subject}\n\n${c.body}` : c.subject)
+    : '';
+  return (
+    `<li class="commit-row${cls}" data-hash="${c.hash}" ` +
+    `style="--lane:${lane}" title="${esc(full)}">` +
+    rowCells({
+      refs: `<span class="c-refs">${pills}${ghost}</span>`,
+      /* The ghost badge follows the subject rather than leading it. It is
+         invisible until the row is hovered but takes its space either way,
+         and in front it shoved every subject right by the width of a branch
+         name nobody could see. Measured: rows with no visible pill started
+         at 438px where their neighbours started at 307. */
+      msg: `<span class="c-msg">${refsAreInline() ? pills : ''}` +
+        `<span class="c-msg-text">${highlight(c.subject, q)}</span>` +
+        (refsAreInline() ? ghost : '') +
+        (c.body ? `<span class="c-msg-body">${highlight(c.body.split('\n')[0], q)}</span>` : '') +
+        '</span>',
+      author: `<span class="c-author">${authorChip(c)}${highlight(c.author, q)}</span>`,
+      adate: `<span class="c-adate">${stamp(c.authorDate)}</span>`,
+      cdate: `<span class="c-date">${stamp(c.commitDate)}</span>`,
+      /* A stash has a real hash, and it is worth more here than a commit's:
+         a commit can be found again through a branch, a dropped stash
+         through nothing else at all. It is also local and never pushed, so
+         it says both. */
+      sha: `<span class="c-sha"${c.stash
+        ? ' title="Local to this machine — and the only way back to this work if the stash is dropped"'
+        : ''}>${c.hash.slice(0, 7)}</span>`,
+    }) + '</li>'
+  );
+}
+
+/* Rebuilding the whole window cost 13 ms of layout on a wide history — more
+   than a 120Hz frame allows — while a scroll usually moves two or three rows.
+   The cache is keyed on a row's own markup, so two identical strings are two
+   identical rows and there is no property list to keep in step. */
+const rowPool = { layout: null, rows: new Map() };
+const rowMaker = document.createElement('template');
+
+function makeRow(html) {
+  rowMaker.innerHTML = html;
+  return rowMaker.content.firstElementChild;
+}
+
 function renderRows() {
   const layout = state.layout;
   if (!layout) return;
@@ -1730,84 +1935,57 @@ function renderRows() {
     ? ''
     : window.Graph.render(layout, state.rowIndex, { avatarFor, first, last });
 
-  const sel = state.selection;
   const list = $('commit-list');
-  // The rows that were skipped still have to take up their space, or the
-  // scrollbar would shrink and the graph behind would slide out of step.
-  list.style.paddingTop = `${first * rowH}px`;
-  list.style.paddingBottom = `${(total - last) * rowH}px`;
-  // Walk the laid-out rows, not rowsData, so each row knows its lane colour.
-  list.innerHTML = layout.rows
-    .slice(first, last)
-    .map((row) => {
-      const c = row.commit;
-      if (c.pending) {
-        const n = state.status.staged.length + state.status.unstaged.length +
-                  state.status.untracked.length + state.status.conflicted.length;
-        return (
-          `<li class="commit-row pending${sel?.kind === 'wip' ? ' selected' : ''}" ` +
-          'data-wip="1" style="--lane:var(--pending)">' +
-          rowCells({
-            msg: '<span class="c-msg"><span class="c-msg-text">Uncommitted changes</span>' +
-              `<span class="c-msg-body">${n} file${n === 1 ? '' : 's'}</span></span>`,
-            cdate: '<span class="c-date">now</span>',
-            sha: '<span class="c-sha">—</span>',
-          }) + '</li>'
-        );
-      }
-      const lane = window.Graph.laneColor(row.lane);
-      const selected = sel?.kind === 'commit' && sel.hash === c.hash;
-      // While a search is running, rows that miss it fade rather than vanish:
-      // dropping them would tear holes in the graph beside them.
-      const q = find.query.trim();
-      const hit = find.hitSet.has(c.hash);
-      const cls =
-        (selected ? ' selected' : '') +
-        (q && !hit ? ' faded' : '') +
-        (q && hit && find.hits[find.index] === c.hash ? ' find-current' : '');
-      const pills = refPills(c, lane);
-      // Shown only while the row is hovered, and only when no real badge is
-      // already there: it answers "which branch is this on?" without adding
-      // permanent noise to every row.
-      const ghost = pills || !prefs.ghostBadge ? '' : (() => {
-        const b = ghostBranch(c.hash);
-        return b
-          ? `<span class="pill ghost" style="--pc:${lane}" title="${esc(c.hash.slice(0, 7))} is on ${esc(b)}">` +
-            `${REF_ICON.local}<span class="pill-name">${esc(b)}</span></span>`
-          : '';
-      })();
-      const full = prefs.hoverMessage
-        ? clipForTip(c.body ? `${c.subject}\n\n${c.body}` : c.subject)
-        : '';
-      return (
-        `<li class="commit-row${cls}" data-hash="${c.hash}" ` +
-        `style="--lane:${lane}" title="${esc(full)}">` +
-        rowCells({
-          refs: `<span class="c-refs">${pills}${ghost}</span>`,
-          /* The ghost badge follows the subject rather than leading it. It is
-             invisible until the row is hovered but takes its space either way,
-             and in front it shoved every subject right by the width of a branch
-             name nobody could see. Measured: rows with no visible pill started
-             at 438px where their neighbours started at 307. */
-          msg: `<span class="c-msg">${refsAreInline() ? pills : ''}` +
-            `<span class="c-msg-text">${highlight(c.subject, q)}</span>` +
-            (refsAreInline() ? ghost : '') +
-            (c.body ? `<span class="c-msg-body">${highlight(c.body.split('\n')[0], q)}</span>` : '') +
-            '</span>',
-          author: `<span class="c-author">${authorChip(c)}${highlight(c.author, q)}</span>`,
-          adate: `<span class="c-adate">${stamp(c.authorDate)}</span>`,
-          cdate: `<span class="c-date">${stamp(c.commitDate)}</span>`,
-          /* A stash has a real hash, and it is worth more here than a commit's:
-             a commit can be found again through a branch, a dropped stash
-             through nothing else at all. It is also local and never pushed, so
-             it says both. */
-          sha: `<span class="c-sha"${c.stash
-            ? ' title="Local to this machine — and the only way back to this work if the stash is dropped"'
-            : ''}>${c.hash.slice(0, 7)}</span>`,
-        }) + '</li>'
-      );
-    })
-    .join('');
+  /* The spacer holds the height, and only changes when the history does. The
+     rows ride a transform, which the browser can do without laying anything out
+     again — measured, changing paddingTop instead cost 10.10 ms a step because
+     it invalidated the whole list, while the transform costs 0.00. */
+  const spacerH = `${total * rowH}px`;
+  const spacer = $('history-spacer');
+  if (spacer.style.height !== spacerH) spacer.style.height = spacerH;
+  list.style.transform = `translateY(${first * rowH}px)`;
+
+  /* A renumbering makes every cached index a lie, so start clean rather than
+     work out which ones still mean what. */
+  if (rowPool.layout !== layout) {
+    rowPool.layout = layout;
+    rowPool.rows.clear();
+    list.textContent = '';
+  }
+
+  // Rows the window has left behind.
+  for (const [i, entry] of rowPool.rows) {
+    if (i < first || i >= last) { entry.el.remove(); rowPool.rows.delete(i); }
+  }
+
+  /* `node` is the first element not yet placed. A row whose markup is unchanged
+     is left exactly where it is — untouched elements are the whole point, since
+     it is the writing, not the building, that costs a frame. */
+  let node = list.firstElementChild;
+  for (let i = first; i < last; i += 1) {
+    const html = rowHtml(layout.rows[i], find);
+    const cached = rowPool.rows.get(i);
+    if (cached && cached.html === html) {
+      if (node === cached.el) node = node.nextElementSibling;
+      else list.insertBefore(cached.el, node);
+      continue;
+    }
+    if (cached) {
+      // Advance past it before it goes, or the pointer is left dangling.
+      if (node === cached.el) node = node.nextElementSibling;
+      cached.el.remove();
+    }
+    const el = makeRow(html);
+    list.insertBefore(el, node);
+    rowPool.rows.set(i, { html, el });
+  }
+  /* Nothing should be left, since everything out of range went above and
+     everything in range was placed. Swept anyway: a stray row is a row showing
+     another commit's message. */
+  while (node) { const next = node.nextElementSibling; node.remove(); node = next; }
+
+  // The class rowHtml deliberately does not carry.
+  paintSelection();
 }
 
 /* ═════ detail panel ════════════════════════════════════════════ */
@@ -3516,7 +3694,8 @@ async function initRepo() {
 
 applyTheme(storedTheme());
 $('btn-theme').addEventListener('click', () =>
-  applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light')
+  applyTheme(storedFamilyTheme(
+    DAY_THEMES.includes(document.documentElement.dataset.theme) ? 'night' : 'day'))
 );
 
 $('card-open').addEventListener('click', () => openRepoAt(null));
@@ -4655,7 +4834,15 @@ function prefPages() {
           title: 'Appearance',
           fields: [
             { kind: 'select', label: 'Theme',
-              options: [['dark', 'GitBraid Dark'], ['light', 'GitBraid Light']],
+              options: [['dark', 'GitBraid Dark'], ['night', 'GitBraid Night Sky'],
+                        ['mango', 'GitBraid Mango Fresh'],
+                        ['light', 'GitBraid Light'], ['shore', 'GitBraid Shore']],
+              help: 'Three for the night and two for the day. Night Sky is indigo, '
+                + 'with lilac and pink where the dark theme puts amber and green; '
+                + 'Mango Fresh is a deep leaf green under a ripe orange-to-yellow '
+                + 'ramp; Shore is warm paper — cream ground, sand rules, driftwood '
+                + 'text, and blue on everything you can act on. The toolbar button '
+                + 'crosses between the two families and remembers which one you left.',
               get: () => storedTheme(),
               set: (v) => { applyTheme(v); renderPrefs(); } },
             { kind: 'zoom', label: 'Zoom',
@@ -5240,9 +5427,68 @@ function openGitOutputLive(verb) {
   $('gitout-title').textContent = verb;
   $('gitout-title').classList.remove('is-bad');
   setGitOutputState('running', 'Running…');
-  $('gitout-body').innerHTML = '<pre class="go-out go-live" id="gitout-live"></pre>';
+  // Filled command by command as they run, in the shape the finished view uses.
+  $('gitout-body').innerHTML = '<pre class="go-out" id="gitout-live"></pre>';
   $('gitout').hidden = false;
 }
+
+/* A command starting: its own header, the way a shell echoes one, and a fresh
+   pane under it. The old pane gives up the id before the new one takes it —
+   two elements answering to `gitout-live` at once is the kind of thing that
+   works until the day it does not. */
+function appendGitOutputCommand(text) {
+  if (!gitOutLive) return;
+  const body = $('gitout-body');
+  const previous = $('gitout-live');
+  if (previous) {
+    previous.id = '';
+    // An empty pane means the command before it said nothing at all.
+    if (!previous.textContent) previous.remove();
+  }
+  const head = document.createElement('p');
+  head.className = 'go-cmd';
+  head.textContent = `$ ${text}`;
+  body.appendChild(head);
+  const pane = document.createElement('pre');
+  pane.className = 'go-out';
+  pane.id = 'gitout-live';
+  body.appendChild(pane);
+  liveHead = null;
+  body.scrollTop = body.scrollHeight;
+}
+
+window.gitbraid.on('repo:output', (m) => {
+  if (m.kind === 'cmd') appendGitOutputCommand(m.text);
+  else appendGitOutputLine(m.text);
+});
+
+/* What each line of git's output is, so it can be coloured for what it says
+   rather than for where it appeared. Deliberately shallow: git's output is not
+   a language, and a rule that guesses too eagerly will paint an ordinary
+   sentence red the first time someone names a branch "error". */
+const OUT_RULES = [
+  [/^(fatal|error|CONFLICT)\b/, 'bad'],
+  [/^(warning|hint)\b/, 'warn'],
+  [/^remote:/, 'faint'],
+  [/^(Switched to|Already on|Your branch|Deleted branch|Dropped |Saved working)/, 'good'],
+  [/\bdone\.$/, 'faint'],
+];
+
+/** A diffstat's bar: "src/app.ts | 24 ++++----" — its plusses and minuses. */
+const STAT_BAR = /^(\s*\S.*?\|\s*\d+\s*)(\++)(-*)(\s*)$/;
+
+function outLineHtml(line) {
+  const bar = STAT_BAR.exec(line);
+  if (bar) {
+    return `${esc(bar[1])}<span class="o-add">${esc(bar[2])}</span>` +
+      `<span class="o-del">${esc(bar[3])}</span>${esc(bar[4])}`;
+  }
+  const hit = OUT_RULES.find(([re]) => re.test(line));
+  return hit ? `<span class="o-${hit[1]}">${esc(line)}</span>` : esc(line);
+}
+
+/** A whole block of recorded output, line by line. */
+const outHtml = (text) => String(text).split('\n').map(outLineHtml).join('\n');
 
 /* "remote: Compressing objects:  58% (36/62)" and the line before it are the
    same line rewritten, and a terminal shows one of them. Comparing what is left
@@ -5257,6 +5503,7 @@ function appendGitOutputLine(text) {
   if (!live) return;
   const head = counterHead(text);
   const lines = live.textContent ? live.textContent.split('\n') : [];
+  // textContent, never innerHTML: the markup is paint, the text is the record.
   /* Replace rather than append while a counter climbs, so the pane reads the
      way the terminal did instead of scrolling a hundred near-identical lines
      past — and so the running view matches the finished one, which collapses
@@ -5264,7 +5511,7 @@ function appendGitOutputLine(text) {
   if (head && head !== text && head === liveHead && lines.length) lines[lines.length - 1] = text;
   else lines.push(text);
   liveHead = head;
-  live.textContent = lines.join('\n');
+  live.innerHTML = lines.map(outLineHtml).join('\n');
   const body = $('gitout-body');
   body.scrollTop = body.scrollHeight;
 }
@@ -5295,7 +5542,7 @@ function paintGitOutput(title, blocks, failed, took) {
       .filter(Boolean).join(' '));
   $('gitout-body').innerHTML = blocks.map((b) =>
     (b.cmd ? `<p class="go-cmd">$ ${esc(b.cmd)}</p>` : '') +
-    `<pre class="go-out${b.bad ? ' bad' : ''}">${esc(b.out)}</pre>`).join('');
+    `<pre class="go-out${b.bad ? ' bad' : ''}">${outHtml(b.out)}</pre>`).join('');
   $('gitout').hidden = false;
   $('gitout-body').scrollTop = 0;
 }

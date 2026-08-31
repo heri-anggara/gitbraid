@@ -45,6 +45,7 @@ const fs = require('fs');
 fs.copyFileSync(process.argv[2], process.argv[3]);
 `;
 const { execFile, spawn } = require('child_process');
+const net = require('net');
 
 const MAX_BUFFER = 1024 * 1024 * 128;
 
@@ -73,13 +74,259 @@ const MAX_BUFFER = 1024 * 1024 * 128;
 /* ------------------------------------------------------------------ */
 
 function gitEnv() {
-  return {
+  const env = {
     ...process.env,
     LC_ALL: 'C',
     GIT_OPTIONAL_LOCKS: '0',
-    // Never let git block on an invisible credential prompt.
+    /* Never let git block on an invisible credential prompt. This stays 0 even
+       now that the application can ask: measured, git consults GIT_ASKPASS
+       whether or not terminal prompts are disabled, so asking properly costs
+       nothing of the guarantee that it can never stall on a prompt nobody can
+       see. If the window is gone, git fails in half a second as it always did. */
     GIT_TERMINAL_PROMPT: '0',
   };
+  if (askStub) {
+    env.GIT_ASKPASS = askStub;
+    env.SSH_ASKPASS = askStub;
+    /* Without `force`, ssh only reaches for an askpass program when DISPLAY is
+       set, which is not a thing a Wayland session promises. */
+    env.SSH_ASKPASS_REQUIRE = 'force';
+    env.GITBRAID_ASKPASS_OP = String(++askOpSeq);
+  }
+  return env;
+}
+
+/* ------------------------------------------------------------------ */
+/* askpass                                                             */
+/* ------------------------------------------------------------------ */
+
+/* git and ssh both ask for a secret by running a program, handing it the
+ * question as an argument and reading one line back. src/askpass.js is that
+ * program; this is the other end of it — a socket only this account can open,
+ * a stub with an execute bit that git can run, and a question put to the window
+ * so that a person can answer it.
+ *
+ * Everything here is per-command. git asks for a username twice inside a single
+ * fetch — measured, not assumed — and a second dialog for a question already
+ * answered would read as a bug, so answers are remembered for the length of one
+ * git invocation and thrown away when it ends. */
+
+let askServer = null;
+let askSockPath = null;
+let askStub = null;
+let askOpSeq = 0;
+let askIdSeq = 0;
+const askPending = new Map();   // dialog id -> resolve
+const askOps = new Map();       // git invocation -> what it has been told
+/* Kept only while the application runs, and only for a remote the reader asked
+   to be remembered on a machine with nowhere to write it. `git credential
+   approve` is silent and does nothing at all when no helper is configured —
+   measured — so without this the checkbox would be a lie. */
+const askSession = new Map();
+
+function askRecord(op) {
+  let rec = askOps.get(op);
+  if (!rec) {
+    rec = { answers: new Map(), remember: false, cred: {}, at: Date.now() };
+    askOps.set(op, rec);
+    /* A command that never reports back — killed, crashed — would otherwise
+       leave its answers here for the life of the process. */
+    for (const [key, old] of askOps) {
+      if (Date.now() - old.at > 30 * 60 * 1000) askOps.delete(key);
+    }
+  }
+  return rec;
+}
+
+/* What git or ssh is actually asking for. The wording is git's own and ssh's
+   own, and both are stable enough to read: anything unrecognised is shown as
+   the plain question it is, which is what happens for ssh's host-key
+   confirmation. */
+function askKind(prompt) {
+  let m = /^Username for '([^']*)'/.exec(prompt);
+  if (m) return { field: 'username', secret: false, target: m[1] };
+  m = /^Password for '([^']*)'/.exec(prompt);
+  if (m) return { field: 'password', secret: true, target: m[1] };
+  m = /^Enter passphrase for(?: key)?\s*'?([^']*)'?/.exec(prompt);
+  if (m) return { field: 'passphrase', secret: true, target: m[1].trim() };
+  return { field: 'other', secret: false, target: '' };
+}
+
+/* A git credential is addressed by protocol, host and user — the same three
+   fields `git credential` reads on its standard input. They are all present in
+   the prompt git wrote, so nothing has to be guessed. */
+function askTarget(url) {
+  try {
+    const u = new URL(url);
+    return {
+      protocol: u.protocol.replace(':', ''),
+      host: u.host,
+      username: u.username ? decodeURIComponent(u.username) : '',
+    };
+  } catch { return null; }
+}
+
+const askKey = (t) => `${t.protocol}://${t.host}`;
+
+function askWindow(payload) {
+  return new Promise((resolve) => {
+    if (!win || win.isDestroyed()) return resolve(null);
+    const id = ++askIdSeq;
+    askPending.set(id, resolve);
+    /* A window behind another window would leave git waiting on a dialog
+       nobody can see, which is the one failure this whole path exists to
+       prevent. */
+    try { if (!win.isVisible()) win.show(); win.focus(); } catch { /* not fatal */ }
+    win.webContents.send('askpass:ask', { id, ...payload });
+  });
+}
+
+async function answerAsk({ op, prompt }) {
+  const rec = askRecord(op);
+  if (rec.answers.has(prompt)) return rec.answers.get(prompt);
+
+  const kind = askKind(prompt);
+  const target = kind.target ? askTarget(kind.target) : null;
+
+  /* Already remembered for this run, on a machine with no helper to write it
+     to. Only whole pairs are reused: a username without its password would
+     send the reader round the same dialog anyway. */
+  if (target && (kind.field === 'username' || kind.field === 'password')) {
+    const held = askSession.get(askKey(target));
+    if (held && held.username && held.password) {
+      const value = kind.field === 'username' ? held.username : held.password;
+      rec.answers.set(prompt, value);
+      Object.assign(rec.cred, target, held);
+      return value;
+    }
+  }
+
+  const reply = await askWindow({
+    prompt,
+    field: kind.field,
+    secret: kind.secret,
+    target: kind.target,
+    host: target ? target.host : '',
+    canRemember: kind.field !== 'other',
+  });
+  if (!reply || reply.value == null) return null;   // cancelled: git fails, as it did before
+
+  rec.answers.set(prompt, reply.value);
+  if (reply.remember) rec.remember = true;
+  if (target) {
+    Object.assign(rec.cred, target);
+    if (kind.field === 'username') rec.cred.username = reply.value;
+    if (kind.field === 'password') rec.cred.password = reply.value;
+  }
+  return reply.value;
+}
+
+/* Whether git has anywhere to write a credential. Without a helper `git
+   credential approve` exits 0 and stores nothing, so this decides whether the
+   dialog offers to remember for good or only until the application quits. */
+function credentialHelper(cwd) {
+  return new Promise((resolve) => {
+    execFile('git', ['config', '--get-all', 'credential.helper'],
+      { cwd, encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' } },
+      (err, stdout) => resolve(!err && Boolean(String(stdout).trim())));
+  });
+}
+
+function credentialApprove(cwd, cred) {
+  return new Promise((resolve) => {
+    const child = spawn('git', ['credential', 'approve'], { cwd, env: gitEnv() });
+    child.on('error', () => resolve(false));
+    child.on('close', (code) => resolve(code === 0));
+    const lines = ['protocol', 'host', 'username', 'password']
+      .filter((k) => cred[k])
+      .map((k) => `${k}=${cred[k]}`);
+    child.stdin.end(`${lines.join('\n')}\n\n`);
+  });
+}
+
+/* Called when a git command ends. A credential is only worth keeping once the
+   server has accepted it, so nothing is stored after a failure — remembering a
+   password that was just refused would lock the reader out of the next four
+   attempts without ever showing them why. */
+async function askpassFinish(op, cwd, ok) {
+  const rec = op && askOps.get(op);
+  if (!rec) return;
+  askOps.delete(op);
+  if (!ok || !rec.remember) return;
+  const { protocol, host, username, password } = rec.cred;
+  if (!protocol || !host || !password) return;
+  if (await credentialHelper(cwd)) await credentialApprove(cwd, rec.cred);
+  else askSession.set(askKey(rec.cred), { username, password });
+}
+
+/* The stub git executes. It has to be a file with an execute bit and a
+   shebang, and the application's own Electron runs it as node — the same
+   binary, in the mode that makes it a plain interpreter. Written fresh each
+   start, into a directory only this account can read, with the socket baked in
+   so that the path is not left in the environment of every child process. */
+function startAskpass() {
+  if (askServer || IS_WIN) return;   // no /bin/sh stub to hand git on Windows
+  const home = process.env.XDG_RUNTIME_DIR || os.tmpdir();
+  /* Anything left by a run that did not get to quit cleanly. The directory is
+     named after the process that owns it, so a still-running second window
+     keeps its own — signal 0 asks whether a pid exists without touching it. */
+  try {
+    for (const name of fs.readdirSync(home)) {
+      const m = /^gitbraid-(\d+)-/.exec(name);
+      if (!m) continue;
+      try { process.kill(Number(m[1]), 0); continue; } catch { /* gone */ }
+      fs.rmSync(path.join(home, name), { recursive: true, force: true });
+    }
+  } catch { /* an unreadable runtime directory is not worth failing over */ }
+
+  const dir = fs.mkdtempSync(path.join(home, `gitbraid-${process.pid}-`));
+  fs.chmodSync(dir, 0o700);
+  askSockPath = path.join(dir, 'ask.sock');
+
+  /* Copied out rather than run in place: inside a packaged application this
+     file lives in an archive, and git runs the stub as an ordinary program. */
+  const js = path.join(dir, 'askpass.js');
+  fs.writeFileSync(js, fs.readFileSync(path.join(__dirname, 'src', 'askpass.js')));
+
+  askStub = path.join(dir, 'askpass.sh');
+  fs.writeFileSync(askStub,
+    '#!/bin/sh\n'
+    + '# Written by GitBraid. git and ssh run this and read one line back.\n'
+    + `GITBRAID_ASKPASS_SOCK=${JSON.stringify(askSockPath)} \\\n`
+    + `ELECTRON_RUN_AS_NODE=1 exec ${JSON.stringify(process.execPath)} `
+    + `${JSON.stringify(js)} "$@"\n`, { mode: 0o700 });
+
+  askServer = net.createServer({ allowHalfOpen: true }, (conn) => {
+    let buf = '';
+    conn.setEncoding('utf8');
+    conn.on('error', () => { /* the asker went away */ });
+    conn.on('data', (chunk) => {
+      buf += chunk;
+      if (buf.length > 8192) return conn.destroy();
+      const nl = buf.indexOf('\n');
+      if (nl < 0) return;
+      let msg = null;
+      try { msg = JSON.parse(buf.slice(0, nl)); } catch { return conn.destroy(); }
+      buf = '';
+      answerAsk(msg).then(
+        (value) => conn.end(value == null ? '' : `${value}\n`),
+        () => conn.end(''),
+      );
+    });
+  });
+  askServer.on('error', () => { askServer = null; askStub = null; });
+  askServer.listen(askSockPath, () => {
+    try { fs.chmodSync(askSockPath, 0o600); } catch { /* best effort */ }
+  });
+}
+
+function stopAskpass() {
+  try { askServer?.close(); } catch { /* going away anyway */ }
+  if (askStub) {
+    try { fs.rmSync(path.dirname(askStub), { recursive: true, force: true }); }
+    catch { /* a runtime directory the session will clear */ }
+  }
+  askServer = null; askStub = null; askSockPath = null;
 }
 
 /* Every git command GitBraid runs, newest last. This is what the activity log
@@ -92,9 +339,26 @@ const LOG_MAX = 400;
  * keeps the log from shouting about a question that just had no answer. */
 /* git buries the reason: a rejected push opens with "To <url>", which explains
    nothing. Same choice the status bar makes, so the log and the bar agree. */
+/* Two failures hide behind a fatal that says nothing. Measured against real
+   output: a refused SSH key prints `Permission denied (publickey).` and then
+   `fatal: Could not read from remote repository.`, and a changed host key
+   prints `Host key verification failed.` before the same fatal. Taking the
+   fatal in either case leaves the reader with a true sentence and no idea what
+   to do, which is the thing this function exists to prevent. Everything else
+   git says is already carried by its fatal — `Authentication failed for <url>`,
+   `could not read Username for <url>` — so nothing else belongs here. */
+const WHY_FIRST = [
+  /permission denied/i,
+  /host key verification failed/i,
+];
+
 function reasonLine(text) {
   const lines = String(text || '').split(/[\r\n]/).map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return '';
+  for (const re of WHY_FIRST) {
+    const hit = lines.find((l) => re.test(l));
+    if (hit) return hit;
+  }
   return (
     lines.find((l) => /^fatal:/i.test(l)) ||
     lines.find((l) => /^!\s|\[rejected\]/i.test(l)) ||
@@ -134,8 +398,11 @@ const SOMETIMES = new Set(['stash', 'branch', 'tag']);
 const LISTING = new Set(['list', '-l', '--list', '--format', '--get', '--get-all',
   '--get-regexp', '-v', '--verbose', '--points-at', '--merged', '--no-merged']);
 
-const OUT_MAX_LINES = 120;
-const OUT_MAX_CHARS = 8000;
+/* Room for a real operation rather than a demonstration: a merge across two
+   hundred files prints a line for each, and cutting that at 120 hides the half
+   of the change the reader is most likely scrolling to find. */
+const OUT_MAX_LINES = 400;
+const OUT_MAX_CHARS = 24000;
 
 function keepsOutput(args, code) {
   // A failure is worth reading whatever ran, including the read-only commands.
@@ -186,15 +453,123 @@ handle('app:log', async () => gitLog.slice().reverse());
 handle('app:clearLog', async () => { gitLog.length = 0; return true; });
 
 /** `extraEnv` is for the few commands that need to drive git's editors. */
+/* Whole lines only. git writes progress by rewriting one line with \r, so a
+   chunk can carry half a line, several lines, or a counter climbing over
+   itself; the caller wants what a terminal would have had on screen. */
+function lineFeeder(onLine) {
+  let pending = '';
+  return {
+    push(chunk) {
+      pending += chunk;
+      const parts = pending.split('\n');
+      pending = parts.pop();
+      for (const part of parts) {
+        const shown = part.split('\r').pop().trimEnd();
+        if (shown) onLine(shown);
+      }
+    },
+    end() {
+      const shown = pending.split('\r').pop().trim();
+      if (shown) onLine(shown);
+      pending = '';
+    },
+  };
+}
+
+/* Sent as the command runs, for the window that shows what git said. Separate
+   from repo:progress, which carries phases and percentages for the toolbar
+   button: this one is the raw transcript and would swamp a button's label. */
+function sendOutput(payload) {
+  win?.webContents.send('repo:output', payload);
+}
+
+/* The streaming half of git(). Only the commands that narrate come through
+   here — a merge, a push, a git-flow finish that runs four of them — because
+   `git status` runs on every refresh and its answer is data being parsed, not
+   a transcript anyone reads. */
+function gitStreaming(cwd, args, extraEnv, started) {
+  return new Promise((resolve, reject) => {
+    const env = extraEnv ? { ...gitEnv(), ...extraEnv } : gitEnv();
+    /* Answers given to this command belong to this command, and a credential is
+       only worth keeping once the server has accepted it — so both ends report. */
+    const op = env.GITBRAID_ASKPASS_OP;
+    const child = spawn('git', args, { cwd, env });
+    sendOutput({ kind: 'cmd', text: `git ${args.join(' ')}` });
+
+    let out = '';
+    let err = '';
+    /* A third accumulator, and not redundant. `out` and `err` are the contract:
+       a caller that fails gets e.stdout and e.stderr, and two places in this
+       file tell them apart. `said` is the transcript — the same lines in the
+       order the two streams actually spoke, which is what a reader watching the
+       window sees and what a terminal would have shown. Concatenating the two
+       afterwards, as this did, always put the whole of stdout before the whole
+       of stderr no matter which came first. */
+    let said = '';
+    let over = false;
+    /* execFile enforced maxBuffer for us and spawn does not. Past the cap the
+       process is left alone to finish — killing it half way through a merge
+       would be a far worse outcome than a truncated transcript. */
+    const room = () => out.length + err.length < MAX_BUFFER;
+    /* Whole lines into `said`, not raw chunks: a chunk can end mid-line, and
+       interleaving two of those would splice one line into another. */
+    const emit = (line) => {
+      said += `${line}\n`;
+      sendOutput({ kind: 'line', text: line });
+    };
+    // One feeder per stream, because a newline in one does not end a partial
+    // line in the other — but both empty into the same transcript, in turn.
+    const feedOut = lineFeeder(emit);
+    const feedErr = lineFeeder(emit);
+
+    child.stdout.on('data', (d) => {
+      if (room()) out += d; else over = true;
+      feedOut.push(String(d));
+    });
+    child.stderr.on('data', (d) => {
+      if (room()) err += d; else over = true;
+      feedErr.push(String(d));
+    });
+    child.on('error', (e) => {
+      askpassFinish(op, cwd, false);
+      recordGit(cwd, args, Date.now() - started, e.message, 1, e.message);
+      reject(e);
+    });
+    child.on('close', (code) => {
+      askpassFinish(op, cwd, code === 0);
+      feedOut.end();
+      feedErr.end();
+      if (over) said += '\n… output truncated';
+      const both = said;
+      if (code !== 0) {
+        // Same rule as the buffered path: take whichever stream actually spoke.
+        const said = err.trim() || out.trim();
+        const e = new Error(said || `git exited with ${code}`);
+        e.stderr = err;
+        e.stdout = out;
+        recordGit(cwd, args, Date.now() - started, said, code, both);
+        reject(e);
+        return;
+      }
+      recordGit(cwd, args, Date.now() - started, null, 0, both);
+      resolve(out);
+    });
+  });
+}
+
 function git(cwd, args, extraEnv = null) {
   const started = Date.now();
+  // The ones worth watching are exactly the ones worth keeping.
+  if (keepsOutput(args, 0)) return gitStreaming(cwd, args, extraEnv, started);
+  const env = extraEnv ? { ...gitEnv(), ...extraEnv } : gitEnv();
+  const op = env.GITBRAID_ASKPASS_OP;
   return new Promise((resolve, reject) => {
     execFile(
       'git',
       args,
-      { cwd, maxBuffer: MAX_BUFFER, encoding: 'utf8',
-        env: extraEnv ? { ...gitEnv(), ...extraEnv } : gitEnv() },
+      { cwd, maxBuffer: MAX_BUFFER, encoding: 'utf8', env },
       (err, stdout, stderr) => {
+        askpassFinish(op, cwd, !err);
         if (err) {
           /* A merge that conflicts says so on stdout — "CONFLICT (content):
              Merge conflict in a.txt" — and leaves stderr empty, so stderr
@@ -241,7 +616,9 @@ function gitStdin(cwd, args, input) {
 function gitProgress(cwd, args, onLine) {
   const started = Date.now();
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, { cwd, env: gitEnv() });
+    const env = gitEnv();
+    const op = env.GITBRAID_ASKPASS_OP;
+    const child = spawn('git', args, { cwd, env });
     let out = '';
     let err = '';
     let pending = '';
@@ -255,10 +632,12 @@ function gitProgress(cwd, args, onLine) {
       for (const line of parts) if (line.trim()) onLine(line.trim());
     });
     child.on('error', (e) => {
+      askpassFinish(op, cwd, false);
       recordGit(cwd, args, Date.now() - started, e.message, 1, e.message);
       reject(e);
     });
     child.on('close', (code) => {
+      askpassFinish(op, cwd, code === 0);
       if (pending.trim()) onLine(pending.trim());
       // These commands belong in the activity log as much as any other; the
       // progress chatter is on stderr, so only a failure's tail is the reason.
@@ -838,6 +1217,7 @@ handle('update:later', async ({ path: file, kind }) => {
 });
 
 app.on('will-quit', () => {
+  stopAskpass();
   if (!pendingUpdate) return;
   const file = pendingUpdate;
   pendingUpdate = null;
@@ -1252,6 +1632,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
+    startAskpass();
     createWindow();
     buildMenu();
     app.on('activate', () => {
@@ -1910,6 +2291,23 @@ handle('repo:remoteHasBranch', (repo, remote, branch) => new Promise((resolve, r
     resolve(code === 2 ? false : null);
   });
 }));
+
+/* The window's answer to one dialog. Nothing is checked here beyond the id:
+   the value is whatever the reader typed, and it goes straight back down the
+   socket to the command that asked for it. */
+handle('askpass:answer', (id, value, remember) => {
+  const done = askPending.get(id);
+  if (!done) return false;
+  askPending.delete(id);
+  done(value == null ? null : { value: String(value), remember: Boolean(remember) });
+  return true;
+});
+
+/* Whether "remember" would outlive the application. Without a credential
+   helper git has nowhere to write one, so the dialog says which of the two it
+   is rather than promising something that quietly will not happen. */
+handle('askpass:storage', async (repo) =>
+  (await credentialHelper(repo || process.cwd())) ? 'helper' : 'session');
 
 handle('repo:remotes', async (repo) => {
   const raw = await git(repo, ['remote', '-v']);

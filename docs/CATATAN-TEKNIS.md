@@ -427,6 +427,154 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Riwayat berkas yang baru yang membuatnya terasa sebagai bug baru, tapi
   panel-panel lain sudah lama berperilaku sama
 
+**Gulir riwayat, babak ketiga: yang bisa dan tidak bisa diukur dari sini**
+- Setelah daur ulang baris, kerja yang bisa dikendalikan tinggal **140 ms dari
+  645 ms** selama ~1,1 detik menggulir dalam mode maksimal — dan tidak lagi
+  tumbuh mengikuti ukuran jendela: skrip 42 lawan 43 ms, gaya 51 lawan 51
+- Jejak Chromium menyebut sisanya dengan nama: `RealSwapBuffers` **518 ms / 115
+  swap = 4,5 ms per swap**, dan melukis **4,6 ms per frame**. Berdua sudah
+  melewati anggaran 8,33 ms sebelum kode kita ikut dihitung
+- **Teori GPU ganda saya salah, dan sempat saya nyatakan sebagai temuan.**
+  `getGPUInfo()` melaporkan NVIDIA `active: true`, dan itu saya baca sebagai
+  bukti aplikasi menggambar di sana sementara compositor di Intel. Ternyata itu
+  cuma pencacahan PCI — dan saya menanyakannya **tanpa pernah membuka jendela**,
+  jadi GL belum diinisialisasi (`glImplementationParts: "(gl=none,angle=none)"`).
+  Ditanya lewat WebGL dengan jendela terbuka, jawabannya
+  `ANGLE (Intel, Mesa Intel(R) UHD Graphics)` — **GPU yang sama dengan
+  compositor.** Tidak ada penyalinan antar-GPU
+- Yang tetap berdiri: menyembunyikan **seluruh** daftar commit hanya memangkas
+  lukisan dari 4,97 ke 2,60 ms per frame. Sisa 2,60 ms itu sidebar dan toolbar —
+  yang tidak bergerak sedikit pun saat riwayat digulir
+- `contain: paint` dan `will-change: scroll-position` diberikan ke scroller-nya
+  atas dasar itu. Janjinya sudah benar sejak dulu: lapisan graf menggunting diri
+  ke kolomnya sendiri, dan baris tidak bisa keluar dari kotaknya
+- **Tidak terkonfirmasi.** Derau di lingkungan ini terlalu besar untuk
+  memutuskan selisih sebesar ini — konfigurasi yang sama memberi 197 lalu 152 ms
+  di dua jalan berurutan. Dan gejala yang dilaporkan — maksimal berbingkai
+  tersendat sementara layar penuh mulus — **tidak bisa direproduksi di sini**:
+  keduanya terukur sama, 663 lawan 640 ms lalu 641 lawan 656 ms
+
+**Gulir riwayat, babak kedua: padding yang membatalkan segalanya**
+- `content-visibility` menolong tapi tidak cukup. Pada repositori 400 baris dan
+  12 lajur, `renderRows()` masih 13–15 ms — dan tebakan yang wajar semuanya
+  meleset. Membangun SVG 0,20 ms. Menempelkannya 0,40 ms. Menempel HTML daftar
+  0,90 ms. Seluruh pembantu per-baris — pill, avatar, tanggal, sorotan, tooltip
+  — 0,7 ms untuk 48 baris. Mematikannya satu per satu tidak menggeser apa pun
+- **Penyebabnya `paddingTop`.** Mengubahnya membatalkan tata letak seluruh
+  daftar, jadi 48 baris ditata ulang tiap langkah gulir sekecil apa pun.
+  Terukur, terpisah dari yang lain: mengubah padding saja **10,10 ms**;
+  mengubah `transform` saja **0,00 ms**
+- Pendekatan naif — tinggi tetap pada daftar plus transform — **merusak
+  jangkauan gulir**: elemen yang ditransformasi ikut menambah luapan yang bisa
+  digulir, dan `scrollHeight` melonjak 12.494 → 24.516. Diuji sebagai prototipe
+  sebelum ditulis, bukan sesudah
+- Yang dipakai: **pengganjal di aliran normal** memegang tinggi total, daftarnya
+  keluar dari aliran pada `top: var(--head-h)` — titik asal yang sama dengan
+  lapisan graf, supaya keduanya tidak bisa berselisih — dan digeser dengan
+  transform. Jangkauan gulir terukur tetap di lima posisi
+- **Daur ulang baris.** Kunci cache-nya adalah markup baris itu sendiri: dua
+  string identik berarti dua baris identik, jadi tidak ada daftar properti yang
+  harus diingat untuk dibandingkan
+- Dengan **satu pengecualian yang disengaja**: kelas `selected` tidak ada di
+  markup. `paintSelection()` memasang dan mencabutnya langsung di DOM, jadi
+  markup dan layar akan berselisih begitu ada yang mengklik. Mengeluarkannya
+  memberi kelas itu satu pemilik — dan efek sampingnya, memilih sebuah commit
+  tidak lagi membatalkan satu pun baris tercache
+- Hasilnya, gulir kecil: **15,20 → 2,80 ms** di repositori berat, 4,80 → 2,80 di
+  yang ringan. Keduanya di bawah anggaran 8,33 ms
+- Jaring pengamannya ditulis **dan dijalankan terhadap kode lama lebih dulu** —
+  189 pemeriksaan, nol gagal — karena harness yang cuma lulus sesudah perubahan
+  tidak membuktikan apa pun. Sesudahnya 311 pemeriksaan di dua repositori, nol
+  gagal, dengan tambahan pemeriksaan tinggi pengganjal, geseran, penyelarasan
+  titik graf, dan kestabilan jangkauan gulir
+- Satu kegagalan harness sempat muncul dan ternyata milik harness itu sendiri:
+  backslash regex-nya termakan dua lapis, Python lalu template literal JS,
+  sehingga `\d` menjadi `d`. Yang menyelamatkan: pemeriksaan penyelarasan graf
+  **lulus** di saat yang sama, dan itu mustahil kalau geserannya benar-benar nol
+
+**Gulir riwayat pada layar 120Hz**
+- Anggaran satu frame di 120Hz adalah **8,33 ms**. Terukur pada riwayat 247
+  baris, satu `renderRows()` memakan **12,90 ms** — jadi tiap kali overscan
+  habis, tepatnya tiap 24 baris tergulir, satu frame terlewat
+- **Grafnya bukan penyebabnya**, walau itu tebakan pertama yang wajar:
+  membangun seluruh string SVG 0,11 ms, menempelkannya 0,44 ms
+- Penempelan HTML daftarnya juga murah — 1,28 ms. Yang mahal **menata ulang**:
+  menempel lalu memaksa tata letak 12,51 ms. Tiap baris adalah grid berisi 5–7
+  sel dengan pill, avatar, dan teks berellipsis, dan 48 di antaranya ditata
+  padahal cuma sekitar 26 yang terlihat
+- Empat kandidat diukur, bukan dipilih dari ingatan:
+
+  | | |
+  |---|---|
+  | dasar | 12,90 ms |
+  | `contain: layout style` | 13,40 ms |
+  | `contain: strict` | 12,00 ms |
+  | `contain` pada daftarnya | 12,70 ms |
+  | **`content-visibility: auto`** | **3,90 ms** |
+
+- Yang menang membuang tata letak untuk baris overscan yang memang tidak
+  terlihat. Aman di sini karena tinggi baris **ditetapkan** (`height:
+  var(--row-h)`), bukan diturunkan dari isinya — melewati isinya tidak bisa
+  menggeser scrollbar
+- Diperiksa setelahnya: tinggi gulir tetap 7714, klik tetap memilih, titik graf
+  tetap sejajar dengan barisnya setelah menggulir jauh, nol galat
+
+**Celah di antara perintah, dan urutan transkripnya**
+- Celah itu bukan soal urutan melainkan **ruang kosong**. `min-height: 120px`
+  saya pasang di kelas `.go-live` supaya dialognya tidak tumbuh baris demi baris
+  saat perintah pertama mulai bicara — tapi kelas itu melekat pada **semua**
+  panel, bukan hanya yang sedang terisi. Perintah yang menjawab satu baris
+  (`Deleted branch fix/order-detail`) tetap menyisakan kotak 120px di bawahnya
+- Terukur, saat berjalan: panel selesai berisi 1 baris setinggi **120px** di
+  samping panel aktif berisi 482 baris setinggi 8962px. Sesudah aturannya
+  dipindah ke `#gitout-live`, panel yang sama jadi **19px**
+- Kelas `.go-live` lalu tidak menata apa pun lagi, jadi dihapus dari markup
+  alih-alih ditinggalkan sebagai kelas yang tidak berarti
+- **Urutan transkripnya memang salah, terpisah dari itu.** `stdout` dan `stderr`
+  digabung sebagai `${out}\n${err}` — seluruh stdout dulu, baru seluruh stderr,
+  apa pun yang bicara lebih dahulu. Untuk `git push` hampir semuanya di stderr
+  jadi tak terlihat; untuk perintah yang memakai keduanya, tersusun ulang
+- Penampung **ketiga** ditambahkan, dan itu tidak mubazir: `out` dan `err` adalah
+  kontrak — pemanggil yang gagal menerima `e.stdout` dan `e.stderr`, dan dua
+  tempat di `main.js` membedakannya. Yang ketiga adalah transkrip, diisi
+  **baris utuh** dalam urutan kedua aliran benar-benar bicara
+- Baris utuh, bukan potongan mentah: sebuah potongan bisa berakhir di tengah
+  baris, dan menyelang-nyeling dua potongan seperti itu akan menyambung satu
+  baris ke dalam baris lain
+- Yang **tidak** bisa dijanjikan: urutan sempurna. Dua pipa punya dua penyangga
+  di kernel, dan terminal pun tidak mendapat jaminan itu. Yang dijanjikan adalah
+  sama benarnya dengan terminal. Terukur pada merge 40 berkas: empat baris
+  pertama dan dua baris terakhir catatan **identik** dengan keluaran terminal
+
+**Semua perintah yang bercerita kini mengalir, dan keluarannya diberi warna**
+- Sebelumnya hanya fetch/pull/push/clone yang mengalir, lewat `gitProgress`.
+  Sisanya memakai `execFile` yang baru menyerahkan keluarannya setelah selesai —
+  dan itu termasuk **git-flow finish**, yang menjalankan empat perintah
+  berurutan selama 3,4 detik lalu menumpahkan semuanya sekaligus
+- Saya sempat menolak ini dengan alasan "90 pemanggilan `git()` demi 20
+  milidetik". **Taksiran itu salah dua kali**: yang berubah cuma satu fungsi,
+  pemanggilnya tidak tersentuh sama sekali; dan operasi berlapis memakan detik,
+  bukan milidetik
+- `git()` bercabang pada `keepsOutput()` — daftar yang sama yang menentukan
+  keluaran mana yang disimpan. Yang bercerita memakai `spawn` dan mengalir; yang
+  membaca saja tetap `execFile`. `git status` jalan pada tiap penyegaran, dan
+  menyiarkannya baris demi baris akan membanjiri IPC tanpa ada yang membacanya
+- Saluran **`repo:output` terpisah dari `repo:progress`**. Yang kedua membawa
+  fase dan persentase untuk label tombol; menaruh transkrip mentah di sana akan
+  menenggelamkan label sebuah tombol
+- `execFile` menegakkan `maxBuffer`, `spawn` tidak. Melewati batas, prosesnya
+  **dibiarkan selesai** dan transkripnya yang dipotong — membunuh git di tengah
+  merge jelas hasil yang jauh lebih buruk daripada catatan yang terpotong
+- Batas catatan dinaikkan 120 → 400 baris. Merge dua ratus berkas mencetak satu
+  baris per berkas, dan memotongnya di 120 menyembunyikan separuh perubahan yang
+  justru paling dicari
+- **Pewarnaannya sengaja dangkal.** Keluaran git bukan bahasa, dan aturan yang
+  terlalu bersemangat akan mewarnai merah kalimat biasa pertama kali seseorang
+  menamai cabangnya "error". Lima aturan saja, ditambah tanda plus dan minus di
+  diffstat — satu-satunya tempat git sendiri sudah mengharapkan warna
+- Terukur pada merge 240 berkas: **481 baris mengalir** saat berjalan, "Running…"
+  tertangkap, selesai dalam 6,0 detik, **480 span berwarna**
+
 **Aksi yang tidak perlu bicara**
 - Pindah cabang membuka dialog berisi tiga perintah — `stash push`, `checkout`,
   `stash pop` — dan yang terakhir menjawab dengan status lengkap: berkas

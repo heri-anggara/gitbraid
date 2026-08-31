@@ -61,7 +61,18 @@
     '#7fa63a', // olive
   ];
 
-  const laneColor = (i) => LANE_COLORS[i % LANE_COLORS.length];
+  /* A theme may swap the set outright. The eight above are saturated for a
+     dark ground and shout on a pale warm one, where the same eight hues pulled
+     toward the theme's own palette read better and still tell eight lanes
+     apart. Passing nothing restores them, so a theme that says nothing here
+     keeps what every theme had before. */
+  let LANES = LANE_COLORS;
+
+  function setLanes(colors) {
+    LANES = Array.isArray(colors) && colors.length ? colors : LANE_COLORS;
+  }
+
+  const laneColor = (i) => LANES[i % LANES.length];
 
   /**
    * Assign each commit a lane and record the edges to its parents.
@@ -308,7 +319,7 @@
   /* Getters rather than copies: the renderer reads Graph.ROW_H on every scroll
      and would keep the value it was given at load otherwise. */
   window.Graph = {
-    layout, render, laneColor, setStyle, setMetrics,
+    layout, render, laneColor, setStyle, setMetrics, setLanes,
     styles: Object.keys(STYLES),
     get PAD_X() { return PAD_X; },
     get ROW_H() { return ROW_H; },

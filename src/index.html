@@ -215,7 +215,7 @@
     <div class="tb-progress" id="tb-progress" hidden><span id="tb-progress-fill"></span></div>
 
     <div class="toolbar-right">
-      <button id="btn-theme" class="btn btn-icon" title="Switch between the light and dark theme">
+      <button id="btn-theme" class="btn btn-icon" title="Switch between dark and your daylight theme">
         <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
           <path class="ic-moon" d="M13 9.6A5.6 5.6 0 0 1 6.4 3a5.6 5.6 0 1 0 6.6 6.6z"
                 fill="currentColor"/>
@@ -555,6 +555,11 @@
         <div class="history-head" id="history-head"
              title="Drag a divider to resize · right-click to choose columns"></div>
         <div class="graph-layer" id="graph-layer"></div>
+        <!-- Carries the full height of the history so the scrollbar has a range
+             to run over. The rows themselves are out of the flow and moved into
+             place with a transform, which costs no layout; padding on the list
+             did the same job and cost 10 ms of reflow on every scroll step. -->
+        <div class="history-spacer" id="history-spacer"></div>
         <ul class="commit-list" id="commit-list"></ul>
         <button id="btn-more" class="btn btn-quiet load-more" hidden>Load more commits</button>
       </div>

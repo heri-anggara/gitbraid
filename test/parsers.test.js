@@ -688,6 +688,39 @@ check('clean status has no entries', (() => {
   const s = P.parseStatus('# branch.head main\0');
   return s.staged.length === 0 && s.unstaged.length === 0 && s.branch === 'main';
 })());
+/* ── the history scroller's shape, which is what makes it fast ──── */
+console.log('\nhistory scrolling');
+{
+  const htmlSrc = fs.readFileSync(path.join(__dirname, '..', 'src/index.html'), 'utf8');
+  const rendererSrcNow = fs.readFileSync(path.join(__dirname, '..', 'src/renderer.js'), 'utf8');
+
+  // The spacer carries the height so nothing about the rows has to.
+  check('a spacer stands in for the rows that are not drawn',
+    /id="history-spacer"/.test(htmlSrc));
+  check('and the list is out of the flow, at the graph layer\'s origin',
+    /\.commit-list \{[^}]*position: absolute;[^}]*top: var\(--head-h\);/s.test(styleSrc));
+
+  /* Padding on the list invalidated its whole layout on every scroll step —
+     measured at 10.10 ms against 0.00 for the transform that replaced it. */
+  check('rows are moved by transform, not by padding',
+    /list\.style\.transform = `translateY/.test(rendererSrcNow)
+    && !/list\.style\.paddingTop/.test(rendererSrcNow));
+
+  // The recycler's whole safety argument is that markup describes a row fully.
+  check('rows are reused when their markup is unchanged',
+    /cached && cached\.html === html/.test(rendererSrcNow));
+  check('and dropped when the window leaves them behind',
+    /i < first \|\| i >= last/.test(rendererSrcNow));
+
+  /* Which only holds while nothing else edits a row. paintSelection does, so
+     that one class is deliberately not in the markup. */
+  check('the selected class stays out of a row\'s markup',
+    !/selected ' : ''/.test(rendererSrcNow.slice(
+      rendererSrcNow.indexOf('function rowHtml'), rendererSrcNow.indexOf('function renderRows'))));
+  check('and renderRows hands it back to paintSelection',
+    /paintSelection\(\);\n\}/.test(rendererSrcNow.slice(rendererSrcNow.indexOf('function renderRows'))));
+}
+
 /* ── every graph style must still land its edges on the parent dot ─ */
 console.log('\ngraph styles');
 /* The metric sets the presets actually ship, plus an extreme of each, so a
@@ -1250,6 +1283,349 @@ console.log('\na stash in the history');
 
   git(['stash', 'clear']);
   git(['checkout', '--', '.']);
+}
+
+/* ── themes ────────────────────────────────────────────────────── */
+/* A theme is a list of custom properties and nothing else: styles.css says so
+   at its head, and these checks are what make that true rather than hopeful.
+   Contrast is computed here rather than trusted, because a colour that looks
+   right in a screenshot can still fail a reader who needs the ratio.
+
+   Nothing below names a theme. The list is read out of the Preferences options
+   and out of the stylesheet, so a theme added later is covered by all of it the
+   moment it is offered — a new theme quietly escaping these checks is the exact
+   failure they exist to prevent. */
+console.log('\nthemes');
+{
+  const lum = (hex) => {
+    const h = hex.replace('#', '');
+    const part = (i) => {
+      const v = parseInt(h.slice(i, i + 2), 16) / 255;
+      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    };
+    return 0.2126 * part(0) + 0.7152 * part(2) + 0.0722 * part(4);
+  };
+  const ratio = (a, b) => {
+    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  /* An rgba() wash laid over a solid ground, so a selected row is measured as
+     the reader sees it rather than as the two colours it is made from. */
+  const over = (wash, ground) => {
+    const m = wash.match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*\.?(\d+)\)/);
+    if (!m) return wash;
+    const a = Number('0.' + m[4]);
+    const g = (i) => parseInt(ground.replace('#', '').slice(i, i + 2), 16);
+    const mix = (c, i) => Math.round(Number(c) * a + g(i) * (1 - a));
+    return '#' + [mix(m[1], 0), mix(m[2], 2), mix(m[3], 4)]
+      .map((v) => v.toString(16).padStart(2, '0')).join('');
+  };
+  /* Every declaration under a selector, gathered across all of its blocks — the
+     tokens and the syntax colours are two separate blocks per theme. */
+  const tokensOf = (theme) => {
+    const sel = theme === 'dark'
+      ? ':root\\s*\\{' : `:root\\[data-theme="${theme}"\\]\\s*\\{`;
+    const out = {};
+    const re = new RegExp(sel + '([^}]*)\\}', 'g');
+    let m;
+    while ((m = re.exec(styleSrc))) {
+      for (const d of m[1].split(';')) {
+        const kv = d.match(/(--[\w-]+)\s*:\s*([^;]+)/);
+        if (kv) out[kv[1]] = kv[2].trim();
+      }
+    }
+    return out;
+  };
+
+  const dark = tokensOf('dark');
+  const light = tokensOf('light');
+  const offered = [...rendererSrc.matchAll(/\['(\w+)', 'GitBraid ([^']+)'\]/g)]
+    .map((m) => ({ key: m[1], label: m[2], t: tokensOf(m[1]) }));
+  const keys = offered.map((o) => o.key);
+  /* Everything past the two GitBraid shipped with. They answer to a stricter
+     floor further down, because each was built against it. */
+  const NEW = offered.filter((o) => o.key !== 'dark' && o.key !== 'light');
+
+  check('Preferences offers more than the two GitBraid started with',
+    offered.length >= 5 && NEW.length >= 3, keys);
+  check('every theme it offers has a token list of its own',
+    offered.every((o) => Object.keys(o.t).length > 40),
+    offered.map((o) => `${o.key}:${Object.keys(o.t).length}`));
+  /* And the other direction: a theme written into the stylesheet but never
+     offered would be unreachable, which is worse than not writing it. */
+  const written = [...new Set([...styleSrc.matchAll(/:root\[data-theme="(\w+)"\]\s*\{/g)]
+    .map((m) => m[1]))];
+  check('and every theme the stylesheet defines is reachable from Preferences',
+    written.every((k) => keys.includes(k)), written.filter((k) => !keys.includes(k)));
+
+  /* A token the light theme restates and a newer theme does not would fall
+     silently through to the dark value: a dark colour on cream paper, or an
+     amber one in a sky that has no amber anywhere in it. */
+  for (const { label, t } of NEW) {
+    const missing = Object.keys(light).filter((k) => !(k in t));
+    check(`${label} restates every token the light theme restates`,
+      missing.length === 0, missing);
+    const extra = Object.keys(t).filter((k) => !(k in light));
+    check(`${label} invents none the other themes do not have`, extra.length === 0, extra);
+  }
+
+  /* The claim at the head of styles.css. One exception, written there too: the
+     initials disc takes its ground from a hash of an email address, so it is
+     the same colour in every theme and its ink belongs to none of them. Two
+     rules draw that disc. Anything else here is a colour that will not follow
+     the theme it sits in. */
+  const outside = styleSrc
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^:root(\[data-theme="[a-z]+"\])?\s*\{[^}]*\}/gm, '');
+  const loose = outside.match(/#[0-9a-fA-F]{3,8}\b/g) || [];
+  check('the only colours outside the token lists are the initials disc',
+    loose.length === 2 && loose.every((c) => c === '#fff'), loose);
+
+  /* Ratios a reader depends on. The newer themes answer to the AA floor for
+     body text, because every value in each was picked against that figure. The
+     two older ones answer to 3:1, which is a real floor and a real guard
+     against a colour drifting paler — and is not an endorsement. Measured
+     today, the light theme misses 4.5:1 on --add (3.88), --del (4.43) and
+     --accent-ink over --accent (4.13), and the dark theme on --ink-on-fill over
+     --danger (3.00). Lifting those changes how a theme someone already uses
+     looks, which is its owner's call and not a repair to fold in beside a new
+     one. */
+  const PAIRS = [
+    ['--text', '--bg', 4.5], ['--text-dim', '--bg', 4.5], ['--text-faint', '--bg', 3],
+    ['--accent-text', '--bg', 4.5], ['--pending-text', '--bg', 4.5],
+    ['--add', '--bg', 4.5], ['--del', '--bg', 4.5], ['--status-u', '--bg', 4.5],
+    ['--accent-ink', '--accent', 4.5], ['--ink-on-fill', '--danger', 4.5],
+    ['--badge-up-ink', '--badge-up-2', 4.5], ['--badge-dn-ink', '--badge-dn-2', 4.5],
+  ];
+  const ALL = [
+    { label: 'dark', t: dark, floor: 3 },
+    { label: 'light', t: { ...dark, ...light }, floor: 3 },
+    ...NEW.map((o) => ({ label: o.label, t: { ...dark, ...o.t }, floor: 4.5 })),
+  ];
+  for (const { label, t, floor } of ALL) {
+    const bad = PAIRS
+      .map(([fg, bg, aa]) => [fg, bg, Math.min(aa, floor), ratio(t[fg], t[bg])])
+      .filter(([, , want, got]) => got < want)
+      .map(([fg, bg, want, got]) => `${fg} on ${bg} ${got.toFixed(2)} < ${want}`);
+    check(`${label} keeps every reading colour above ${floor}:1`, bad.length === 0, bad);
+  }
+
+  /* The selected row is a wash, and washing a colour over the ground is where a
+     theme most easily loses its text. It is also where the four themes agree
+     most closely: 1.25 to 1.40 above their own grounds, arrived at separately
+     each time from what the ground did to the wash. */
+  for (const { label, t } of ALL) {
+    const sel = over(t['--row-sel'], t['--bg']);
+    check(`${label} keeps dim text readable on a selected row`,
+      ratio(t['--text-dim'], sel) >= 4.5, ratio(t['--text-dim'], sel).toFixed(2));
+    check(`and its selected row stands apart from its ground`,
+      ratio(sel, t['--bg']) >= 1.2, ratio(sel, t['--bg']).toFixed(2));
+  }
+
+  /* Lane colours are drawn into the SVG and answer to no stylesheet, so a theme
+     that changes the ground has to bring its own set or go faint on it. */
+  const laneSrc = rendererSrc.match(/const THEME_LANES = \{([\s\S]*?)\n\};/);
+  check('the renderer names the lane colours a theme replaces', !!laneSrc);
+  const lanesFor = (key) => {
+    const m = (laneSrc ? laneSrc[1] : '').match(new RegExp(`${key}:\\s*\\[([^\\]]*)\\]`));
+    return m ? (m[1].match(/#[0-9a-f]{6}/g) || []) : [];
+  };
+  for (const { key, label, t } of NEW) {
+    const lanes = lanesFor(key);
+    check(`${label} brings a full set of eight lanes`, lanes.length === 8, lanes.length);
+    check(`with eight distinguishable ${label} hues`, new Set(lanes).size === 8);
+    const faint = lanes.filter((c) => ratio(c, t['--bg']) < 3)
+      .map((c) => `${c} ${ratio(c, t['--bg']).toFixed(2)}`);
+    check(`and every ${label} lane clears 3:1 on its own ground`, faint.length === 0, faint);
+    /* The checked-out branch is a pill filled solid with its lane colour, so
+       the ink laid on it has to hold against all eight, not just the darkest. */
+    const unread = lanes.filter((c) => ratio(t['--ink-on-fill'], c) < 4.5)
+      .map((c) => `${c} ${ratio(t['--ink-on-fill'], c).toFixed(2)}`);
+    check(`and the ${label} pill ink reads on every one of them`, unread.length === 0, unread);
+  }
+
+  /* The swap itself, through the real module rather than its source text. */
+  const someLanes = lanesFor(NEW[0].key);
+  const before = Graph.laneColor(0);
+  Graph.setLanes(someLanes);
+  check('setLanes swaps the palette the graph draws with',
+    Graph.laneColor(0) === someLanes[0] && Graph.laneColor(0) !== before);
+  check('and wraps around the new set, not the old one',
+    Graph.laneColor(8) === someLanes[0]);
+  Graph.setLanes();
+  check('passing nothing restores the set graph.js ships',
+    Graph.laneColor(0) === before);
+  Graph.setLanes([]);
+  check('and so does an empty one, rather than dividing by zero',
+    Graph.laneColor(0) === before);
+
+  /* The button stays a two-way switch by crossing families rather than naming a
+     theme, which is what keeps it working however many arrive. */
+  check('the toolbar button crosses to the other family and lands where it left',
+    /storedFamilyTheme\(\s*DAY_THEMES\.includes\(document\.documentElement\.dataset\.theme\)\s*\? 'night' : 'day'\)/
+      .test(rendererSrc));
+  check('every theme offered belongs to exactly one family', keys.every((k) => {
+    const day = new RegExp(`const DAY_THEMES = \\[[^\\]]*'${k}'`).test(rendererSrc);
+    const nite = new RegExp(`const NIGHT_THEMES = \\[[^\\]]*'${k}'`).test(rendererSrc);
+    return day !== nite;
+  }), keys);
+  /* The icon shows the family, and only daylight themes name the sun — a night
+     theme that named it would show a sun while sitting on a dark ground. */
+  for (const { key, label } of NEW) {
+    const namesSun = new RegExp(`:root\\[data-theme="${key}"\\][^{]*\\.ic-sun`).test(styleSrc);
+    const isDay = new RegExp(`const DAY_THEMES = \\[[^\\]]*'${key}'`).test(rendererSrc);
+    check(`${label} shows the icon its family calls for`, namesSun === isDay);
+  }
+  /* Lane colours are baked into markup, so a theme change that does not redraw
+     leaves the old ones on screen. */
+  check('changing theme redraws the graph rather than only restyling it',
+    /window\.Graph\.setLanes\(THEME_LANES\[name\]\);[\s\S]{0,400}?if \(state\.repo\) renderHistory\(\);/
+      .test(rendererSrc));
+}
+
+/* ── why a remote refused ──────────────────────────────────────── */
+/* Authentication is the one thing GitBraid cannot do for the reader, so when it
+   fails the message has to say which door was shut. git writes the useful
+   sentence and then buries it under a fatal that does not. */
+console.log('\nremote refusals');
+{
+  const R = {};
+  const src = mainSrc.slice(mainSrc.indexOf('const WHY_FIRST'),
+    mainSrc.indexOf('\n}\n', mainSrc.indexOf('function reasonLine(text)')) + 3);
+  vm.runInNewContext(src + '\nthis.reasonLine = reasonLine;', R);
+
+  /* Exactly as git prints them — captured from real runs against github.com,
+     not paraphrased. */
+  const CASES = [
+    ['a refused SSH key names the key, not the socket',
+     'git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.\n'
+     + 'Please make sure you have the correct access rights\nand the repository exists.',
+     /Permission denied \(publickey\)/],
+    ['a changed host key says so rather than blaming the repository',
+     '@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.\n'
+     + 'fatal: Could not read from remote repository.',
+     /Host key verification failed/],
+    ['an HTTPS remote with no credential helper still reads as git wrote it',
+     "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+     /could not read Username/],
+    ['a wrong password keeps the url that was refused',
+     'remote: Support for password authentication was removed on August 13, 2021.\n'
+     + "fatal: Authentication failed for 'https://github.com/x/y.git/'",
+     /Authentication failed for 'https:\/\/github\.com\/x\/y\.git\/'/],
+    ['a missing repository keeps the url too',
+     "remote: Repository not found.\nfatal: repository 'https://github.com/x/y.git/' not found",
+     /repository 'https:\/\/github\.com\/x\/y\.git\/' not found/],
+    ['a rejected push still reports the rejection, not the "To <url>" line',
+     'To github.com:x/y.git\n ! [rejected]        main -> main (fetch first)',
+     /\[rejected\]/],
+  ];
+  for (const [name, out, want] of CASES) {
+    check(name, want.test(R.reasonLine(out)), R.reasonLine(out));
+  }
+  /* The two that come first must not step in front of anything else: a fatal
+     that already explains itself keeps its place. */
+  check('and the new rule stays out of the way of a plain fatal',
+    R.reasonLine('fatal: not a git repository') === 'fatal: not a git repository');
+  check('an empty stream yields nothing rather than undefined',
+    R.reasonLine('') === '' && R.reasonLine(null) === '');
+}
+
+/* ── asking for a secret ───────────────────────────────────────── */
+/* git and ssh ask by running a program and reading a line back. What that
+   program is handed, and what the application is allowed to do with the answer,
+   is the whole of the security here — so it is checked rather than described. */
+console.log('\ncredentials');
+{
+  const A = {};
+  const src = mainSrc.slice(mainSrc.indexOf('function askKind(prompt)'),
+    mainSrc.indexOf('const askKey ='));
+  /* URL is a Node global rather than a JavaScript one, and a fresh vm context
+     has neither — without it askTarget would throw and answer null for every
+     url, which is exactly the failure it is meant to catch. */
+  Object.assign(A, { URL });
+  vm.runInNewContext(src + '\nthis.askKind = askKind; this.askTarget = askTarget;', A);
+
+  /* Written exactly as git and ssh write them — taken from real runs against
+     github.com, not from memory. */
+  const K = [
+    ["Username for 'https://github.com': ", 'username', false, 'https://github.com'],
+    ["Password for 'https://octo@github.com': ", 'password', true, 'https://octo@github.com'],
+    ["Enter passphrase for key '/home/x/.ssh/id_ed25519': ", 'passphrase', true,
+     '/home/x/.ssh/id_ed25519'],
+    ['Are you sure you want to continue connecting (yes/no)?', 'other', false, ''],
+  ];
+  for (const [prompt, field, secret, target] of K) {
+    const got = A.askKind(prompt);
+    check(`${field} is recognised in git's own wording`,
+      got.field === field && got.secret === secret && got.target === target, got);
+  }
+  /* A password is never shown, and nothing else ever is hidden: a masked
+     username would make a typo impossible to find. */
+  check('only the two secrets are treated as secret',
+    K.filter(([, , s]) => s).length === 2
+    && A.askKind("Username for 'https://x': ").secret === false);
+
+  const t = A.askTarget('https://octo@github.com');
+  check('a credential is addressed by protocol, host and user, all read from the prompt',
+    t.protocol === 'https' && t.host === 'github.com' && t.username === 'octo', t);
+  check('and a prompt that is not a url yields nothing to store',
+    A.askTarget('/home/x/.ssh/id_ed25519') === null);
+
+  /* The guarantee that predates all of this and must survive it: git can ask
+     the window, and can still never block on a prompt nobody can see. */
+  check('terminal prompts stay disabled even now that the window can answer',
+    /GIT_TERMINAL_PROMPT: '0',/.test(mainSrc));
+  check('git and ssh are both pointed at the same stub',
+    /env\.GIT_ASKPASS = askStub;/.test(mainSrc) && /env\.SSH_ASKPASS = askStub;/.test(mainSrc));
+  /* ssh only reaches for an askpass program on its own when DISPLAY is set,
+     which a Wayland session does not promise. */
+  check('and ssh is told to use it whether or not DISPLAY exists',
+    /SSH_ASKPASS_REQUIRE = 'force'/.test(mainSrc));
+
+  /* The answer travels over a socket. As an argument it would sit in
+     /proc/<pid>/cmdline for every process on the machine to read. */
+  const askpassSrc = fs.readFileSync(path.join(__dirname, '..', 'src/askpass.js'), 'utf8');
+  check('the helper is handed the question, never the answer',
+    /process\.argv\[2\]/.test(askpassSrc) && !/process\.argv\[3\]/.test(askpassSrc));
+  check('and says nothing at all when it cannot reach the window',
+    /if \(!answer\) giveUp\(\);/.test(askpassSrc) && /conn\.on\('error', giveUp\)/.test(askpassSrc));
+  check('the stub and the socket are readable by nobody else',
+    /mode: 0o700/.test(mainSrc) && /chmodSync\(askSockPath, 0o600\)/.test(mainSrc)
+    && /fs\.chmodSync\(dir, 0o700\)/.test(mainSrc));
+
+  /* A password that was just refused must not be kept: remembering it would
+     lock the reader out of the next attempts without ever showing them why. */
+  check('a credential is kept only after the server accepted it',
+    /if \(!ok \|\| !rec\.remember\) return;/.test(mainSrc));
+  check('and every git runner reports which way its command went',
+    (mainSrc.match(/askpassFinish\(/g) || []).length >= 6);
+  /* `git credential approve` exits 0 and stores nothing when no helper is
+     configured, so the offer to remember has to know which it is. */
+  check('remembering falls back to this run alone when git has nowhere to write',
+    /askSession\.set\(askKey\(rec\.cred\), \{ username, password \}\)/.test(mainSrc));
+
+  /* A runtime directory outlives a crash, and the next start is the only thing
+     that will ever come looking for it. */
+  check('a runtime directory left by a dead process is swept at the next start',
+    mainSrc.includes('^gitbraid-(\\d+)-')
+    && mainSrc.includes('process.kill(Number(m[1]), 0)')
+    && mainSrc.includes('`gitbraid-${process.pid}-`'));
+
+  /* The dialog. A secret is typed into a masked box, and unlike every other
+     field in this application it is not trimmed: a passphrase may legitimately
+     begin or end with a space. */
+  check('a secret gets a masked box that offers to fill in nothing',
+    /f\.type === 'password'[\s\S]{0,200}type="password"[\s\S]{0,120}autocomplete="off"/
+      .test(rendererSrc));
+  check('and is the one field that keeps its spaces',
+    /out\[i\.dataset\.field\] = i\.type === 'password' \? i\.value : i\.value\.trim\(\);/
+      .test(rendererSrc));
+  /* One question at a time: #modal is a single element, and git can wait. */
+  check('questions queue rather than overwrite a dialog already open',
+    /askChain = askChain\.then/.test(rendererSrc)
+    && /while \(!\$\('modal'\)\.hidden\)/.test(rendererSrc));
+  check('cancelling tells git nothing, which fails it exactly as before',
+    /call\('askpass:answer', q\.id, res \? res\.value : null/.test(rendererSrc));
 }
 
 fs.rmSync(REPO, { recursive: true, force: true });

@@ -33,11 +33,13 @@ const CHANNELS = new Set([
   'shell:openPath', 'shell:openExternal', 'shell:openInEditor',
   'git:option', 'git:setOption', 'repos:existing',
   'repo:state', 'repo:abort', 'repo:continue', 'repo:resolve', 'repo:conflictFile',
+  'askpass:answer', 'askpass:storage',
 ]);
 
 /* Main-to-renderer pushes. Kept separate from CHANNELS: nothing here may be
    invoked, and nothing there may be subscribed to. */
-const EVENTS = new Set(['repo:progress', 'menu:action', 'term:out', 'term:exit',
+const EVENTS = new Set(['askpass:ask',
+  'repo:progress', 'repo:output', 'menu:action', 'term:out', 'term:exit',
   'update:progress']);
 
 contextBridge.exposeInMainWorld('gitbraid', {
