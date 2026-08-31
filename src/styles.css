@@ -1,6 +1,9 @@
 /* ── tokens ─────────────────────────────────────────────────── */
-/* Dark is the default. Every colour below is restated in the light block
-   further down, so nothing may be hardcoded outside these two lists. */
+/* Dark is the default. Every colour below is restated in the light and Shore
+   blocks further down, so nothing may be hardcoded outside these three lists.
+   The one exception is the initials disc, whose ground is computed from an
+   email address rather than taken from the theme: white is its ink in every
+   theme because the disc is the same colour in every theme. */
 :root {
   --bg:          #0f1118;
   --bg-graph:    #12141d;
@@ -53,6 +56,13 @@
   --badge-dn-1:   #ecac53;
   --badge-dn-2:   #e9a13b;
   --badge-dn-ink: #2a1c05;
+
+  /* Ink for text laid on a fill the theme colours: the solid pill on the
+     checked-out branch, the count on a conflicted file group. */
+  --ink-on-fill: #ffffff;
+  /* The unmerged file status. Its own token because the pink that reads at
+     5.4:1 here manages only 3.0:1 on light paper and 2.7:1 on Shore's. */
+  --status-u:    #e05a8f;
 
   --row-h: 31px;
   --head-h: 26px;
@@ -121,12 +131,99 @@
   --lane-tint:   11%;
   --pill-fill:   15%;
   --pill-line:   45%;
+
+  --ink-on-fill: #ffffff;
+  --status-u:    #b02a5e;   /* 5.4:1, where the dark theme's pink reaches 3.0 */
 }
 
-/* The toggle shows the theme you would switch *to*. */
+/* Shore. Five colours and nothing invented: a cream ground, sand for every
+   rule and edge, driftwood brown for the writing, and the two blues carrying
+   everything a reader can act on. The warm neutrals hold still and the cool
+   accents move, which is the whole reason the palette does not fight itself.
+
+   Where a role needed a shade the five do not contain, it is the nearest of
+   them taken darker — never a sixth hue. Contrast against the cream ground is
+   measured, and written beside the lines where it decided something. */
+:root[data-theme="shore"] {
+  --bg:          #e9e2ce;   /* the palette's cream, untouched */
+  --bg-graph:    #e9e2ce;
+  --surface:     #e1d8c0;
+  --surface-2:   #d8cdb0;
+  --surface-3:   #cec09f;
+  --line:        #c9b795;
+  --line-soft:   #dbd1b7;
+  --line-strong: #ceaa7a;   /* the palette's sand, untouched */
+  --scroll:      #c6b08a;
+  --scroll-hi:   #ae9260;
+
+  /* 10.0:1, 6.4:1, 4.3:1. The middle rank is the palette's brown exactly;
+     body text is that same brown taken darker, so the dim rank still has
+     somewhere to stand below it. */
+  --text:        #452b22;
+  --text-dim:    #6a453b;
+  --text-faint:  #86604f;
+
+  /* Navy is the only one of the five that carries 7.2:1 on the cream, so it
+     takes every role that has to be read as well as pressed. Its ink is the
+     cream itself: the palette closing on its own. */
+  --accent:      #1c477f;
+  --accent-hi:   #14375f;
+  --accent-ink:  #e9e2ce;
+  --accent-text: #1c477f;
+  --pending-text: #7a5218;   /* sand is 1.7:1 and cannot be writing — 5.3:1 */
+  --pending:     #ceaa7a;
+  --add:         #17654d;    /* 5.4:1 */
+  --del:         #a83b2a;    /* 4.9:1, and a terracotta that sits beside the
+                                brown rather than shouting across it */
+  --map-add:     #12946e;
+  --map-del:     #d14a2e;
+  --danger:      #a83b2a;
+
+  --add-bg:      rgba(23, 101, 77, .10);
+  --del-bg:      rgba(168, 59, 42, .10);
+  --add-ink:     #0e4c3a;
+  --del-ink:     #7e2a1d;
+
+  /* The mid blue reaches only 2.3:1 here and can never be writing. As a wash
+     it is the one thing it is perfect for, and this is where the palette asks
+     for more alpha than either other theme: blue laid over a yellow-warm cream
+     neutralises toward grey, and at the .17 the light theme uses the selected
+     row came out putty rather than blue. Swept from .30 up, .42 is the last
+     step where the dim text rank still clears 4.5:1 — 4.61:1 — and by then the
+     wash is 16 points bluer than it is red, which is enough to read as a
+     colour and not as dirt. Warm alternatives were tried and dropped: a sand
+     wash blends into the cream beautifully and then collides with --pending,
+     which already marks the uncommitted row. */
+  --row-hover:   rgba(115, 153, 189, .20);
+  --row-sel:     rgba(115, 153, 189, .42);
+  --lane-tint:   12%;
+  --pill-fill:   18%;
+  --pill-line:   48%;
+
+  /* Ahead reads cream on navy, 7.2:1. Behind reads a dark ink on the sand,
+     6.8:1 — the same split the other themes use, in this palette's colours. */
+  --badge-up-1:   #2c5c94;
+  --badge-up-2:   #1c477f;
+  --badge-up-ink: #e9e2ce;
+  --badge-dn-1:   #ceaa7a;
+  --badge-dn-2:   #be9257;
+  --badge-dn-ink: #3a2408;
+
+  /* The cream again, not white: laid on a lane colour or on --danger it holds
+     4.1:1 at the weakest lane, and white here would be the one bright spot in
+     a theme that has no other. */
+  --ink-on-fill: #e9e2ce;
+  --status-u:    #9b3d6b;   /* 5.0:1, and the plum the syntax palette already
+                               uses, so the conflict marker adds no sixth hue */
+}
+
+/* The toggle shows the theme you would switch *to*. Shore is daylight, so it
+   stands where light stands: the button leaves it for dark and returns to it. */
 .ic-sun { display: none; }
-:root[data-theme="light"] .ic-moon { display: none; }
-:root[data-theme="light"] .ic-sun { display: inline; }
+:root[data-theme="light"] .ic-moon,
+:root[data-theme="shore"] .ic-moon { display: none; }
+:root[data-theme="light"] .ic-sun,
+:root[data-theme="shore"] .ic-sun { display: inline; }
 
 * { box-sizing: border-box; }
 
@@ -1698,7 +1795,7 @@ textarea {
 .fg-conflict .fg-label { color: var(--del-ink); }
 .fg-conflict .fg-count {
   background: var(--danger);
-  color: #fff;
+  color: var(--ink-on-fill);
 }
 .filelist .s-U { color: var(--danger); font-weight: 700; }
 
@@ -2880,6 +2977,24 @@ textarea {
   --hl-prop: #10706c;
   --hl-op:   #5b6478;
 }
+/* Keywords take the navy, strings the green, tags the terracotta: the same
+   five the rest of the theme is built from, so code on this ground belongs to
+   the window around it. Comments sit at 3.6:1 on purpose, as they do in both
+   other themes — a comment that competes with the code is a comment in the
+   way. */
+:root[data-theme="shore"] {
+  --hl-com:  #8a705f;
+  --hl-str:  #17654d;
+  --hl-num:  #8a5a18;
+  --hl-key:  #1c477f;
+  --hl-lit:  #9b3d6b;
+  --hl-type: #1f6a86;
+  --hl-fn:   #2c5c94;
+  --hl-tag:  #a83b2a;
+  --hl-attr: #7a5218;
+  --hl-prop: #17706a;
+  --hl-op:   #6a453b;
+}
 .hl-com  { color: var(--hl-com); font-style: italic; }
 .hl-str  { color: var(--hl-str); }
 .hl-num  { color: var(--hl-num); }
@@ -3116,7 +3231,7 @@ mark {
 .pill.current {
   background: var(--pc);
   border-color: var(--pc);
-  color: #fff;
+  color: var(--ink-on-fill);
   font-weight: 600;
 }
 .pill-name { overflow: hidden; text-overflow: ellipsis; }
@@ -3458,7 +3573,7 @@ mark {
 .f-status.s-A, .f-status.s-\? { color: var(--add); }
 .f-status.s-M, .f-status.s-R  { color: var(--pending); }
 .f-status.s-D                 { color: var(--del); }
-.f-status.s-U                 { color: #e05a8f; }
+.f-status.s-U                 { color: var(--status-u); }
 .f-path {
   flex: 1;
   overflow: hidden;
