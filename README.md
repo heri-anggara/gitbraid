@@ -93,7 +93,7 @@ there rather than trusting a tracking ref that may be stale.
 
 **The rest.** Several repositories in tabs. Stashes. Cherry-pick, revert, reset.
 Interactive rebase is *not* here — see [limitations](#known-limitations).
-Commit search, file filtering, a terminal drawer, four themes — two for the
+Commit search, file filtering, a terminal drawer, five themes — three for the
 night and two for the day, and the toolbar button crosses between the two
 families — and a log of every `git` command it ran, so nothing it does is a
 mystery.

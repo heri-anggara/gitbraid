@@ -312,6 +312,96 @@
                                --del so a conflict and a deletion stay apart */
 }
 
+/* Mango Fresh. Five colours running orange-red to orange to yellow to a bright
+   green, with one deep leaf green under them. It is a dark theme, and that was
+   measured rather than felt: laid on a pale mango cream, four of the five reach
+   between 1.3:1 and 3.9:1 and none of them could be writing — the whole palette
+   would have become decoration around one usable colour. Laid on its own deep
+   green, three of the four bright ones already clear 4.5:1.
+
+   This is the first of the four palettes to hand over the semantic colours for
+   free. Additions take the palette's green and deletions its orange-red; no
+   theme before this one could take both from the palette it was given.
+
+   Two figures had to move, and both are the same rule the other themes used —
+   the nearest colour, adjusted only as far as legibility demanded. The ground
+   is the deep green taken darker, because on the palette's own #1e3a07 the
+   orange-red reaches 3.02:1. And the orange-red itself is taken one step
+   lighter, because it reaches only 5.02:1 on pure black: no green ground could
+   ever have carried it as it came. At #102004 and #e85218 it reads 4.59:1.
+
+   The one thing the palette cannot supply is a pale neutral. Nothing in it can
+   be a page of body text, so the three text ranks are derived — a warm off-white
+   with the ground's green still in it, and two steps down from there. */
+:root[data-theme="mango"] {
+  --bg:          #102004;   /* the palette's leaf green, taken darker */
+  --bg-graph:    #122505;
+  --surface:     #162b06;
+  --surface-2:   #1a3307;
+  --surface-3:   #1e3a07;   /* the palette's leaf green, untouched */
+  --line:        #1f3c06;
+  --line-soft:   #173005;
+  --line-strong: #274a08;
+  --scroll:      #224207;
+  --scroll-hi:   #35630e;
+
+  /* 13.8:1, 9.0:1 and 5.1:1. Derived, because a palette of fruit has no pale
+     neutral in it and yellow is no colour to read a day's commits in. */
+  --text:        #ece7d3;
+  --text-dim:    #bcbf9e;
+  --text-faint:  #8b9070;
+
+  /* The yellow is the ripest thing here and takes everything that can be
+     pressed, at 12.2:1, with the ground itself as its ink. */
+  --accent:      #ffd64c;
+  --accent-hi:   #ffe173;
+  --accent-ink:  #102004;
+  --accent-text: #ffd64c;
+
+  /* The palette's own ramp does the semantic work: yellow acts, orange waits,
+     green adds, orange-red removes. Four roles, four colours, one gradient. */
+  --pending-text: #ef9825;   /* 7.5:1 */
+  --pending:     #ef9825;
+  --add:         #8bd74f;    /* 9.7:1 */
+  --del:         #e85218;    /* 4.6:1, the palette's orange-red one step lighter */
+  --map-add:     #6fd93a;
+  --map-del:     #ff5a1f;
+  --danger:      #e85218;
+
+  /* Different alphas for the two, which no other theme needed. A green wash on
+     a green ground is helped by it and an orange-red one is fought by it: at a
+     shared .10 the added line came out 22 points greener than red while the
+     removed line managed 1 point redder than green — an olive, indistinguishable
+     from the ground it sat on. At .14 and .26 they read +25 and +27, and stand
+     57 apart in RGB, which is where Night Sky sits and nearly twice the dark
+     theme's 31. */
+  --add-bg:      rgba(139, 215, 79, .14);
+  --del-bg:      rgba(232, 82, 24, .26);
+  --add-ink:     #b9e58c;
+  --del-ink:     #f5a181;
+
+  /* .14 of the yellow, landing 1.40:1 above the ground — the figure the other
+     three themes agree on to within a hundredth. */
+  --row-hover:   rgba(255, 214, 76, .06);
+  --row-sel:     rgba(255, 214, 76, .14);
+  --lane-tint:   14%;
+  --pill-fill:   22%;
+  --pill-line:   55%;
+
+  --badge-up-1:   #ffe173;
+  --badge-up-2:   #ffd64c;
+  --badge-up-ink: #102004;
+  --badge-dn-1:   #f4a942;
+  --badge-dn-2:   #ef9825;
+  --badge-dn-ink: #2a1a03;
+
+  --ink-on-fill: #102004;
+  /* Derived, and the third theme in a row to need it: every hue this palette
+     owns is already spoken for, and a conflict that reads as a deletion is
+     worse than a conflict that reads as a colour the mango never had. */
+  --status-u:    #ef5aa0;   /* 5.4:1 */
+}
+
 /* The toggle shows the theme you would switch *to*. Shore is daylight, so it
    stands where light stands: the button leaves it for dark and returns to it. */
 .ic-sun { display: none; }
@@ -3107,6 +3197,23 @@ textarea {
   --hl-attr: #d9a7e8;
   --hl-prop: #6fd8d0;
   --hl-op:   #9aa6d8;
+}
+/* Keywords take the yellow, strings the green, numbers the orange, tags the
+   orange-red — the palette's own ramp again, in the order code reads it. The
+   three that had nowhere to come from are the ones a fruit has no name for: a
+   sky for types, a jade for properties, a berry for literals. */
+:root[data-theme="mango"] {
+  --hl-com:  #7d8563;
+  --hl-str:  #8bd74f;
+  --hl-num:  #ef9825;
+  --hl-key:  #ffd64c;
+  --hl-lit:  #f472b6;
+  --hl-type: #52b6ec;
+  --hl-fn:   #3fc9a0;
+  --hl-tag:  #e85218;
+  --hl-attr: #d9b84a;
+  --hl-prop: #6fd8b0;
+  --hl-op:   #b0b58f;
 }
 .hl-com  { color: var(--hl-com); font-style: italic; }
 .hl-str  { color: var(--hl-str); }

@@ -1287,9 +1287,14 @@ console.log('\na stash in the history');
 
 /* ── themes ────────────────────────────────────────────────────── */
 /* A theme is a list of custom properties and nothing else: styles.css says so
-   at the top, and these checks are what make that true rather than aspirational.
-   Contrast is computed here rather than trusted, because a colour that reads
-   well in a screenshot can still fail a reader who needs the ratio. */
+   at its head, and these checks are what make that true rather than hopeful.
+   Contrast is computed here rather than trusted, because a colour that looks
+   right in a screenshot can still fail a reader who needs the ratio.
+
+   Nothing below names a theme. The list is read out of the Preferences options
+   and out of the stylesheet, so a theme added later is covered by all of it the
+   moment it is offered — a new theme quietly escaping these checks is the exact
+   failure they exist to prevent. */
 console.log('\nthemes');
 {
   const lum = (hex) => {
@@ -1304,9 +1309,8 @@ console.log('\nthemes');
     const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
     return (hi + 0.05) / (lo + 0.05);
   };
-  /* An rgba() wash laid over a solid ground, so a selected row can be measured
-     as the reader actually sees it rather than as the two colours it is made
-     from. */
+  /* An rgba() wash laid over a solid ground, so a selected row is measured as
+     the reader sees it rather than as the two colours it is made from. */
   const over = (wash, ground) => {
     const m = wash.match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*\.?(\d+)\)/);
     if (!m) return wash;
@@ -1316,8 +1320,8 @@ console.log('\nthemes');
     return '#' + [mix(m[1], 0), mix(m[2], 2), mix(m[3], 4)]
       .map((v) => v.toString(16).padStart(2, '0')).join('');
   };
-  /* Every declaration under a selector, gathered across all of its blocks —
-     the tokens and the syntax colours are two separate blocks per theme. */
+  /* Every declaration under a selector, gathered across all of its blocks — the
+     tokens and the syntax colours are two separate blocks per theme. */
   const tokensOf = (theme) => {
     const sel = theme === 'dark'
       ? ':root\\s*\\{' : `:root\\[data-theme="${theme}"\\]\\s*\\{`;
@@ -1335,46 +1339,57 @@ console.log('\nthemes');
 
   const dark = tokensOf('dark');
   const light = tokensOf('light');
-  const shore = tokensOf('shore');
-  const night = tokensOf('night');
-  const NEW = [['Shore', shore, 'shore'], ['Night Sky', night, 'night']];
-  check('each theme is read as a whole list',
-    [dark, light, shore, night].every((t) => Object.keys(t).length > 40),
-    [dark, light, shore, night].map((t) => Object.keys(t).length));
+  const offered = [...rendererSrc.matchAll(/\['(\w+)', 'GitBraid ([^']+)'\]/g)]
+    .map((m) => ({ key: m[1], label: m[2], t: tokensOf(m[1]) }));
+  const keys = offered.map((o) => o.key);
+  /* Everything past the two GitBraid shipped with. They answer to a stricter
+     floor further down, because each was built against it. */
+  const NEW = offered.filter((o) => o.key !== 'dark' && o.key !== 'light');
 
-  /* A theme offered in Preferences with no token list of its own would render
-     as whichever theme it happened to inherit from. */
-  const offered = [...rendererSrc.matchAll(/\['(\w+)', 'GitBraid [^']+'\]/g)].map((m) => m[1]);
-  check('every theme Preferences offers has a token list', offered.length >= 4
-    && offered.every((k) => Object.keys(tokensOf(k)).length > 40), offered);
+  check('Preferences offers more than the two GitBraid started with',
+    offered.length >= 5 && NEW.length >= 3, keys);
+  check('every theme it offers has a token list of its own',
+    offered.every((o) => Object.keys(o.t).length > 40),
+    offered.map((o) => `${o.key}:${Object.keys(o.t).length}`));
+  /* And the other direction: a theme written into the stylesheet but never
+     offered would be unreachable, which is worse than not writing it. */
+  const written = [...new Set([...styleSrc.matchAll(/:root\[data-theme="(\w+)"\]\s*\{/g)]
+    .map((m) => m[1]))];
+  check('and every theme the stylesheet defines is reachable from Preferences',
+    written.every((k) => keys.includes(k)), written.filter((k) => !keys.includes(k)));
 
   /* A token the light theme restates and a newer theme does not would fall
      silently through to the dark value: a dark colour on cream paper, or an
      amber one in a sky that has no amber anywhere in it. */
-  for (const [name, t] of NEW) {
+  for (const { label, t } of NEW) {
     const missing = Object.keys(light).filter((k) => !(k in t));
-    check(`${name} restates every token the light theme restates`,
+    check(`${label} restates every token the light theme restates`,
       missing.length === 0, missing);
     const extra = Object.keys(t).filter((k) => !(k in light));
-    check(`${name} invents none the other themes do not have`, extra.length === 0, extra);
+    check(`${label} invents none the other themes do not have`, extra.length === 0, extra);
   }
 
-  /* The claim at the top of styles.css: nothing is hardcoded outside the token
-     lists. A third theme is only a complete theme while that holds. */
+  /* The claim at the head of styles.css. One exception, written there too: the
+     initials disc takes its ground from a hash of an email address, so it is
+     the same colour in every theme and its ink belongs to none of them. Two
+     rules draw that disc. Anything else here is a colour that will not follow
+     the theme it sits in. */
   const outside = styleSrc
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^:root(\[data-theme="[a-z]+"\])?\s*\{[^}]*\}/gm, '');
   const loose = outside.match(/#[0-9a-fA-F]{3,8}\b/g) || [];
-  /* One exception, and it is written into the head of styles.css: the initials
-     disc takes its ground from a hash of an email address, so it is the same
-     colour in every theme and its ink does not belong to any of them. Two
-     rules draw that disc. Anything else appearing here is a colour that will
-     not follow the theme it is sitting in. */
   check('the only colours outside the token lists are the initials disc',
     loose.length === 2 && loose.every((c) => c === '#fff'), loose);
 
-  /* Ratios a reader depends on, checked in all three themes rather than only
-     the new one — a shared floor is worth more than a note about one theme. */
+  /* Ratios a reader depends on. The newer themes answer to the AA floor for
+     body text, because every value in each was picked against that figure. The
+     two older ones answer to 3:1, which is a real floor and a real guard
+     against a colour drifting paler — and is not an endorsement. Measured
+     today, the light theme misses 4.5:1 on --add (3.88), --del (4.43) and
+     --accent-ink over --accent (4.13), and the dark theme on --ink-on-fill over
+     --danger (3.00). Lifting those changes how a theme someone already uses
+     looks, which is its owner's call and not a repair to fold in beside a new
+     one. */
   const PAIRS = [
     ['--text', '--bg', 4.5], ['--text-dim', '--bg', 4.5], ['--text-faint', '--bg', 3],
     ['--accent-text', '--bg', 4.5], ['--pending-text', '--bg', 4.5],
@@ -1382,66 +1397,61 @@ console.log('\nthemes');
     ['--accent-ink', '--accent', 4.5], ['--ink-on-fill', '--danger', 4.5],
     ['--badge-up-ink', '--badge-up-2', 4.5], ['--badge-dn-ink', '--badge-dn-2', 4.5],
   ];
-  /* Shore answers to the AA floor for body text, because it is new and every
-     value in it was picked against that figure. The two older themes answer to
-     3:1, which is a real floor and a real guard against a colour drifting
-     paler — and is not an endorsement. Measured today, the light theme misses
-     4.5:1 on --add (3.88), --del (4.43) and --accent-ink over --accent (4.13),
-     and the dark theme on --ink-on-fill over --danger (3.00). Lifting those
-     changes how a theme someone already uses looks, which is its owner's call
-     and not a repair to fold in beside a new theme. */
-  for (const [name, t, floor] of [
-    ['dark', dark, 3], ['light', { ...dark, ...light }, 3],
-    ['Shore', { ...dark, ...shore }, 4.5], ['Night Sky', { ...dark, ...night }, 4.5],
-  ]) {
+  const ALL = [
+    { label: 'dark', t: dark, floor: 3 },
+    { label: 'light', t: { ...dark, ...light }, floor: 3 },
+    ...NEW.map((o) => ({ label: o.label, t: { ...dark, ...o.t }, floor: 4.5 })),
+  ];
+  for (const { label, t, floor } of ALL) {
     const bad = PAIRS
       .map(([fg, bg, aa]) => [fg, bg, Math.min(aa, floor), ratio(t[fg], t[bg])])
       .filter(([, , want, got]) => got < want)
       .map(([fg, bg, want, got]) => `${fg} on ${bg} ${got.toFixed(2)} < ${want}`);
-    check(`${name} keeps every reading colour above ${floor}:1`, bad.length === 0, bad);
+    check(`${label} keeps every reading colour above ${floor}:1`, bad.length === 0, bad);
   }
 
   /* The selected row is a wash, and washing a colour over the ground is where a
-     theme most easily loses its text. Shore's is .42 because .46 drops the dim
-     rank below 4.5:1 — this is the check that decided the figure. */
-  for (const [name, t] of [['dark', dark], ['light', { ...dark, ...light }],
-                           ['Shore', { ...dark, ...shore }],
-                           ['Night Sky', { ...dark, ...night }]]) {
+     theme most easily loses its text. It is also where the four themes agree
+     most closely: 1.25 to 1.40 above their own grounds, arrived at separately
+     each time from what the ground did to the wash. */
+  for (const { label, t } of ALL) {
     const sel = over(t['--row-sel'], t['--bg']);
-    check(`${name} keeps dim text readable on a selected row`,
+    check(`${label} keeps dim text readable on a selected row`,
       ratio(t['--text-dim'], sel) >= 4.5, ratio(t['--text-dim'], sel).toFixed(2));
+    check(`and its selected row stands apart from its ground`,
+      ratio(sel, t['--bg']) >= 1.2, ratio(sel, t['--bg']).toFixed(2));
   }
 
-  /* Lane colours are drawn into the SVG, so they answer to no stylesheet. A
-     theme that changes the ground has to bring its own or go faint on it. */
+  /* Lane colours are drawn into the SVG and answer to no stylesheet, so a theme
+     that changes the ground has to bring its own set or go faint on it. */
   const laneSrc = rendererSrc.match(/const THEME_LANES = \{([\s\S]*?)\n\};/);
   check('the renderer names the lane colours a theme replaces', !!laneSrc);
   const lanesFor = (key) => {
     const m = (laneSrc ? laneSrc[1] : '').match(new RegExp(`${key}:\\s*\\[([^\\]]*)\\]`));
     return m ? (m[1].match(/#[0-9a-f]{6}/g) || []) : [];
   };
-  for (const [name, t, key] of NEW) {
+  for (const { key, label, t } of NEW) {
     const lanes = lanesFor(key);
-    check(`${name} brings a full set of eight lanes`, lanes.length === 8, lanes.length);
-    check(`with eight distinguishable ${name} hues`, new Set(lanes).size === 8);
+    check(`${label} brings a full set of eight lanes`, lanes.length === 8, lanes.length);
+    check(`with eight distinguishable ${label} hues`, new Set(lanes).size === 8);
     const faint = lanes.filter((c) => ratio(c, t['--bg']) < 3)
       .map((c) => `${c} ${ratio(c, t['--bg']).toFixed(2)}`);
-    check(`and every ${name} lane clears 3:1 on its own ground`, faint.length === 0, faint);
+    check(`and every ${label} lane clears 3:1 on its own ground`, faint.length === 0, faint);
     /* The checked-out branch is a pill filled solid with its lane colour, so
        the ink laid on it has to hold against all eight, not just the darkest. */
     const unread = lanes.filter((c) => ratio(t['--ink-on-fill'], c) < 4.5)
       .map((c) => `${c} ${ratio(t['--ink-on-fill'], c).toFixed(2)}`);
-    check(`and the ${name} pill ink reads on every one of them`, unread.length === 0, unread);
+    check(`and the ${label} pill ink reads on every one of them`, unread.length === 0, unread);
   }
 
   /* The swap itself, through the real module rather than its source text. */
-  const shoreLanes = lanesFor('shore');
+  const someLanes = lanesFor(NEW[0].key);
   const before = Graph.laneColor(0);
-  Graph.setLanes(shoreLanes);
+  Graph.setLanes(someLanes);
   check('setLanes swaps the palette the graph draws with',
-    Graph.laneColor(0) === shoreLanes[0] && Graph.laneColor(0) !== before);
+    Graph.laneColor(0) === someLanes[0] && Graph.laneColor(0) !== before);
   check('and wraps around the new set, not the old one',
-    Graph.laneColor(8) === shoreLanes[0]);
+    Graph.laneColor(8) === someLanes[0]);
   Graph.setLanes();
   check('passing nothing restores the set graph.js ships',
     Graph.laneColor(0) === before);
@@ -1449,24 +1459,23 @@ console.log('\nthemes');
   check('and so does an empty one, rather than dividing by zero',
     Graph.laneColor(0) === before);
 
-  /* Reachable, and reachable without losing the theme you picked. */
-  check('Preferences offers both new themes by name',
-    /\['shore', 'GitBraid Shore'\]/.test(rendererSrc)
-    && /\['night', 'GitBraid Night Sky'\]/.test(rendererSrc));
-  /* The button stays a two-way switch by crossing families rather than naming
-     a theme, which is what keeps it working as more themes arrive. */
+  /* The button stays a two-way switch by crossing families rather than naming a
+     theme, which is what keeps it working however many arrive. */
   check('the toolbar button crosses to the other family and lands where it left',
     /storedFamilyTheme\(\s*DAY_THEMES\.includes\(document\.documentElement\.dataset\.theme\)\s*\? 'night' : 'day'\)/
       .test(rendererSrc));
-  check('every theme Preferences offers belongs to exactly one family', offered.every((k) => {
+  check('every theme offered belongs to exactly one family', keys.every((k) => {
     const day = new RegExp(`const DAY_THEMES = \\[[^\\]]*'${k}'`).test(rendererSrc);
     const nite = new RegExp(`const NIGHT_THEMES = \\[[^\\]]*'${k}'`).test(rendererSrc);
     return day !== nite;
-  }), offered);
-  check('Shore counts as daylight, so the sun icon shows on it',
-    /:root\[data-theme="shore"\] \.ic-sun/.test(styleSrc));
-  check('Night Sky does not, so it keeps the moon the dark theme has',
-    !/:root\[data-theme="night"\][^{]*\.ic-sun/.test(styleSrc));
+  }), keys);
+  /* The icon shows the family, and only daylight themes name the sun — a night
+     theme that named it would show a sun while sitting on a dark ground. */
+  for (const { key, label } of NEW) {
+    const namesSun = new RegExp(`:root\\[data-theme="${key}"\\][^{]*\\.ic-sun`).test(styleSrc);
+    const isDay = new RegExp(`const DAY_THEMES = \\[[^\\]]*'${key}'`).test(rendererSrc);
+    check(`${label} shows the icon its family calls for`, namesSun === isDay);
+  }
   /* Lane colours are baked into markup, so a theme change that does not redraw
      leaves the old ones on screen. */
   check('changing theme redraws the graph rather than only restyling it',

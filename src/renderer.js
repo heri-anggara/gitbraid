@@ -192,7 +192,7 @@ function absoluteTime(ms) {
    or Night Sky in Preferences and then reaching for the button does not
    quietly strand the reader on the plain one. */
 const DAY_THEMES = ['light', 'shore'];
-const NIGHT_THEMES = ['dark', 'night'];
+const NIGHT_THEMES = ['dark', 'night', 'mango'];
 
 /* Lane colours a theme replaces outright; a theme absent from here keeps the
    set graph.js ships. Shore's ground is cream and those were picked against a
@@ -207,6 +207,14 @@ const THEME_LANES = {
      range, the weakest 6.0:1 above that ground. */
   night: ['#5a9ce4', '#8f86ee', '#c08ce2', '#e793c6',
           '#f2617f', '#5fd6b0', '#63cfe8', '#aec6e5'],
+  /* Four of these are the mango itself and four are not, which is as far as
+     that palette stretches: eight lanes have to be told apart at a glance, and
+     five colours running orange to green cannot supply eight hues that are.
+     The four borrowed ones are the fruit's neighbours rather than strangers —
+     a jade, a sky, a violet and a berry — and the weakest of the eight sits
+     4.6:1 above the ground. */
+  mango: ['#ffd64c', '#ef9825', '#e85218', '#8bd74f',
+          '#3fc9a0', '#52b6ec', '#b184f0', '#f472b6'],
 };
 
 function applyTheme(name) {
@@ -4761,12 +4769,14 @@ function prefPages() {
           fields: [
             { kind: 'select', label: 'Theme',
               options: [['dark', 'GitBraid Dark'], ['night', 'GitBraid Night Sky'],
+                        ['mango', 'GitBraid Mango Fresh'],
                         ['light', 'GitBraid Light'], ['shore', 'GitBraid Shore']],
-              help: 'Two for the night and two for the day. Night Sky is indigo, '
+              help: 'Three for the night and two for the day. Night Sky is indigo, '
                 + 'with lilac and pink where the dark theme puts amber and green; '
-                + 'Shore is warm paper — cream ground, sand rules, driftwood text, '
-                + 'and blue on everything you can act on. The toolbar button crosses '
-                + 'between the two families and remembers which one you left.',
+                + 'Mango Fresh is a deep leaf green under a ripe orange-to-yellow '
+                + 'ramp; Shore is warm paper — cream ground, sand rules, driftwood '
+                + 'text, and blue on everything you can act on. The toolbar button '
+                + 'crosses between the two families and remembers which one you left.',
               get: () => storedTheme(),
               set: (v) => { applyTheme(v); renderPrefs(); } },
             { kind: 'zoom', label: 'Zoom',
