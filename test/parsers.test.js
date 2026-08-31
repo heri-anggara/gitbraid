@@ -1336,18 +1336,28 @@ console.log('\nthemes');
   const dark = tokensOf('dark');
   const light = tokensOf('light');
   const shore = tokensOf('shore');
-  check('each theme is read as a whole list', Object.keys(dark).length > 50
-    && Object.keys(light).length > 40 && Object.keys(shore).length > 40,
-    [Object.keys(dark).length, Object.keys(light).length, Object.keys(shore).length]);
+  const night = tokensOf('night');
+  const NEW = [['Shore', shore, 'shore'], ['Night Sky', night, 'night']];
+  check('each theme is read as a whole list',
+    [dark, light, shore, night].every((t) => Object.keys(t).length > 40),
+    [dark, light, shore, night].map((t) => Object.keys(t).length));
 
-  check('Shore exists as a third theme', Object.keys(shore).length > 40,
-    Object.keys(shore).length);
-  /* A token the light theme restates and Shore does not would silently fall
-     through to the dark value — a dark colour on a cream ground. */
-  const missing = Object.keys(light).filter((k) => !(k in shore));
-  check('Shore restates every token the light theme restates', missing.length === 0, missing);
-  const extra = Object.keys(shore).filter((k) => !(k in light));
-  check('and invents none the other themes do not have', extra.length === 0, extra);
+  /* A theme offered in Preferences with no token list of its own would render
+     as whichever theme it happened to inherit from. */
+  const offered = [...rendererSrc.matchAll(/\['(\w+)', 'GitBraid [^']+'\]/g)].map((m) => m[1]);
+  check('every theme Preferences offers has a token list', offered.length >= 4
+    && offered.every((k) => Object.keys(tokensOf(k)).length > 40), offered);
+
+  /* A token the light theme restates and a newer theme does not would fall
+     silently through to the dark value: a dark colour on cream paper, or an
+     amber one in a sky that has no amber anywhere in it. */
+  for (const [name, t] of NEW) {
+    const missing = Object.keys(light).filter((k) => !(k in t));
+    check(`${name} restates every token the light theme restates`,
+      missing.length === 0, missing);
+    const extra = Object.keys(t).filter((k) => !(k in light));
+    check(`${name} invents none the other themes do not have`, extra.length === 0, extra);
+  }
 
   /* The claim at the top of styles.css: nothing is hardcoded outside the token
      lists. A third theme is only a complete theme while that holds. */
@@ -1382,7 +1392,7 @@ console.log('\nthemes');
      and not a repair to fold in beside a new theme. */
   for (const [name, t, floor] of [
     ['dark', dark, 3], ['light', { ...dark, ...light }, 3],
-    ['Shore', { ...dark, ...shore }, 4.5],
+    ['Shore', { ...dark, ...shore }, 4.5], ['Night Sky', { ...dark, ...night }, 4.5],
   ]) {
     const bad = PAIRS
       .map(([fg, bg, aa]) => [fg, bg, Math.min(aa, floor), ratio(t[fg], t[bg])])
@@ -1395,7 +1405,8 @@ console.log('\nthemes');
      theme most easily loses its text. Shore's is .42 because .46 drops the dim
      rank below 4.5:1 — this is the check that decided the figure. */
   for (const [name, t] of [['dark', dark], ['light', { ...dark, ...light }],
-                           ['Shore', { ...dark, ...shore }]]) {
+                           ['Shore', { ...dark, ...shore }],
+                           ['Night Sky', { ...dark, ...night }]]) {
     const sel = over(t['--row-sel'], t['--bg']);
     check(`${name} keeps dim text readable on a selected row`,
       ratio(t['--text-dim'], sel) >= 4.5, ratio(t['--text-dim'], sel).toFixed(2));
@@ -1405,14 +1416,26 @@ console.log('\nthemes');
      theme that changes the ground has to bring its own or go faint on it. */
   const laneSrc = rendererSrc.match(/const THEME_LANES = \{([\s\S]*?)\n\};/);
   check('the renderer names the lane colours a theme replaces', !!laneSrc);
-  const shoreLanes = (laneSrc ? laneSrc[1].match(/#[0-9a-f]{6}/g) : []) || [];
-  check('Shore brings a full set of eight', shoreLanes.length === 8, shoreLanes.length);
-  const faint = shoreLanes.filter((c) => ratio(c, shore['--bg']) < 3)
-    .map((c) => `${c} ${ratio(c, shore['--bg']).toFixed(2)}`);
-  check('and every lane clears 3:1 on the cream ground', faint.length === 0, faint);
-  check('with eight distinguishable hues', new Set(shoreLanes).size === 8);
+  const lanesFor = (key) => {
+    const m = (laneSrc ? laneSrc[1] : '').match(new RegExp(`${key}:\\s*\\[([^\\]]*)\\]`));
+    return m ? (m[1].match(/#[0-9a-f]{6}/g) || []) : [];
+  };
+  for (const [name, t, key] of NEW) {
+    const lanes = lanesFor(key);
+    check(`${name} brings a full set of eight lanes`, lanes.length === 8, lanes.length);
+    check(`with eight distinguishable ${name} hues`, new Set(lanes).size === 8);
+    const faint = lanes.filter((c) => ratio(c, t['--bg']) < 3)
+      .map((c) => `${c} ${ratio(c, t['--bg']).toFixed(2)}`);
+    check(`and every ${name} lane clears 3:1 on its own ground`, faint.length === 0, faint);
+    /* The checked-out branch is a pill filled solid with its lane colour, so
+       the ink laid on it has to hold against all eight, not just the darkest. */
+    const unread = lanes.filter((c) => ratio(t['--ink-on-fill'], c) < 4.5)
+      .map((c) => `${c} ${ratio(t['--ink-on-fill'], c).toFixed(2)}`);
+    check(`and the ${name} pill ink reads on every one of them`, unread.length === 0, unread);
+  }
 
   /* The swap itself, through the real module rather than its source text. */
+  const shoreLanes = lanesFor('shore');
   const before = Graph.laneColor(0);
   Graph.setLanes(shoreLanes);
   check('setLanes swaps the palette the graph draws with',
@@ -1427,12 +1450,23 @@ console.log('\nthemes');
     Graph.laneColor(0) === before);
 
   /* Reachable, and reachable without losing the theme you picked. */
-  check('Preferences offers the theme by name',
-    /\['shore', 'GitBraid Shore'\]/.test(rendererSrc));
-  check('the toolbar button returns to the daylight theme that was chosen',
-    /dataset\.theme === 'dark' \? storedDayTheme\(\) : 'dark'/.test(rendererSrc));
+  check('Preferences offers both new themes by name',
+    /\['shore', 'GitBraid Shore'\]/.test(rendererSrc)
+    && /\['night', 'GitBraid Night Sky'\]/.test(rendererSrc));
+  /* The button stays a two-way switch by crossing families rather than naming
+     a theme, which is what keeps it working as more themes arrive. */
+  check('the toolbar button crosses to the other family and lands where it left',
+    /storedFamilyTheme\(\s*DAY_THEMES\.includes\(document\.documentElement\.dataset\.theme\)\s*\? 'night' : 'day'\)/
+      .test(rendererSrc));
+  check('every theme Preferences offers belongs to exactly one family', offered.every((k) => {
+    const day = new RegExp(`const DAY_THEMES = \\[[^\\]]*'${k}'`).test(rendererSrc);
+    const nite = new RegExp(`const NIGHT_THEMES = \\[[^\\]]*'${k}'`).test(rendererSrc);
+    return day !== nite;
+  }), offered);
   check('Shore counts as daylight, so the sun icon shows on it',
     /:root\[data-theme="shore"\] \.ic-sun/.test(styleSrc));
+  check('Night Sky does not, so it keeps the moon the dark theme has',
+    !/:root\[data-theme="night"\][^{]*\.ic-sun/.test(styleSrc));
   /* Lane colours are baked into markup, so a theme change that does not redraw
      leaves the old ones on screen. */
   check('changing theme redraws the graph rather than only restyling it',

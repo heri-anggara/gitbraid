@@ -186,11 +186,13 @@ function absoluteTime(ms) {
 
 /* ═════ theme ═══════════════════════════════════════════════════ */
 
-/* Themes that read as daylight. The toolbar button is a two-way switch and
-   stays one: it flips between dark and whichever of these was chosen last, so
-   picking Shore in Preferences and then reaching for the button does not
-   quietly strand the reader back on plain light. */
+/* The two families a theme can belong to. The toolbar button is a two-way
+   switch and stays one however many themes there are: it crosses to the other
+   family and lands on whichever member of it was chosen last, so picking Shore
+   or Night Sky in Preferences and then reaching for the button does not
+   quietly strand the reader on the plain one. */
 const DAY_THEMES = ['light', 'shore'];
+const NIGHT_THEMES = ['dark', 'night'];
 
 /* Lane colours a theme replaces outright; a theme absent from here keeps the
    set graph.js ships. Shore's ground is cream and those were picked against a
@@ -198,7 +200,13 @@ const DAY_THEMES = ['light', 'shore'];
    measured at 4.1:1 or better on that ground so no lane goes faint. */
 const THEME_LANES = {
   shore: ['#1c477f', '#a83b2a', '#17654d', '#8a5a18',
-          '#5e4a8a', '#1f6a86', '#6a453b', '#5f7233'],
+          '#5e4a8a', '#1f6a86', '#6a453b', '#586a2c'],
+  /* Night Sky's ground is a deep indigo rather than the near-black the shipped
+     set was drawn for, and against it that set's own blue and violet sit too
+     close to the ground to tell apart. These eight come from the palette's own
+     range, the weakest 6.0:1 above that ground. */
+  night: ['#5a9ce4', '#8f86ee', '#c08ce2', '#e793c6',
+          '#f2617f', '#5fd6b0', '#63cfe8', '#aec6e5'],
 };
 
 function applyTheme(name) {
@@ -206,7 +214,8 @@ function applyTheme(name) {
   window.Graph.setLanes(THEME_LANES[name]);
   try {
     localStorage.setItem('gitbraid-theme', name);
-    if (DAY_THEMES.includes(name)) localStorage.setItem('gitbraid-day-theme', name);
+    localStorage.setItem(
+      `gitbraid-${DAY_THEMES.includes(name) ? 'day' : 'night'}-theme`, name);
   } catch { /* private mode */ }
   /* Lane colours are written into the SVG markup itself, which no stylesheet
      can reach into afterwards, so a theme change has to redraw the graph. */
@@ -217,12 +226,15 @@ function storedTheme() {
   try { return localStorage.getItem('gitbraid-theme') || 'dark'; } catch { return 'dark'; }
 }
 
-/* Which daylight theme the toolbar button comes back to. */
-function storedDayTheme() {
+/* Which member of a family the toolbar button comes back to. The first of each
+   list is the fallback, so a reader who has never chosen one gets the theme
+   GitBraid shipped with rather than nothing. */
+function storedFamilyTheme(family) {
+  const list = family === 'day' ? DAY_THEMES : NIGHT_THEMES;
   try {
-    const v = localStorage.getItem('gitbraid-day-theme');
-    return DAY_THEMES.includes(v) ? v : 'light';
-  } catch { return 'light'; }
+    const v = localStorage.getItem(`gitbraid-${family}-theme`);
+    return list.includes(v) ? v : list[0];
+  } catch { return list[0]; }
 }
 
 /* ═════ zoom ════════════════════════════════════════════════════ */
@@ -3608,7 +3620,8 @@ async function initRepo() {
 
 applyTheme(storedTheme());
 $('btn-theme').addEventListener('click', () =>
-  applyTheme(document.documentElement.dataset.theme === 'dark' ? storedDayTheme() : 'dark')
+  applyTheme(storedFamilyTheme(
+    DAY_THEMES.includes(document.documentElement.dataset.theme) ? 'night' : 'day'))
 );
 
 $('card-open').addEventListener('click', () => openRepoAt(null));
@@ -4747,10 +4760,13 @@ function prefPages() {
           title: 'Appearance',
           fields: [
             { kind: 'select', label: 'Theme',
-              options: [['dark', 'GitBraid Dark'], ['light', 'GitBraid Light'],
-                        ['shore', 'GitBraid Shore']],
-              help: 'Shore is a daylight theme on warm paper: cream ground, sand '
-                + 'rules, driftwood text, and the two blues on everything you can act on.',
+              options: [['dark', 'GitBraid Dark'], ['night', 'GitBraid Night Sky'],
+                        ['light', 'GitBraid Light'], ['shore', 'GitBraid Shore']],
+              help: 'Two for the night and two for the day. Night Sky is indigo, '
+                + 'with lilac and pink where the dark theme puts amber and green; '
+                + 'Shore is warm paper — cream ground, sand rules, driftwood text, '
+                + 'and blue on everything you can act on. The toolbar button crosses '
+                + 'between the two families and remembers which one you left.',
               get: () => storedTheme(),
               set: (v) => { applyTheme(v); renderPrefs(); } },
             { kind: 'zoom', label: 'Zoom',
