@@ -25,6 +25,7 @@ window.Releases = [
           'Tick “remember” and the credential goes to your git credential helper, which is where git keeps such things. With no helper configured there is nowhere to write it, and the box says so instead — “remember until GitBraid quits” — and keeps it in memory for the run. `git credential approve` exits successfully and stores nothing when no helper exists, so a box that promised more would have been a lie.',
           'A credential is only kept once the server has accepted it. Remembering one that was just refused would lock you out of the next few attempts without ever showing you why.',
           'No secret is written to a file or passed on a command line. The answer travels over a socket only your account can open: as an argument it would sit in /proc for every process on the machine to read for as long as git ran.',
+          'Linux only for the moment. Windows asks through a different kind of program and a different kind of socket, and shipping either untested would be worse than saying so — there, a remote that wants a password fails exactly as it did before.',
           'When a remote refuses, the reason is the line that names the door. A refused SSH key writes “Permission denied (publickey)” and then “Could not read from remote repository”, and it was the second that reached the status bar — true, and no help at all.',
         ],
       },
