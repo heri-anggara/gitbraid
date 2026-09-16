@@ -11,6 +11,103 @@
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
 
+  /* A path git had to escape arrives as a C-style quoted string: the whole name
+     in double quotes, with \t, \" and \\ spelled out and one octal escape per
+     byte for anything outside ASCII —
+
+       diff --git "a/beraksen-\303\251.txt" "b/beraksen-\303\251.txt"
+
+     Every diff this application asks for now turns core.quotePath off, so the
+     common case never gets here. This is for the rest, and the rest is real: a
+     name holding a quote or a backslash is escaped whatever that setting says,
+     and a diff pasted in from somewhere else never passed through it. Read
+     wrong, the name comes out empty and the patch built to stage one of its
+     hunks names no file at all.
+
+     The octal escapes are bytes of UTF-8 rather than characters, so they only
+     mean anything decoded together. TextDecoder would be the obvious way and is
+     not available: this file is also run inside a bare vm context by the tests,
+     where the Node globals are absent — a check broke on exactly that once
+     already. decodeURIComponent is an ECMAScript builtin and is there, so the
+     bytes are handed to it as percent escapes instead. */
+  const C_ESCAPES = {
+    a: '\x07', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v',
+    '"': '"', '\\': '\\',
+  };
+
+  function unquotePath(raw) {
+    const s = String(raw == null ? '' : raw);
+    if (s.length < 2 || s[0] !== '"' || s[s.length - 1] !== '"') return s;
+    const body = s.slice(1, -1);
+    let enc = '';
+    for (let i = 0; i < body.length; i += 1) {
+      const c = body[i];
+      if (c !== '\\') { enc += encodeURIComponent(c); continue; }
+      const next = body[i + 1];
+      if (next === undefined) { enc += encodeURIComponent(c); continue; }
+      const oct = /^[0-7]{1,3}/.exec(body.slice(i + 1, i + 4));
+      if (oct) {
+        enc += `%${(parseInt(oct[0], 8) & 0xff).toString(16).padStart(2, '0')}`;
+        i += oct[0].length;
+        continue;
+      }
+      enc += encodeURIComponent(
+        Object.prototype.hasOwnProperty.call(C_ESCAPES, next) ? C_ESCAPES[next] : next);
+      i += 1;
+    }
+    /* Escapes that do not form valid UTF-8 would throw. A name shown as git
+       wrote it is worth more than no name at all. */
+    try { return decodeURIComponent(enc); } catch { return s; }
+  }
+
+  /** The quoted token at the head of a string, quotes included, or null. */
+  function readQuoted(s) {
+    if (s[0] !== '"') return null;
+    for (let i = 1; i < s.length; i += 1) {
+      if (s[i] === '\\') { i += 1; continue; }
+      if (s[i] === '"') return s.slice(0, i + 1);
+    }
+    return null;
+  }
+
+  const stripSide = (p) => p.replace(/^[ab]\//, '');
+
+  /* The two names a header carries. Either may be quoted and the other not — a
+     rename where only one of the names needed escaping does exactly that — so
+     the sides are read one at a time rather than with a single pattern. An
+     unquoted name may hold spaces, which is why the split is the ` b/` that
+     opens the second name and not the first space in the line. */
+  function headerPaths(line, cc) {
+    if (cc) {
+      /* A combined hunk opens with @@@ and `git apply` cannot take one at all,
+         so there is no token to hand back — only a name to show. */
+      const one = unquotePath(line.slice(10).trim());
+      return { oldPath: one, newPath: one, oldRaw: '', newRaw: '' };
+    }
+    const rest = line.slice(11).trim();
+    let a;
+    let after;
+    const quoted = readQuoted(rest);
+    if (quoted) {
+      a = quoted;
+      after = rest.slice(quoted.length);
+    } else {
+      const at = rest.search(/ "?b\//);
+      if (at < 0) return null;
+      a = rest.slice(0, at);
+      after = rest.slice(at);
+    }
+    const tail = after.replace(/^\s+/, '');
+    if (!tail) return null;
+    const b = readQuoted(tail) || tail;
+    return {
+      oldPath: stripSide(unquotePath(a)),
+      newPath: stripSide(unquotePath(b)),
+      oldRaw: a,
+      newRaw: b,
+    };
+  }
+
   /**
    * Parse raw `git diff` output into files -> hunks -> lines.
    * Each hunk keeps the exact source text so it can be re-applied verbatim.
@@ -49,14 +146,16 @@
       if (line.startsWith('diff --git ') || line.startsWith('diff --cc ')) {
         closeHunk();
         const cc = line.startsWith('diff --cc ');
-        const m = cc
-          ? [null, line.slice(10).trim(), line.slice(10).trim()]
-          : line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+        const names = headerPaths(line, cc);
         sides = cc ? 2 : 1;
         file = {
           header: [line],
-          oldPath: m ? m[1] : '',
-          newPath: m ? m[2] : '',
+          oldPath: names ? names.oldPath : '',
+          newPath: names ? names.newPath : '',
+          /* The header tokens as git wrote them, kept for the one job that
+             cannot use the decoded name: building a patch to hand back. */
+          oldRaw: names ? names.oldRaw : '',
+          newRaw: names ? names.newRaw : '',
           binary: false,
           combined: cc,
           hunks: [],
@@ -143,6 +242,26 @@
    * header stay as-is and git handles the inversion via --reverse.
    */
   function hunkPatch(file, hunk) {
+    /* The names go back to git exactly as git wrote them — quotes, escapes and
+       the a/ b/ prefixes untouched. Decoding them and writing the result out
+       plainly looks tidier and is wrong: `git apply` reads the --- and +++
+       lines only as far as a tab, so a file whose name holds one resolves to
+       the part in front of it. Measured on a file called `ada<TAB>tab.txt`:
+       written raw, git answers `error: ada: does not exist in index`; written
+       as the quoted token git itself emitted, the same patch is accepted.
+
+       Handing the token straight back also means a name this parser decodes
+       wrongly costs a wrong label in the header and never a failed stage. */
+    if (file.oldRaw && file.newRaw) {
+      return [
+        `diff --git ${file.oldRaw} ${file.newRaw}`,
+        `--- ${file.oldRaw}`,
+        `+++ ${file.newRaw}`,
+        ...hunk.raw,
+        '',
+      ].join('\n');
+    }
+    // Hand-built fixtures and combined diffs, which carry no tokens.
     const a = file.oldPath || file.newPath;
     const b = file.newPath || file.oldPath;
     return [
