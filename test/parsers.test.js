@@ -1217,6 +1217,103 @@ console.log('\nwhat the audit turned up');
     /hl-com/.test(H.line('$x = 1; # note', 'php')));
   check('JavaScript is untouched by any of it',
     keys('a.js', 'const x = 1').includes('const'));
+
+  /* Pug was mapped to the HTML table, which looks for angle brackets and
+     closing tags — neither of which a Pug file has. Measured over nine lines of
+     ordinary template it found four tokens, three of them by accident. It is
+     the second most common file type in the repository this was reported from:
+     193 of them against 1,860 JavaScript. */
+  const cls = (file, code) => {
+    const out = H.line(code, H.langOf(file));
+    return [...out.matchAll(/class="hl-(\w+)">([^<]*)</g)].map((m) => m[1] + ':' + m[2]);
+  };
+  check('a .pug file is read as Pug, not as HTML', H.langOf('a.pug') === 'pug', H.langOf('a.pug'));
+  check('its comment form is //-, which HTML has never heard of',
+    cls('a.pug', '//- catatan').join('|').startsWith('com:'), cls('a.pug', '//- catatan'));
+  check('the tag opens the line and the class and id follow it',
+    cls('a.pug', '  h1.judul#utama Halo').join('|') === 'tag:  h1|attr:.judul|attr:#utama',
+    cls('a.pug', '  h1.judul#utama Halo'));
+  check('interpolation is marked wherever it sits in the line',
+    cls('a.pug', '  p Halo #{nama} apa kabar').some((t) => t === 'lit:#{nama}'),
+    cls('a.pug', '  p Halo #{nama} apa kabar'));
+  check('and its loops read as keywords rather than as tag names',
+    cls('a.pug', '  each item in daftar').join('|').includes('key:') &&
+    cls('a.pug', '  each item in daftar').some((t) => t === 'key:in'),
+    cls('a.pug', '  each item in daftar'));
+
+  /* Sass on the CSS table got the selectors and missed everything that makes
+     it Sass. */
+  check('a .scss file is read as Sass', H.langOf('a.scss') === 'scss', H.langOf('a.scss'));
+  check('a $variable is not a plain word',
+    cls('a.scss', '$utama: #333;').some((t) => t === 'lit:$utama'),
+    cls('a.scss', '$utama: #333;'));
+  check('@mixin and the & that stands for the nesting both colour',
+    cls('a.scss', '@mixin k($p) {').some((t) => t === 'key:@mixin') &&
+    /* Escaped on the way out, so the token carries the entity. */
+    cls('a.scss', '.a { &:hover { color: red; } }').some((t) => t === 'tag:&amp;'),
+    cls('a.scss', '.a { &:hover { color: red; } }'));
+  check('and // opens a comment, which plain CSS does not allow',
+    cls('a.scss', '// catatan').join('|').startsWith('com:'));
+
+  /* A Blade template ends in .php, so the extension alone sends it to the PHP
+     table and the half of the file that is directives goes plain. */
+  check('a .blade.php file is read as a template, not as PHP',
+    H.langOf('x.blade.php') === 'blade', H.langOf('x.blade.php'));
+  check('an ordinary .php file is still PHP', H.langOf('a.php') === 'php');
+  check('its directives colour',
+    cls('x.blade.php', '@foreach ($d as $x)').some((t) => t === 'key:@foreach'),
+    cls('x.blade.php', '@foreach ($d as $x)'));
+  check('an echo is one token, not a pile of braces',
+    cls('x.blade.php', '<p>{{ $nama }}</p>').some((t) => t === 'lit:{{ $nama }}'),
+    cls('x.blade.php', '<p>{{ $nama }}</p>'));
+  /* The unescaped form takes one brace and two bangs. Written as `{{!!` it
+     never matched, and the `->` inside came apart into an operator and a tag. */
+  check('and so is the unescaped form, arrows and all',
+    cls('x.blade.php', '<li>{!! $x->html !!}</li>')
+      .some((t) => t === 'lit:{!! $x-&gt;html !!}'),
+    cls('x.blade.php', '<li>{!! $x->html !!}</li>'));
+  check('a Blade comment is a comment',
+    cls('x.blade.php', '{{-- catatan --}}').join('|').startsWith('com:'));
+  check('Twig shares the table and keeps its own marks',
+    H.langOf('a.twig') === 'blade' &&
+    cls('a.twig', '{% for x in d %}').some((t) => t.startsWith('lit:{%')) &&
+    cls('a.twig', '{# catatan #}').join('|').startsWith('com:'),
+    cls('a.twig', '{% for x in d %}'));
+
+  /* TOML and INI were borrowing the YAML table, which finds keys by the colon
+     that neither format has. */
+  check('a .toml file is read as TOML', H.langOf('a.toml') === 'toml');
+  check('and .ini and .conf come with it',
+    H.langOf('a.ini') === 'toml' && H.langOf('a.conf') === 'toml');
+  check('a section header and a key = value both colour',
+    cls('a.toml', '[server]').join('|') === 'key:[server]' &&
+    cls('a.toml', 'port = 8080').join('|') === 'prop:port|num:8080',
+    [cls('a.toml', '[server]'), cls('a.toml', 'port = 8080')]);
+
+  /* Nothing that already worked may move. */
+  check('CSS, JSON and YAML are where they were',
+    H.langOf('a.css') === 'css' && H.langOf('a.json') === 'json'
+    && H.langOf('a.yml') === 'yaml');
+
+  /* The invariant behind all of it: a table may wrap the text in spans and may
+     never change it. A regex that consumes without emitting would drop
+     characters out of the diff silently, which is worse than no colour. */
+  const SAMPLES = {
+    'a.pug': '  h1.judul#utama Halo #{nama} <&> "x"',
+    'a.scss': '.a { &:hover { color: darken($x, 10%); } } // <&>',
+    'x.blade.php': '<li>{!! $x->html !!}</li> {{-- <&> --}}',
+    'a.twig': '{% for x in d %}<b>{{ x }}</b>{# <&> #}',
+    'a.toml': 'nama = "uji <&>"  # catatan',
+    'a.js': 'const x = "a<&>b"; // catatan',
+    'a.css': '.a { color: #fff; } /* <&> */',
+    'a.php': '$x = "a<&>b"; # catatan',
+  };
+  const lossy = Object.keys(SAMPLES).filter((f) => {
+    const bare = H.line(SAMPLES[f], H.langOf(f)).replace(/<\/?span[^>]*>/g, '');
+    return bare !== H.esc(SAMPLES[f]);
+  });
+  check('every table hands back the text it was given, character for character',
+    lossy.length === 0, lossy);
 }
 
 console.log('\nthe hash a stash carries');

@@ -82,6 +82,15 @@
     bool int float string object mixed void never iterable callable Closure
     Exception Throwable ArrayAccess Countable Iterator Generator`);
 
+  /* Pug is written as indentation and bare tag names, so nothing a table for
+     HTML looks for is ever there: no angle brackets, no closing tags. Measured
+     against nine lines of ordinary template, the HTML table found four tokens
+     and three of those by accident. */
+  const PUG_KEYWORDS = words(`
+    doctype extends include block mixin append prepend each for while if unless
+    else case when default in yield var const let`);
+  const PUG_LITERALS = words('true false null undefined');
+
   /* Each entry is tried in order at the current position. `re` must be sticky. */
   const clike = (keywords, literals, types, lineComment) => [
     { cls: 'hl-com', re: new RegExp(`${lineComment}.*`, 'y') },
@@ -171,17 +180,79 @@
     ],
     go: clike(GO_KEYWORDS, words('nil true false iota'), words(''), '//'),
     rust: clike(RS_KEYWORDS, words('true false None Some Ok Err'), words(''), '//'),
+
+    /* The tag opens the line and the indentation carries the nesting, so the
+       first rule anchored at the start is what finds the element. `^` only
+       matches at index 0 with a sticky pattern, which is exactly once a line —
+       and the leading spaces it swallows are coloured, which no one can see. */
+    pug: [
+      { cls: 'hl-com', re: /\/\/-?.*/y },
+      { cls: 'hl-str', re: /"(?:\\.|[^"\\])*"?|'(?:\\.|[^'\\])*'?/y },
+      // #{…} in a template, and the buffered form that follows a tag.
+      { cls: 'hl-lit', re: /#\{[^}]*\}?/y },
+      { cls: 'hl-key', re: /^\s*(?:doctype|extends|include|block|mixin|append|prepend|each|for|while|if|unless|else|case|when|default)\b/y },
+      { cls: 'hl-tag', re: /^\s*[a-zA-Z][\w-]*/y },
+      { cls: 'hl-attr', re: /[.#][-\w]+|\b[-\w]+(?=\s*=)/y },
+      { cls: 'hl-op', re: /!?=|\||\+|^\s*-/y },
+      { cls: 'hl-num', re: /\b\d[\d_]*(?:\.\d+)?\b/y },
+      { word: true, re: /\b[A-Za-z_][\w-]*\b/y,
+        keywords: PUG_KEYWORDS, literals: PUG_LITERALS, types: words('') },
+      { cls: null, re: /\s+|[\s\S]/y },
+    ],
+
+    /* Sass on the CSS table got selectors and properties and missed everything
+       that makes it Sass: $variables, the @-rules, and the & that stands for
+       the selector it is nested in. */
+    scss: [
+      { cls: 'hl-com', re: /\/\/.*|\/\*[\s\S]*?(?:\*\/|$)|\*\//y },
+      { cls: 'hl-str', re: /"(?:\\.|[^"\\])*"?|'(?:\\.|[^'\\])*'?/y },
+      { cls: 'hl-key', re: /@[\w-]+/y },
+      { cls: 'hl-lit', re: /\$[-\w]+/y },
+      { cls: 'hl-prop', re: /[-a-zA-Z]+(?=\s*:)/y },
+      { cls: 'hl-num', re: /#[0-9a-fA-F]{3,8}\b|-?\b\d*\.?\d+(?:px|rem|em|%|vh|vw|s|ms|fr|deg)?\b/y },
+      { cls: 'hl-tag', re: /\.[-\w]+|#[-\w]+|&|:{1,2}[-\w()]+/y },
+      { cls: 'hl-fn', re: /\b[-\w]+(?=\s*\()/y },
+      { cls: null, re: /\s+|[\s\S]/y },
+    ],
+
+    /* Blade and Twig in one table: a template is HTML with a second language
+       threaded through it, and the two mark their inserts differently enough
+       — @directive and {{ }} against {% %} and {# #} — that nothing collides. */
+    blade: [
+      { cls: 'hl-com', re: /\{\{--[\s\S]*?(?:--\}\}|$)|\{#[\s\S]*?(?:#\}|$)|<!--[\s\S]*?(?:-->|$)/y },
+      { cls: 'hl-key', re: /@[A-Za-z]\w*/y },
+      { cls: 'hl-lit', re: /\{!![\s\S]*?(?:!!\}|$)|\{\{[\s\S]*?(?:\}\}|$)|\{%[\s\S]*?(?:%\}|$)/y },
+      { cls: 'hl-tag', re: /<\/?[\w:-]+|\/?>/y },
+      { cls: 'hl-str', re: /"(?:\\.|[^"\\])*"?|'(?:\\.|[^'\\])*'?/y },
+      { cls: 'hl-attr', re: /\b[\w:-]+(?==)/y },
+      { cls: 'hl-prop', re: /\$\w+/y },
+      { cls: null, re: /\s+|[\s\S]/y },
+    ],
+
+    /* Section headers and key = value. The YAML table these used to borrow
+       keys off a colon, which a TOML file never has, so it found the comments
+       and little else. */
+    toml: [
+      { cls: 'hl-com', re: /[#;].*/y },
+      { cls: 'hl-key', re: /^\s*\[+[^\]]*\]+/y },
+      { cls: 'hl-prop', re: /^\s*[\w.$"'-]+(?=\s*=)/y },
+      { cls: 'hl-str', re: /"""[\s\S]*?(?:"""|$)|'''[\s\S]*?(?:'''|$)|"(?:\\.|[^"\\])*"?|'[^']*'?/y },
+      { cls: 'hl-lit', re: /\b(?:true|false)\b/y },
+      { cls: 'hl-num', re: /\b\d{4}-\d{2}-\d{2}\b|\b\d[\d_]*(?:\.\d+)?\b/y },
+      { cls: null, re: /\s+|[\s\S]/y },
+    ],
   };
 
   const BY_EXT = {
     js: 'js', jsx: 'js', mjs: 'js', cjs: 'js', ts: 'js', tsx: 'js', vue: 'html',
     json: 'json', jsonc: 'json',
-    css: 'css', scss: 'css', sass: 'css', less: 'css',
-    html: 'html', htm: 'html', svg: 'html', xml: 'html', pug: 'html',
+    css: 'css', scss: 'scss', sass: 'scss', less: 'scss',
+    html: 'html', htm: 'html', svg: 'html', xml: 'html',
+    pug: 'pug', jade: 'pug', twig: 'blade',
     md: 'md', markdown: 'md',
     sh: 'sh', bash: 'sh', zsh: 'sh', env: 'sh',
     py: 'py', sql: 'sql',
-    yml: 'yaml', yaml: 'yaml', toml: 'yaml', ini: 'yaml', conf: 'yaml',
+    yml: 'yaml', yaml: 'yaml', toml: 'toml', ini: 'toml', conf: 'toml',
     go: 'go', rs: 'rust',
     c: 'js', h: 'js', cpp: 'js', hpp: 'js', java: 'js', kt: 'js', swift: 'js',
     php: 'php', phtml: 'php', rb: 'ruby', rake: 'ruby', gemspec: 'ruby',
@@ -192,6 +263,9 @@
   function langOf(pathName) {
     const base = String(pathName || '').split('/').pop() || '';
     if (/^(Dockerfile|Makefile)/i.test(base)) return 'sh';
+    /* Checked before the extension, because the last one is `php` and a Blade
+       template is only half PHP — the other half is the directives. */
+    if (/\.blade\.php$/i.test(base)) return 'blade';
     const ext = base.includes('.') ? base.split('.').pop().toLowerCase() : '';
     return BY_EXT[ext] || null;
   }
