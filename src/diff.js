@@ -283,6 +283,65 @@
     return Boolean(lang);
   }
 
+  /* Whitespace a reader cannot see, made visible.
+   *
+   * A line that gained three spaces at its end, or had its indent swapped from
+   * spaces to a tab, draws identically to the line it replaced: two rows marked
+   * changed whose contents look the same. The marks are backgrounds laid over
+   * the characters that are already there — no glyph is substituted and nothing
+   * is inserted, so the text a reader copies is the text that was in the file.
+   *
+   * That is also what keeps the pane's windowing honest. It cuts in pixels, and
+   * the height model is built from a shadow copy rendered without any of this
+   * markup (see measureWrapHeights in the renderer). Inline spans around escaped
+   * text are already proven neutral on that path — the highlighter has been
+   * wrapping the same cells all along, and the probe agreed with the table on
+   * every one of 5,848 rows. Anything that took up space would not.
+   *
+   * Splitting on tags is exact rather than a guess at parsing HTML: everything
+   * painted here has been through esc, so a `<` in the text is `&lt;` and the
+   * only `<` left opens a span of ours. Entities end in `;`, never in a space
+   * or a tab, so neither pattern below can cut one in half.
+   *
+   * Carriage returns are left alone on purpose. Under `white-space: pre` a CR
+   * is a segment break, so a span around one would be a span around a line
+   * ending — and there is nothing to show either way. */
+  const TRAILING_TAGS = /(?:<[^>]*>)*$/;
+
+  function markWs(html) {
+    if (!html) return html;
+    /* "Ends in whitespace" has to mean after the last tag: a trailing run that
+       fell inside a highlight span is the case a cheaper test would miss. */
+    if (!html.includes('\t') && !/[ \t]$/.test(html.replace(TRAILING_TAGS, ''))) return html;
+
+    const parts = html.split(/(<[^>]*>)/);   // even: text, odd: tag
+    let inTail = true;                       // still walking the run at the end
+    for (let i = parts.length - 1; i >= 0; i -= 1) {
+      const text = parts[i];
+      if (i % 2 === 1 || !text) continue;
+      let head = text;
+      let tail = '';
+      if (inTail) {
+        tail = /[ \t]*$/.exec(text)[0];
+        head = text.slice(0, text.length - tail.length);
+        if (head) inTail = false;
+      }
+      /* Inside the run at the end the kind stops mattering — what a reader
+         needs to know there is that something invisible is present. */
+      parts[i] = head.replace(/\t+/g, (run) => `<span class="ws-tab">${run}</span>`)
+        + (tail ? `<span class="ws-eol">${tail}</span>` : '');
+    }
+    return parts.join('');
+  }
+
+  /* Only the lines that changed. A context line full of tabs is the shape of
+     the file, not the shape of the edit, and marking it would be noise on every
+     row of an indented block. */
+  const painted = (l) => {
+    const html = paint(l.text);
+    return (l.type === 'add' || l.type === 'del' ? markWs(html) : html) || '&nbsp;';
+  };
+
   /* How tall a line row and a hunk header are. Measured by the renderer from
      what is actually on screen and handed back in, because a window has to be
      cut in pixels and CSS owns those numbers. */
@@ -330,7 +389,7 @@
           // In a combined diff the two columns say which parent the line came
           // from, which is the whole point of reading one.
           `<td class="dl-sign">${l.marks ? esc(l.marks) : sign}</td>` +
-          `<td class="dl-text">${paint(l.text) || '&nbsp;'}</td>` +
+          `<td class="dl-text">${painted(l)}</td>` +
           '</tr>'
         );
       })
@@ -467,7 +526,7 @@
       const cls = ctx ? 'dl-ctx' : side === 'left' ? 'dl-del' : 'dl-add';
       return (
         `<td class="dl-num ${cls}">${(side === 'left' ? l.old : l.new) ?? ''}</td>` +
-        `<td class="dl-text ${cls}">${paint(l.text) || '&nbsp;'}</td>`
+        `<td class="dl-text ${cls}">${painted(l)}</td>`
       );
     };
     const all = pairHunk(hunk);
@@ -544,6 +603,6 @@
       .join('');
   }
 
-  window.Diff = { parse, render, renderSplit, hunkPatch, esc,
+  window.Diff = { parse, render, renderSplit, hunkPatch, esc, markWs,
                   rowCount, rowCountSplit, pairCount, pairRows: pairHunk };
 })();

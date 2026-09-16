@@ -790,6 +790,85 @@ check('html is escaped', Diff.render(
   Diff.parse('diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n+<img onerror=x>\n')
 ).includes('&lt;img onerror=x&gt;'));
 
+/* ── whitespace you cannot otherwise see ───────────────────────── */
+/* A line that gained three spaces at its end, or swapped its indent from
+   spaces to a tab, drew identically to the line it replaced: two rows marked
+   changed whose contents looked the same. The marks are backgrounds over the
+   characters already there, which is what lets the pane keep cutting its
+   window in pixels — the height model is built from a copy rendered without
+   any of this, so anything that took up room would put the two out of step. */
+console.log('\nwhitespace marks');
+{
+  const WS = [
+    'diff --git a/w.txt b/w.txt', '--- a/w.txt', '+++ b/w.txt', '@@ -1,4 +1,4 @@',
+    '-const x = 1;',
+    '+const x = 1;   ',
+    ' konteks\tdengan tab',
+    '-    indent spasi',
+    '+\tindent tab',
+  ].join('\n');
+  const wsFiles = Diff.parse(WS);
+  const cells = (markup) => (markup.match(/<td class="dl-text[^"]*">([\s\S]*?)<\/td>/g) || []);
+  const unified = cells(Diff.render(wsFiles));
+
+  check('a run of spaces at the end of a changed line is marked',
+    unified.some((c) => /ws-eol">   </.test(c)), unified);
+  check('a tab inside a changed line is marked',
+    unified.some((c) => /ws-tab">\t</.test(c)), unified);
+  /* The shape of the file, not the shape of the edit — marking it would put a
+     band on every row of an indented block. */
+  check('a context line keeps its whitespace unmarked',
+    unified.every((c) => !(c.includes('konteks') && c.includes('ws-'))), unified);
+  check('and side-by-side marks the same lines the same way',
+    cells(Diff.renderSplit(wsFiles)).some((c) => /ws-eol">   </.test(c))
+    && cells(Diff.renderSplit(wsFiles)).some((c) => /ws-tab">\t</.test(c)));
+
+  /* With highlighting on, a trailing run can fall inside a span rather than
+     after it. A pattern anchored at the end of the string sees the `</span>`
+     and does nothing at all — silently, which is the worst way to be wrong. */
+  check('a trailing run inside a highlight span is still marked',
+    Diff.markWs('<span class="hl-com">// catatan  </span>')
+      === '<span class="hl-com">// catatan<span class="ws-eol">  </span></span>',
+    Diff.markWs('<span class="hl-com">// catatan  </span>'));
+  check('and one that falls after a span is too',
+    /ws-eol">  <\/span>$/.test(Diff.markWs('<span class="hl-key">const</span> x;  ')));
+  check('an entity near the end is not cut in half',
+    Diff.markWs('a &amp; b  ') === 'a &amp; b<span class="ws-eol">  </span>');
+  check('a line with nothing to mark is handed back untouched',
+    Diff.markWs('<span class="hl-key">const</span>x;')
+      === '<span class="hl-key">const</span>x;');
+
+  /* The invariant the windowing depends on, written as text: the marks may add
+     spans and nothing else. A glyph substituted for a space would change where
+     a line wraps, and what a reader copies out of the pane. */
+  let intact = true;
+  let culprit = null;
+  for (const f of wsFiles) {
+    for (const h of f.hunks) {
+      for (const l of h.lines) {
+        const bare = Diff.markWs(Diff.esc(l.text)).replace(/<\/?span[^>]*>/g, '');
+        if (bare !== Diff.esc(l.text)) { intact = false; culprit = l.text; }
+      }
+    }
+  }
+  check('the marks are spans and nothing else — no character added or lost',
+    intact, culprit);
+
+  /* Two things no runtime check can see, and the two a future hand would reach
+     for first. */
+  const wsRules = (styleSrc.match(/\.ws-(eol|tab)\s*\{[^}]*\}/g) || []);
+  check('both marks are styled', wsRules.length === 2, wsRules);
+  check('and neither of them can take up space',
+    wsRules.every((r) => !/(padding|margin|border|width|height|content|font-size|letter-spacing|word-spacing|display|position|transform|vertical-align|line-height)/.test(r)),
+    wsRules);
+  check('nor draws a glyph beside them',
+    !/\.ws-(eol|tab)\s*::?(before|after)/.test(styleSrc));
+  /* Side-by-side puts dl-add on the very cell that holds the text, so an
+     ancestor selector would match in unified and silently miss there. */
+  check('and they are not scoped to a line-type ancestor',
+    !/\.dl-(add|del)\s+\.ws-/.test(styleSrc));
+}
+
 /* ── empty and edge cases ──────────────────────────────────────── */
 console.log('\nedge cases');
 check('empty diff yields no files', Diff.parse('').length === 0);
