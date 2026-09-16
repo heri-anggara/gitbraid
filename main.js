@@ -2228,7 +2228,17 @@ handle('repo:deleteRemoteBranch', async (repo, remote, branch) =>
 handle('repo:deleteTag', async (repo, tag) => git(repo, ['tag', '-d', tag]));
 
 /** What is on `b` that is not yet on `a`. */
-handle('repo:compare', async (repo, a, b) => git(repo, ['diff', `${a}...${b}`]));
+/* The window sends five arguments and this took three, so "ignore whitespace"
+   and "show the whole file" did nothing at all in this view — silently, because
+   a handler that ignores an argument has no way to complain. --no-color for the
+   reason every other diff carries it: with color.ui=always the pane was being
+   handed ANSI escapes to render as text. */
+handle('repo:compare', async (repo, a, b, ignoreWhitespace, context) => {
+  const args = diffArgs('diff', '--no-color');
+  if (ignoreWhitespace) args.push('-w');
+  args.push(...contextArg(context), `${a}...${b}`);
+  return git(repo, args);
+});
 
 handle('repo:description', async (repo, branch) =>
   readConfig(repo, '--local', `branch.${branch}.description`));
@@ -2327,11 +2337,24 @@ handle('repo:remotes', async (repo) => {
 const contextArg = (context) =>
   Number.isFinite(context) && context > 3 ? [`-U${Math.min(context, 100000)}`] : [];
 
+/* Every diff is asked for with core.quotePath turned off, so a path with an
+   accent, an umlaut or kanji arrives as itself rather than as `\303\251`
+   escapes. Without it the parser cannot name the file and the patch built to
+   stage one of its hunks names none either — measured, `git apply` answers
+   `error: dev/null: No such file or directory`, so Stage hunk and Discard hunk
+   failed on those files without saying anything.
+
+   The same decision was already taken once, for the file-history log further
+   up; this is it applied wherever a diff is produced. Commands that pass `-z`
+   need nothing — that format never quotes, which is why staging a whole file
+   always worked while staging one of its hunks did not. */
+const diffArgs = (...rest) => ['-c', 'core.quotePath=false', ...rest];
+
 handle('repo:diffFile', async (repo, { file, staged, untracked, ignoreWhitespace, context }) => {
   if (untracked) {
     // Show the whole new file as additions. The flags belong here too: this
     // branch used to return early and quietly drop them.
-    const args = ['diff', '--no-index', '--no-color'];
+    const args = diffArgs('diff', '--no-index', '--no-color');
     if (ignoreWhitespace) args.push('-w');
     args.push(...contextArg(context), '--', NULL_DEVICE, file);
     try {
@@ -2341,7 +2364,7 @@ handle('repo:diffFile', async (repo, { file, staged, untracked, ignoreWhitespace
       return e.stderr && !e.stderr.includes('diff') ? '' : String(e.message);
     }
   }
-  const args = ['diff', '--no-color', '--find-renames'];
+  const args = diffArgs('diff', '--no-color', '--find-renames');
   if (staged) args.push('--cached');
   if (ignoreWhitespace) args.push('-w');
   args.push(...contextArg(context), '--', file);
@@ -2354,7 +2377,8 @@ handle('repo:diffFile', async (repo, { file, staged, untracked, ignoreWhitespace
  * shown. `git diff` on an unmerged path returns a combined diff instead, which
  * hides exactly the lines that matter. */
 handle('repo:conflictFile', async (repo, file) => {
-  const args = ['diff', '--no-index', '--no-color', '-U100000', '--', NULL_DEVICE, file];
+  const args = diffArgs('diff', '--no-index', '--no-color', '-U100000',
+    '--', NULL_DEVICE, file);
   try {
     return await git(repo, args);
   } catch (e) {
@@ -2371,13 +2395,13 @@ async function isMerge(repo, hash) {
 
 handle('repo:diffCommitFile', async (repo, { hash, file, ignoreWhitespace, context, side = 'in' }) => {
   const merge = await isMerge(repo, hash);
-  const args = ['diff', '--no-color', '--find-renames'];
+  const args = diffArgs('diff', '--no-color', '--find-renames');
   if (ignoreWhitespace) args.push('-w');
   args.push(...contextArg(context));
 
   if (merge && side === 'combined') {
     // `git show --cc` is the only form that lays both parents against the result.
-    const show = ['show', '--no-color', '--format=', '--cc'];
+    const show = diffArgs('show', '--no-color', '--format=', '--cc');
     if (ignoreWhitespace) show.push('-w');
     show.push(...contextArg(context), hash, '--', file);
     return git(repo, show);
@@ -2404,7 +2428,7 @@ handle('repo:diffCommitFile', async (repo, { hash, file, ignoreWhitespace, conte
     args.push(`${hash}${MERGE_SIDES[side] || '^1'}`, hash, '--', file);
     return git(repo, args);
   }
-  const show = ['show', '--no-color', '--find-renames', '--format='];
+  const show = diffArgs('show', '--no-color', '--find-renames', '--format=');
   if (ignoreWhitespace) show.push('-w');
   show.push(...contextArg(context), hash, '--', file);
   return git(repo, show);
@@ -2873,7 +2897,8 @@ handle('repo:savePatch', async (repo, files, opts) => {
     .filter((f) => typeof f === 'string' && f.trim());
   if (!list.length) throw new Error('Nothing was named to save.');
   const { staged = false, skipped = 0, name = 'changes' } = opts || {};
-  const patch = await git(repo, ['diff', ...(staged ? ['--cached'] : []), '--', ...list]);
+  const patch = await git(repo,
+    diffArgs('diff', '--no-color', ...(staged ? ['--cached'] : []), '--', ...list));
   if (!patch.trim()) return { empty: true, skipped };
 
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];

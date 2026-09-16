@@ -263,6 +263,116 @@ check('only the first hunk was staged',
   stagedDiff[0].hunks[0].lines.some((l) => l.text === 'CHANGED TOP'),
   stagedDiff[0].hunks.length);
 
+/* ── names git had to escape ───────────────────────────────────── */
+/* git writes a path holding anything outside plain ASCII as a C-quoted string
+   with one octal escape per byte. Read wrong, the file has no name in the
+   header and — the part that actually broke — the patch built to stage one of
+   its hunks names no file either, so Stage hunk and Discard hunk failed on it
+   without a word. The harness runs git with its default config, so every diff
+   it produces here is in the quoted form: this is the input the bug is about. */
+console.log('\nescaped paths');
+{
+  const ACCENT = 'beraksen-é.txt';
+  const SPACED = 'two words.txt';
+  fs.writeFileSync(path.join(REPO, ACCENT), 'satu\ndua\n');
+  fs.writeFileSync(path.join(REPO, SPACED), 'satu\ndua\n');
+  /* A tab is the one character that decides between the two possible designs,
+     and not every filesystem will take it — so it is attempted and the checks
+     below stand whether or not it appeared. */
+  const TABBED = 'ada\ttab.txt';
+  let tabbed = false;
+  try {
+    fs.writeFileSync(path.join(REPO, TABBED), 'satu\ndua\n');
+    tabbed = true;
+  } catch { /* the filesystem said no */ }
+
+  const made = [ACCENT, SPACED, ...(tabbed ? [TABBED] : [])];
+  git(['add', '--', ...made]);
+  for (const f of made) fs.writeFileSync(path.join(REPO, f), 'satu\nDUA\n');
+
+  const esc = Diff.parse(git(['diff', '--no-color', '--', ...made]));
+  const byName = (n) => esc.find((f) => f.newPath === n);
+
+  check('an accented path is read as itself, not as escapes',
+    Boolean(byName(ACCENT)), esc.map((f) => f.newPath));
+  check('a path with a space in it is still split in two',
+    Boolean(byName(SPACED)), esc.map((f) => f.newPath));
+
+  const accent = byName(ACCENT);
+  check('and a hunk on it is a patch git accepts',
+    accent && tryApply(Diff.hunkPatch(accent, accent.hunks[0]), ['--cached']) === null,
+    accent && tryApply(Diff.hunkPatch(accent, accent.hunks[0]), ['--cached']));
+
+  /* The check that decides the design. Decoding the name and writing it out
+     plainly is enough for an accent and not for a tab: `git apply` reads the
+     --- and +++ lines only as far as a tab, so the name resolves to the part
+     in front of it — measured, `error: ada: does not exist in index`. Handing
+     back the token git wrote is what makes this one pass. */
+  const tab = tabbed && byName(TABBED);
+  check('a name git had to quote goes back to git quoted',
+    !tabbed || (tab && tryApply(Diff.hunkPatch(tab, tab.hunks[0]), ['--cached']) === null),
+    tab && tryApply(Diff.hunkPatch(tab, tab.hunks[0]), ['--cached']));
+  check('and the escaping reaches git untouched, not re-encoded',
+    !tabbed || (tab && Diff.hunkPatch(tab, tab.hunks[0]).includes(tab.oldRaw)));
+
+  git(['reset', '-q', 'HEAD', '--', ...made]);
+  for (const f of made) fs.unlinkSync(path.join(REPO, f));
+
+  /* Headers written by hand, so the decoder is exercised without asking the
+     filesystem to hold a name it may refuse. */
+  const hdr = (tok) => Diff.parse(
+    `diff --git ${tok} ${tok.replace('a/', 'b/')}\n@@ -1 +1 @@\n-x\n+y\n`)[0];
+
+  check('an octal escape is decoded as UTF-8, not as one character per byte',
+    hdr('"a/beraksen-\\303\\251.txt"').newPath === ACCENT,
+    hdr('"a/beraksen-\\303\\251.txt"').newPath);
+  check('a quoted quote and backslash come back as themselves',
+    hdr('"a/di\\"kutip.txt"').newPath === 'di"kutip.txt'
+    && hdr('"a/ada\\\\slash.txt"').newPath === 'ada\\slash.txt',
+    [hdr('"a/di\\"kutip.txt"').newPath, hdr('"a/ada\\\\slash.txt"').newPath]);
+  check('a side quoted on its own is still paired with the side that is not',
+    hdr.call(null, '"a/baru-\\303\\251.txt"') &&
+    Diff.parse('diff --git a/lama.txt "b/baru-\\303\\251.txt"\n@@ -1 +1 @@\n-x\n+y\n')[0]
+      .oldPath === 'lama.txt',
+    Diff.parse('diff --git a/lama.txt "b/baru-\\303\\251.txt"\n@@ -1 +1 @@\n-x\n+y\n')[0]);
+  /* Bytes that are not UTF-8 at all. decodeURIComponent throws on those, and a
+     throw here would take the whole pane down rather than one filename. */
+  let threw = false;
+  let odd = null;
+  try { odd = hdr('"a/bad-\\377.txt"'); } catch { threw = true; }
+  check('bytes that are not UTF-8 are shown rather than thrown over',
+    !threw && odd && odd.newPath.length > 0, threw ? 'threw' : odd && odd.newPath);
+  check('a combined diff names its file plainly',
+    Diff.parse('diff --cc "gabung-\\303\\251.txt"\n@@@ -1,1 -1,1 +1,1 @@@\n++x\n')[0]
+      .newPath === 'gabung-é.txt',
+    Diff.parse('diff --cc "gabung-\\303\\251.txt"\n@@@ -1,1 -1,1 +1,1 @@@\n++x\n')[0].newPath);
+
+  /* An ordinary header must still produce the byte-identical patch it always
+     did, or every fixture in this file is quietly testing something else. */
+  const plain = Diff.parse('diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b')[0];
+  check('an ordinary name builds the same patch it always built',
+    Diff.hunkPatch(plain, plain.hunks[0])
+      === 'diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n',
+    Diff.hunkPatch(plain, plain.hunks[0]));
+
+  /* The other half of the fix: every diff is now asked for with the escaping
+     turned off, so the quoted form is the exception rather than the rule. A
+     bare `git(repo, ['diff'…])` left behind is a command that still escapes. */
+  /* Every diff and show is built through the helper, so an argument array that
+     opens with one of them and was not built by it is a command that still
+     escapes. `diff-tree` and the like do not match: the quote has to close. */
+  const bare = [...mainSrc.matchAll(/=\s*\[\s*'(diff|show)'/g)];
+  check('no diff or show builds its arguments without turning the escaping off',
+    bare.length === 0, bare.map((m) => m[0]));
+  check('and they all go through the one helper that does it',
+    (mainSrc.match(/diffArgs\(/g) || []).length >= 8,
+    (mainSrc.match(/diffArgs\(/g) || []).length);
+  /* Sent from the window since the compare view was built, and dropped here
+     because the signature only took three. */
+  check('comparing two refs is handed the viewer settings it was always sent',
+    /handle\('repo:compare', async \(repo, a, b, ignoreWhitespace, context\)/.test(mainSrc));
+}
+
 /* Side-by-side draws only the rows in the window, and where it cuts comes from
    pairCount rather than from the rows themselves. If the two ever disagree the
    pane scrolls to offsets its content does not have, so they are checked
