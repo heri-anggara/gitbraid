@@ -3933,6 +3933,18 @@ mark {
 .dl-del .dl-sign, .dl-del .dl-text { color: var(--del-ink); }
 .dl-meta .dl-text { color: var(--text-faint); font-style: italic; }
 
+/* Whitespace that changed, on the lines that changed. Background and nothing
+   else: the pane cuts its window in pixels and builds the height model from a
+   copy rendered without this markup, so a mark that took up room — padding, a
+   border, a glyph in ::before — would put the two out of step and turn the
+   windowing off for the whole diff.
+
+   Laid on with color-mix rather than a token of their own, so the two rules
+   follow every theme without five more entries in five token lists. The tab
+   wash paints the tab's own advance, so it already follows --diff-tab. */
+.ws-eol { background: color-mix(in srgb, var(--danger) 34%, transparent); }
+.ws-tab { background: color-mix(in srgb, var(--text-faint) 26%, transparent); }
+
 .empty-note { padding: 24px 16px; text-align: center; color: var(--text-faint); font-size: 12px; }
 
 /* ── status bar ─────────────────────────────────────────────── */
