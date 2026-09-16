@@ -182,7 +182,7 @@ git config --local user.email "email-yang-Anda-pilih"
 npm test
 ```
 
-55 test yang mengecek parser status, parser log, algoritma lane pada graph,
+386 test yang mengecek parser status, parser log, algoritma lane pada graph,
 titik akhir setiap garis, parser diff, dan — yang paling penting — apakah patch
 per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 
@@ -1551,6 +1551,51 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Diff dengan nomor baris ganda (lama/baru) dan penghitung +/−
 - Commit, amend, dan `Ctrl+Enter` untuk commit cepat
 - Discard selalu minta konfirmasi dulu
+
+**Nama berkas yang harus di-escape git**
+- git menulis jalur di luar ASCII sebagai string terkutip gaya-C dengan satu
+  escape oktal per byte: `diff --git "a/beraksen-\303\251.txt" "b/…"`. Regex
+  kepala yang lama tidak cocok dengannya, jadi nama berkasnya jadi kosong dan
+  `hunkPatch` menghasilkan `diff --git a/ b/` — ditolak `git apply` dengan
+  `error: dev/null: No such file or directory`. Stage, unstage, dan discard per
+  hunk **gagal tanpa berkata apa-apa** pada berkas bernama é, ñ, atau huruf
+  non-Latin
+- Setiap perintah `diff` dan `show` kini dijalankan dengan `core.quotePath`
+  dimatikan lewat satu helper, jadi jalur beraksen datang apa adanya. Perintah
+  ber-`-z` tidak disentuh: format itu memang tidak pernah mengutip, dan itulah
+  sebabnya stage seluruh berkas selama ini bekerja sementara stage satu
+  hunk-nya tidak
+- Parser tetap mengerti bentuk terkutip, karena flag saja tidak cukup — nama
+  yang memuat tanda kutip atau backslash di-escape apa pun setelannya, dan diff
+  yang ditempel dari tempat lain tidak lewat flag kita. Escape oktal itu byte
+  UTF-8 dan harus didekode bersama; `TextDecoder` tidak bisa dipakai karena
+  berkas ini juga dijalankan di konteks `vm` telanjang oleh uji, jadi byte-nya
+  diserahkan ke `decodeURIComponent` sebagai escape persen
+- **Nama dikembalikan ke git persis seperti git menulisnya** — tanda kutip,
+  escape, dan awalan `a/ b/` utuh. Mendekodenya lalu menulis hasilnya apa adanya
+  terlihat lebih rapi dan salah: `git apply` membaca baris `---` dan `+++` hanya
+  sampai karakter tab, jadi `ada<TAB>tab.txt` yang ditulis mentah menjawab
+  `error: ada: does not exist in index`. Efek sampingnya bagus — nama yang salah
+  didekode hanya merugikan labelnya, tidak pernah menggagalkan stage
+
+**Spasi yang tidak bisa dilihat**
+- Baris yang mendapat spasi di ujung, atau yang indentasinya berganti dari spasi
+  ke tab, dulu tergambar identik dengan baris yang digantikannya
+- Spasi ujung dan karakter tab kini diberi latar, pada baris tambah dan hapus
+  saja. Baris konteks dibiarkan: tab di sana bentuk berkasnya, bukan bentuk
+  suntingannya
+- **Latar belaka, tidak ada glif pengganti dan tidak ada yang disisipkan.** Panel
+  memotong jendelanya dalam piksel dan model tingginya dibangun dari salinan
+  yang dirender tanpa markup ini; penanda yang memakan ruang akan mematikan
+  virtualisasi untuk seluruh diff. Uji menjaga ini sebagai aturan CSS —
+  `padding`, `content`, `::after`, dan selektor turunan semuanya ditolak
+- Deret di ujung bisa jatuh **di dalam** span penyorot sintaks, bukan
+  sesudahnya. Pola yang berjangkar di akhir string melihat `</span>` lalu diam
+  saja, jadi penandaannya berjalan mundur melewati potongan teks dan melompati
+  tag. Aman karena semua yang dicat sudah lewat `esc`: satu-satunya `<` yang
+  tersisa membuka span kita sendiri
+- Diukur pada 24.000 baris dengan tab dan spasi ujung di setiap baris berubah:
+  render berjendela 0,90 → 1,10 ms
 
 **Commit merge**
 - `git diff-tree <merge>` tanpa keterangan tambahan **tidak mengeluarkan apa
