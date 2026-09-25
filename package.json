@@ -7,7 +7,7 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --linux AppImage deb",
+    "dist": "electron-builder --linux",
     "test": "node test/parsers.test.js",
     "dist:win": "electron-builder --win nsis portable",
     "dist:mac": "electron-builder --mac dmg zip"
