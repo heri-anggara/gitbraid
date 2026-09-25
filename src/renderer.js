@@ -82,6 +82,7 @@ function newTab(repo) {
     remoteRefNames: new Set(),  // "origin/main", … — to tell remotes from locals
     stashes: [],
     limit: prefs.commitLimit,
+    atEnd: false,        // the last page came back short: nothing older to load
     selection: null,     // {kind:'wip'} | {kind:'commit', hash}
     file: null,          // {path, staged, untracked}
     diffFiles: [],
@@ -1109,7 +1110,7 @@ async function refresh({ keepSelection = true } = {}) {
   ]);
   if (status) tab.status = status;
   tab.op = op || null;            // a merge or rebase git stopped part-way
-  if (commits) tab.commits = indexForFind(commits);
+  if (commits) { tab.commits = indexForFind(commits); tab.atEnd = false; }
   if (refs) tab.refs = refs;
   if (stashes) tab.stashes = stashes;
   if (flow) tab.flow = flow;
@@ -1964,7 +1965,8 @@ function renderHistory() {
 
   document.documentElement.style.setProperty('--graph-w', state.layout.width + 'px');
   renderRows();
-  $('btn-more').hidden = state.commits.length < state.limit;
+  // Fewer than asked for, whether by a full read or by the last page: the end.
+  $('btn-more').hidden = state.atEnd || state.commits.length < state.limit;
 }
 
 /* Builds the markup for the visible band only. A ten-thousand-commit history
@@ -7098,9 +7100,27 @@ $('history-scroll').addEventListener('scroll', () => {
   });
 }, { passive: true });
 
+/* The next page only. Raising the limit and refreshing re-read every commit
+   already on screen — and the status, refs and stashes with them — to add
+   four hundred rows at the bottom. */
 $('btn-more').addEventListener('click', async () => {
-  state.limit += prefs.commitLimit;
-  await refresh();
+  const tab = state;
+  const page = prefs.commitLimit;
+  const more = await call('repo:log', tab.repo.path,
+    { limit: page, all: true, skip: tab.commits.length });
+  if (!more) return;
+  // A commit that landed between the two pages shifts everything below it
+  // down by one, so the page can begin with a commit already here.
+  const known = tab.rowIndex?.size ? tab.rowIndex : new Set(tab.commits.map((c) => c.hash));
+  const fresh = indexForFind(more.filter((c) => !known.has(c.hash)));
+  tab.commits = tab.commits.concat(fresh);   // a new array, so the layout memo misses
+  tab.limit = tab.commits.length;             // a later full refresh reloads this much
+  tab.atEnd = more.length < page;
+
+  if (tab !== state) return;      // the reader moved on: keep the data, draw nothing
+  state.containedBy = computeContainment(state.commits, state.refs.branches);
+  await ensureAvatars(fresh);
+  renderHistory();
 });
 
 /* Tombol aksi commit (checkout, cherry-pick, revert, reset) tidak lagi di
