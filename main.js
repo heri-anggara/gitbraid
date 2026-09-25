@@ -982,23 +982,36 @@ function which(cmd) {
   return null;
 }
 
-let editorCache = null;
+/* Both answers are kept. The sweep over the candidates is a stat per PATH entry
+   for each of some twenty names, and it used to run again on every open when
+   nothing was found; and the configured choice cost a git process per open
+   before the sweep was even consulted. What is installed does not change while
+   the application runs, and the setting is invalidated where it is written. */
+let editorCache;                       // undefined until the sweep has run; null when it found nothing
+const configuredEditor = new Map();    // repo path -> the editor gitbraid.editor names, or null
 
 async function resolveEditor(repo) {
   // An explicit choice always wins: git config gitbraid.editor "code -w"
-  const configured = repo ? await readConfig(repo, '--get', 'gitbraid.editor') : '';
-  if (configured) {
-    const [cmd, ...args] = configured.split(/\s+/);
-    if (which(cmd)) return { cmd, args, label: configured, configured: true };
+  if (repo) {
+    if (!configuredEditor.has(repo)) {
+      let editor = null;
+      const configured = await readConfig(repo, '--get', 'gitbraid.editor');
+      if (configured) {
+        const [cmd, ...args] = configured.split(/\s+/);
+        if (which(cmd)) editor = { cmd, args, label: configured, configured: true };
+      }
+      configuredEditor.set(repo, editor);
+    }
+    const editor = configuredEditor.get(repo);
+    if (editor) return editor;
   }
-  if (editorCache) return editorCache;
-  for (const cmd of [...CODE_EDITORS, ...TEXT_EDITORS]) {
-    if (which(cmd)) {
-      editorCache = { cmd, args: [], label: cmd };
-      return editorCache;
+  if (editorCache === undefined) {
+    editorCache = null;
+    for (const cmd of [...CODE_EDITORS, ...TEXT_EDITORS]) {
+      if (which(cmd)) { editorCache = { cmd, args: [], label: cmd }; break; }
     }
   }
-  return null;
+  return editorCache;
 }
 
 handle('shell:openInEditor', async (repo, file) => {
@@ -1718,6 +1731,8 @@ handle('git:setOption', async (key, value) => {
   if (!GLOBAL_KEYS.has(key)) throw new Error(`${key} is not a setting GitBraid manages.`);
   const home = app.getPath('home');
   const v = String(value || '').trim();
+  // The setting is global, so every repository's remembered answer is stale.
+  if (key === 'gitbraid.editor') configuredEditor.clear();
   if (!v) {
     // Removing the key hands the decision back to git's own default.
     try { await git(home, ['config', '--global', '--unset', key]); } catch { /* was not set */ }
