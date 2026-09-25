@@ -1289,8 +1289,9 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   ia mengulang nama dan hitungan yang sudah ada di header atas, persis sama
 - **Show all lines** menampilkan seluruh berkas, bukan hanya potongan hunk
   (di balik layar: `-U100000`)
-- **Syntax highlighting** untuk TS/JS/JSX/TSX, JSON, CSS, HTML, Markdown, SQL,
-  shell, Python, YAML, Go, Rust — ditulis sendiri di [`src/highlight.js`](src/highlight.js),
+- **Syntax highlighting** untuk TS/JS/JSX/TSX, JSON, CSS, Sass/SCSS, HTML, Pug,
+  Markdown, SQL, shell, Python, Ruby, PHP, Blade, YAML, TOML, Go, Rust — tujuh
+  belas bahasa, ditulis sendiri di [`src/highlight.js`](src/highlight.js),
   jadi GitBraid tetap tanpa dependensi runtime. Sifatnya per-baris, karena diff
   memang menampilkan potongan; berkas yang tak dikenal tampil tanpa warna dan
   tombolnya nonaktif
