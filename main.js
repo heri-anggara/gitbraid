@@ -729,26 +729,61 @@ const LOG_FORMAT = [
   '%H', '%P', '%an', '%ae', '%at', '%cn', '%ct', '%D', '%s', '%b',
 ].join('%x1f');
 
+/* Records are separated by NUL and the ten fields inside one by 0x1F. Walked
+   by index rather than split: `split('\0')`, then `trim` on every chunk, then
+   `split(UNIT)` on each, made a second copy of the whole log as fragments
+   before a single record object existed. Worse, the last split cut the body
+   wherever it happened to hold a 0x1F — git does not strip the byte from a
+   message — and kept only the piece before it. The body is the tenth field
+   and the last, so it is taken whole from the ninth separator to the end of
+   the record, whatever it contains. A record with fewer fields yields what it
+   has, as the split did. */
+
+/* The characters trim() removes. A record that is nothing but these is the gap
+   between two records, not one — checked by hand because a regular expression
+   run against the whole log for each record was the slowest part of the walk. */
+function isSpace(c) {
+  return c === 32 || (c >= 9 && c <= 13) || c === 0xa0 || c === 0xfeff
+    || c === 0x1680 || (c >= 0x2000 && c <= 0x200a)
+    || c === 0x2028 || c === 0x2029 || c === 0x202f || c === 0x205f || c === 0x3000;
+}
+
 function parseLog(raw) {
-  if (!raw.trim()) return [];
-  return raw
-    .split('\0')
-    .filter((c) => c.trim())
-    .map((chunk) => {
-      const f = chunk.replace(/^\n/, '').split(UNIT);
-      return {
-        hash: f[0],
-        parents: f[1] ? f[1].split(' ').filter(Boolean) : [],
-        author: f[2],
-        email: f[3],
-        authorDate: Number(f[4]) * 1000,
-        committer: f[5],
-        commitDate: Number(f[6]) * 1000,
-        refs: f[7] ? f[7].split(', ').filter(Boolean) : [],
-        subject: f[8] || '',
-        body: (f[9] || '').trim(),
-      };
+  const out = [];
+  const len = raw.length;
+  for (let start = 0; start < len;) {
+    let end = raw.indexOf('\0', start);
+    if (end < 0) end = len;
+    let at = start;
+    start = end + 1;
+    // Older gits wrote a newline after the NUL; it is not part of the hash.
+    if (raw.charCodeAt(at) === 10) at++;
+    let probe = at;
+    while (probe < end && isSpace(raw.charCodeAt(probe))) probe++;
+    if (probe >= end) continue;
+    const f = new Array(10);
+    let i = 0;
+    for (; i < 9; i++) {
+      const sep = raw.indexOf(UNIT, at);
+      if (sep < 0 || sep >= end) break;
+      f[i] = raw.slice(at, sep);
+      at = sep + 1;
+    }
+    f[i] = raw.slice(at, end);   // the body, whole — or the last field there was
+    out.push({
+      hash: f[0],
+      parents: f[1] ? f[1].split(' ').filter(Boolean) : [],
+      author: f[2],
+      email: f[3],
+      authorDate: Number(f[4]) * 1000,
+      committer: f[5],
+      commitDate: Number(f[6]) * 1000,
+      refs: f[7] ? f[7].split(', ').filter(Boolean) : [],
+      subject: f[8] || '',
+      body: (f[9] || '').trim(),
     });
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ */

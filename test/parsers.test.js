@@ -123,6 +123,45 @@ check('tag v1.0 present', commits.some((c) => c.refs.some((r) => r.includes('v1.
 check('HEAD ref present', commits.some((c) => c.refs.some((r) => r.startsWith('HEAD ->'))));
 check('dates are sane', commits.every((c) => c.commitDate > 1e12 && c.commitDate <= Date.now() + 5000));
 
+/* Records built by hand, because what matters here is the byte the format
+   uses as its separator turning up inside a body. git does not strip it from
+   a message, and a parser that split the whole record on it put everything
+   after the tenth field where nobody read it. */
+{
+  const U = '\x1f';
+  const H = 'h'.repeat(40);
+  const mk = (body, refs = '', parents = 'p1 p2') => [
+    H, parents, 'Tester', 't@example.com', '1700000000',
+    'Committer', '1700000060', refs, 'the subject', body,
+  ].join(U);
+  const one = P.parseLog(mk('first line\nwith\x1fa separator\n\nand more\n'));
+  check('a body holding the separator byte is kept whole',
+    one.length === 1 && one[0].body === 'first line\nwith\x1fa separator\n\nand more',
+    one[0] && one[0].body);
+  check('and every field before it is where it belongs',
+    one[0].hash === H && one[0].parents.join(' ') === 'p1 p2' && one[0].author === 'Tester'
+    && one[0].email === 't@example.com' && one[0].authorDate === 1700000000000
+    && one[0].committer === 'Committer' && one[0].commitDate === 1700000060000
+    && one[0].subject === 'the subject', one[0]);
+  check('refs split on the comma git writes',
+    P.parseLog(mk('', 'HEAD -> main, tag: v1.0, origin/main'))[0].refs.join('|')
+      === 'HEAD -> main|tag: v1.0|origin/main');
+  check('a root commit has no parents', P.parseLog(mk('', '', ''))[0].parents.length === 0);
+  check('the body is trimmed, and only at its ends',
+    P.parseLog(mk('\n\n  two words  \n\n'))[0].body === 'two words');
+  const three = P.parseLog([mk('a'), mk('b'), mk('c')].join('\0'));
+  check('records split on NUL', three.length === 3 && three.map((c) => c.body).join('') === 'abc');
+  const legacy = '\n' + [mk('a'), mk('b')].join('\0\n') + '\0\n';
+  check('a newline after the NUL, as older gits wrote it, is not part of the hash',
+    P.parseLog(legacy).length === 2 && P.parseLog(legacy).every((c) => c.hash === H));
+  check('empty and blank input parse to nothing',
+    P.parseLog('').length === 0 && P.parseLog('\n \n').length === 0 && P.parseLog('\0\0').length === 0);
+  const short = P.parseLog([H, 'p1', 'Tester'].join(U));
+  check('a record cut short still yields what it had',
+    short.length === 1 && short[0].hash === H && short[0].author === 'Tester'
+    && short[0].subject === '' && short[0].body === '');
+}
+
 /* ── graph layout ──────────────────────────────────────────────── */
 console.log('\ngraph layout');
 const rowsData = [
