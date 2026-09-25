@@ -145,4 +145,4 @@ modules:
       - type: git
         url: https://github.com/heri-anggara/gitbraid.git
         tag: v0.11.0
-        commit: 358779ccb937a0c90ac1e12355cc05439b7d23a3
+        commit: 35ae14f12457e0fdd1865c73f9711af5bdf7af43
