@@ -1554,7 +1554,7 @@ console.log('\na stash in the history');
   try { git(['rev-parse', '--verify', '-q', `${second}^3`]); } catch { threw = true; }
   check('asking for a third parent that does not exist fails rather than answering', threw);
   check('and the code that asks for it expects that',
-    /catch \{ \/\* no staged part, or no untracked part \*\/ \}/.test(mainSrc));
+    /\^3`\]\)\)\.trim\(\); \}\s*catch \{[^\n]*nothing untracked went in, which is ordinary/.test(mainSrc));
 
   /* --all only reaches refs/stash, which is the newest. Older stashes vanish
      unless they are named, which is why the walk lists them all by hash. */

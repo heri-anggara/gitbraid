@@ -2017,10 +2017,13 @@ handle('repo:status', async (repo) =>
    three used to be drawn, so stashing once put three rows in the history — two
    of them plumbing the user never made.
 
-   They are identified by asking git, not by reading their messages: the second
-   parent of a stash is the index commit and the third is the untracked one.
-   A stash made with nothing staged has no third parent, so ^3 is allowed to
-   fail.
+   They are identified by their parents, not by reading their messages: the
+   second parent of a stash is the index commit and the third, when there is
+   one, holds the untracked files. Both are in the listing itself — `%P` names
+   every parent on the stash's own line — so nothing has to be asked per stash.
+   This used to run `rev-parse` for `^2` and again for `^3` of each one, one
+   after another, on every refresh of the history: one process plus two per
+   stash, where one now does.
 
    The stashes themselves are added to the walk by hash. `--all` only reaches
    refs/stash, which is the top of the stack — so with two stashes the older
@@ -2030,15 +2033,13 @@ async function stashShape(repo) {
   const hide = new Set();
   const marks = new Set();
   let list = '';
-  try { list = await git(repo, ['stash', 'list', '--format=%H']); } catch { return { hide, marks }; }
-  for (const hash of list.split('\n').map((h) => h.trim()).filter(Boolean)) {
+  try { list = await git(repo, ['stash', 'list', '--format=%H %P']); } catch { return { hide, marks }; }
+  for (const line of list.split('\n')) {
+    const [hash, , index, untracked] = line.trim().split(' ');
+    if (!hash) continue;
     marks.add(hash);
-    for (const side of ['^2', '^3']) {
-      try {
-        const h = (await git(repo, ['rev-parse', '--verify', '-q', hash + side])).trim();
-        if (h) hide.add(h);
-      } catch { /* no staged part, or no untracked part */ }
-    }
+    if (index) hide.add(index);
+    if (untracked) hide.add(untracked);
   }
   return { hide, marks };
 }
