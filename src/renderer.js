@@ -2205,7 +2205,9 @@ function wipRows(list, kind) {
   return { html, count: shown.length };
 }
 
-function renderWip() {
+/* `redrawOpenFile` is off when the caller knows the file on screen cannot have
+   changed — a filter hides rows, it does not touch the disk. */
+function renderWip({ redrawOpenFile = true } = {}) {
   const s = state.status;
 
   /* Conflicted files are pulled out of the working list into their own group:
@@ -2243,7 +2245,7 @@ function renderWip() {
   renderCommitBox();
 
   // A file already open stays open, and follows what just changed on disk.
-  if (state.file && state.file.kind !== 'commit') showFileDiff();
+  if (redrawOpenFile && state.file && state.file.kind !== 'commit') showFileDiff();
 }
 
 /* The button says what it will do, and the counter warns before a summary grows
@@ -4514,7 +4516,9 @@ $('rm-scan').addEventListener('click', async () => {
     : 'No repositories found in that folder', 'ok');
 });
 
-$('rm-search').addEventListener('input', (e) => { rm.query = e.target.value; renderRepoManager(); });
+// The whole manager is one innerHTML, so it is drawn once the typing pauses.
+const drawRepoManager = debounced(() => renderRepoManager());
+$('rm-search').addEventListener('input', (e) => { rm.query = e.target.value; drawRepoManager(); });
 
 $('rm-wip').addEventListener('change', async (e) => {
   rm.wip = e.target.checked;
@@ -7174,10 +7178,11 @@ function wireFileList(id) {
    the way out, so searching never leaves the sidebar rearranged. */
 let groupsBeforeFilter = null;
 
-$('ref-filter').addEventListener('input', (e) => {
+/* The sidebar is rebuilt from scratch for a filter, so it waits for the typing
+   to pause; the clear button follows the keystroke, since it costs nothing. */
+const applyRefFilter = debounced((value) => {
   const was = refFilter;
-  refFilter = e.target.value.trim().toLowerCase();
-  $('btn-ref-filter-clear').hidden = !refFilter;
+  refFilter = value.trim().toLowerCase();
   if (!was && refFilter) {
     groupsBeforeFilter = new Set([...document.querySelectorAll('.side-group')]
       .filter((g) => g.classList.contains('collapsed'))
@@ -7191,6 +7196,10 @@ $('ref-filter').addEventListener('input', (e) => {
   }
   if (state.refs) renderSidebar();
 });
+$('ref-filter').addEventListener('input', (e) => {
+  $('btn-ref-filter-clear').hidden = !e.target.value.trim();
+  applyRefFilter(e.target.value);
+});
 
 $('btn-ref-filter-clear').addEventListener('click', () => {
   $('ref-filter').value = '';
@@ -7198,16 +7207,22 @@ $('btn-ref-filter-clear').addEventListener('click', () => {
   $('ref-filter').focus();
 });
 
-$('file-filter').addEventListener('input', (e) => {
-  wipFilter = e.target.value.trim().toLowerCase();
-  $('btn-filter-clear').hidden = !wipFilter;
+/* Every keystroke here used to rebuild the three lists and then fetch the open
+   file's diff again — a git process per letter, for a filter that cannot
+   change what that file holds. */
+const applyFileFilter = debounced((value) => {
+  wipFilter = value.trim().toLowerCase();
   if (!state.status) return;
-  renderWip();
+  renderWip({ redrawOpenFile: false });
   if (wipFilter) {
     const shown = document.querySelectorAll(
       '#list-staged li[data-path], #list-unstaged li[data-path]').length;
     setStatus(`${shown} file${shown === 1 ? '' : 's'} match “${wipFilter}”`);
   }
+});
+$('file-filter').addEventListener('input', (e) => {
+  $('btn-filter-clear').hidden = !e.target.value.trim();
+  applyFileFilter(e.target.value);
 });
 
 $('btn-filter-clear').addEventListener('click', () => {
