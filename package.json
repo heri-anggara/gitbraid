@@ -19,11 +19,13 @@
   "build": {
     "appId": "io.github.heri_anggara.GitBraid",
     "productName": "GitBraid",
+    "electronLanguages": [
+      "en-US"
+    ],
     "files": [
       "main.js",
       "preload.js",
       "src/**/*",
-      "build/icons/**/*",
       "package.json",
       "!test/**/*"
     ],
