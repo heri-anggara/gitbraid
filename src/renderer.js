@@ -6,6 +6,27 @@ const $ = (id) => document.getElementById(id);
 const el = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => window.Diff.esc(String(s ?? ''));
 
+/* A filter box redraws what it filters, and a redraw per keystroke is paid
+   for by the fingers still typing. This waits for them to pause. `now` runs
+   what is waiting at once — Enter should act on what was typed, not on what
+   was drawn — and `cancel` drops it. */
+function debounced(fn, ms = 120) {
+  let timer = null;
+  const run = (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { timer = null; fn(...args); }, ms);
+  };
+  run.now = (...args) => {
+    if (timer === null) return false;
+    clearTimeout(timer);
+    timer = null;
+    fn(...args);
+    return true;
+  };
+  run.cancel = () => { clearTimeout(timer); timer = null; };
+  return run;
+}
+
 /* Anything here has to change how the app behaves. Where git already owns a
    setting — the default branch for new repositories, the editor to open files
    in — GitBraid writes git's own config key so the command line agrees with it,
@@ -1064,7 +1085,7 @@ async function refresh({ keepSelection = true } = {}) {
   ]);
   if (status) tab.status = status;
   tab.op = op || null;            // a merge or rebase git stopped part-way
-  if (commits) tab.commits = commits;
+  if (commits) tab.commits = indexForFind(commits);
   if (refs) tab.refs = refs;
   if (stashes) tab.stashes = stashes;
   if (flow) tab.flow = flow;
@@ -1726,12 +1747,18 @@ function highlight(text, query) {
   }
 }
 
+/* What a search reads, lowered once when the commits arrive rather than four
+   fields per commit per keystroke. The fields are joined with newlines, which
+   a one-line box cannot type, so nothing matches across a seam. */
+function indexForFind(commits) {
+  for (const c of commits) {
+    c.hay = `${c.subject}\n${c.body || ''}\n${c.author}\n${c.email || ''}`.toLowerCase();
+  }
+  return commits;
+}
+
 const commitMatches = (c, q) =>
-  c.subject.toLowerCase().includes(q) ||
-  (c.body || '').toLowerCase().includes(q) ||
-  c.author.toLowerCase().includes(q) ||
-  (c.email || '').toLowerCase().includes(q) ||
-  c.hash.startsWith(q);
+  (c.hay ?? indexForFind([c])[0].hay).includes(q) || c.hash.startsWith(q);
 
 function runFind(query) {
   const f = state.find;
@@ -1740,7 +1767,9 @@ function runFind(query) {
   f.hits = q ? state.commits.filter((c) => commitMatches(c, q)).map((c) => c.hash) : [];
   f.hitSet = new Set(f.hits);
   f.index = 0;
-  renderHistory();
+  // A search changes no parent link, so the layout stands; only the rows whose
+  // markup changed are rebuilt.
+  renderRows();
   renderFindCount();
   if (f.hits.length) gotoMatch(0);
 }
@@ -1811,6 +1840,7 @@ function openFind() {
 /* Esc empties the search instead of hiding the field — with nothing to hide,
    the useful thing left to undo is the filter itself. */
 function closeFind() {
+  queueFind.cancel();
   $('find-input').value = '';
   runFind('');
   $('find-input').blur();
@@ -4250,10 +4280,19 @@ $('btn-profile').addEventListener('click', async () => {
 
 /* ═════ find bar ════════════════════════════════════════════════ */
 
-$('find-input').addEventListener('input', (e) => runFind(e.target.value));
+/* Each keystroke used to filter every commit, redraw the rows and open the
+   first hit's file list — a git process per letter typed. The search now waits
+   for the typing to pause; Enter and Escape act at once. */
+const queueFind = debounced((value) => runFind(value));
+$('find-input').addEventListener('input', (e) => queueFind(e.target.value));
 $('find-input').addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
-  else if (e.key === 'Enter') { e.preventDefault(); gotoMatch(state.find.index + (e.shiftKey ? -1 : 1)); }
+  else if (e.key === 'Enter') {
+    e.preventDefault();
+    // A search still waiting runs now and lands on its first hit; the next
+    // Enter moves on from there.
+    if (!queueFind.now(e.target.value)) gotoMatch(state.find.index + (e.shiftKey ? -1 : 1));
+  }
 });
 $('find-prev').addEventListener('click', () => gotoMatch(state.find.index - 1));
 $('find-next').addEventListener('click', () => gotoMatch(state.find.index + 1));
