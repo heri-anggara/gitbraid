@@ -2031,6 +2031,11 @@ console.log('\ngraph layout on hand-written histories');
     check(`${g.name}: every row has the lane and edges it had`,
       JSON.stringify(got) === JSON.stringify(g.rows), got);
     check(`${g.name}: the width is what those lanes need`, l.width === g.width, l.width);
+    /* Rows used to carry a copy of the whole lane array that nothing read;
+       what render() and the renderer read is exactly these three. */
+    check(`${g.name}: a row carries its commit, lane and edges and nothing else`,
+      l.rows.every((r) => Object.keys(r).sort().join() === 'commit,edges,lane'),
+      Object.keys(l.rows[0]));
 
     const at = new Map(g.history.map((c, i) => [c.hash, i]));
     const svg = Graph.render(l, at);
