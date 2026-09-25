@@ -1090,6 +1090,7 @@ function ownVersion() {
 
 const https = require('https');
 const crypto = require('crypto');
+const { pipeline } = require('stream');
 
 /** owner/repo, read from the project URL already in package.json. */
 function githubSlug() {
@@ -1100,7 +1101,16 @@ function githubSlug() {
 /* Node's own https, deliberately: an updater is exactly the kind of thing one
    reaches for a library to do, and reaching would end this project's habit of
    shipping no runtime dependencies at all. */
-function getUrl(url, { onProgress = null, hops = 5 } = {}) {
+/* Two shapes of answer. Without `toFile` the body comes back as a Buffer, which
+   is right for the release metadata and the checksum file: a few kilobytes.
+   With it the body is written to that path as it arrives and hashed on the
+   way past, and what comes back is `{ sha512, bytes }` — the program being
+   downloaded is a hundred megabytes, and it used to be held whole in memory
+   three times over: the chunks, their concatenation, and the hash's read of
+   it. `pipeline` tears down both ends when either fails; the half-written
+   file is the caller's to remove, since the caller knows whether to try
+   again. */
+function getUrl(url, { onProgress = null, hops = 5, toFile = null } = {}) {
   return new Promise((resolve, reject) => {
     const req = https.get(url, {
       headers: {
@@ -1113,25 +1123,42 @@ function getUrl(url, { onProgress = null, hops = 5 } = {}) {
       if (statusCode >= 300 && statusCode < 400 && headers.location) {
         res.resume();
         if (!hops) return reject(new Error('Too many redirects.'));
-        return resolve(getUrl(new URL(headers.location, url).href, { onProgress, hops: hops - 1 }));
+        return resolve(getUrl(new URL(headers.location, url).href,
+          { onProgress, hops: hops - 1, toFile }));
       }
       if (statusCode !== 200) {
         res.resume();
         return reject(new Error(`${url.replace(/\?.*/, '')} answered ${statusCode}.`));
       }
       const total = Number(headers['content-length']) || 0;
-      const chunks = [];
       let read = 0;
+      if (!toFile) {
+        const chunks = [];
+        res.on('data', (c) => {
+          chunks.push(c);
+          read += c.length;
+          if (onProgress) onProgress(read, total);
+        });
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+        res.on('error', reject);
+        return;
+      }
+      const hash = crypto.createHash('sha512');
       res.on('data', (c) => {
-        chunks.push(c);
+        hash.update(c);
         read += c.length;
         if (onProgress) onProgress(read, total);
       });
-      res.on('end', () => resolve(Buffer.concat(chunks)));
-      res.on('error', reject);
+      pipeline(res, fs.createWriteStream(toFile), (err) => {
+        if (err) return reject(err);
+        resolve({ sha512: hash.digest('base64'), bytes: read });
+      });
     });
     req.on('error', reject);
-    req.setTimeout(30000, () => req.destroy(new Error('The update server did not answer.')));
+    /* Inactivity, not a deadline: a download that is still moving is left
+       alone. Given a code so that the download can tell it from a refusal. */
+    req.setTimeout(30000, () => req.destroy(Object.assign(
+      new Error('The update server did not answer.'), { code: 'ETIMEDOUT' })));
   });
 }
 
@@ -1199,19 +1226,38 @@ handle('update:download', async (info) => {
   const want = matchChecksum(yml, asset.name);
   if (!want) throw new Error(`latest-linux.yml carries no checksum for ${asset.name}.`);
 
-  const file = await getUrl(asset.url, {
-    onProgress: (read, total) => sendUpdateProgress(read, total),
-  });
-  const got = crypto.createHash('sha512').update(file).digest('base64');
-  if (got !== want) {
+  /* Written beside where it will end up and renamed into place only once the
+     checksum has matched, so a file bearing the release's name is never one
+     that failed the check. A connection that drops gets one more attempt, and
+     only that: a mismatch or a refusal will not change its mind. */
+  const target = path.join(os.tmpdir(), asset.name);
+  const part = `${target}.part`;
+  let got;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      got = await getUrl(asset.url, {
+        toFile: part,
+        onProgress: (read, total) => sendUpdateProgress(read, total),
+      });
+      break;
+    } catch (e) {
+      fs.rmSync(part, { force: true });
+      if (attempt || !RETRY_CODES.has(e.code)) throw e;
+    }
+  }
+  if (got.sha512 !== want) {
+    fs.rmSync(part, { force: true });
     throw new Error('The download does not match its published checksum. Nothing was '
       + 'installed.');
   }
-
-  const target = path.join(os.tmpdir(), asset.name);
-  fs.writeFileSync(target, file, { mode: kind === 'appimage' ? 0o755 : 0o644 });
+  fs.chmodSync(part, kind === 'appimage' ? 0o755 : 0o644);
+  fs.renameSync(part, target);
   return { path: target, name: asset.name, kind };
 });
+
+/* The ways a connection dies under a download, as Node names them. Anything
+   else — a 404, a bad certificate, a mismatch — is an answer, not an accident. */
+const RETRY_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED']);
 
 /* The yml is small and regular; a parser for the two lines that matter beats a
    dependency for reading the whole format. */
