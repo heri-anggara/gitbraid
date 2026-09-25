@@ -89,6 +89,7 @@ function newTab(repo) {
     flow: null,          // gitflow.* config, read with the rest of the repo
     op: null,            // an interrupted merge/rebase/cherry-pick/revert
     mergeSide: 'in',     // which parent a merge commit's file list compares against
+    compareRef: null,    // the ref the middle pane is comparing HEAD with, if any
     containedBy: new Map(),   // hash -> nama cabang yang memuatnya
     find: { query: '', hits: [], hitSet: new Set(), index: 0 },
     layout: null,        // graph lanes for every loaded commit, rebuilt with them
@@ -3208,6 +3209,9 @@ function closeFile() {
 async function showFileDiff() {
   const f = state.file;
   if (!f) return closeFile();
+  // A file on screen ends the comparison; left set, the next toggle of wrap
+  // or whitespace put the branch comparison back in place of the file.
+  state.compareRef = null;
 
   const raw = f.kind === 'conflict'
     ? await call('repo:conflictFile', repoPath(), f.path)
@@ -6198,7 +6202,9 @@ function unmountViewer() {
 
 async function openFileHistory(file) {
   // Whatever the middle pane was showing comes back when this panel closes.
-  if (!fhist.home) fhist.was = { file: state.file, selection: state.selection };
+  if (!fhist.home) {
+    fhist.was = { file: state.file, selection: state.selection, compareRef: state.compareRef };
+  }
   fhist.path = file;
   fhist.commits = [];
   fhist.names = {};
@@ -6281,10 +6287,11 @@ function closeFileHistory() {
   fhist.at = -1;
   $('fh-list').innerHTML = '';
   // Put back whatever the middle pane was showing before this opened.
-  const was = fhist.was || { file: null, selection: null };
+  const was = fhist.was || { file: null, selection: null, compareRef: null };
   fhist.was = null;
   state.file = was.file;
   state.selection = was.selection;
+  state.compareRef = was.compareRef || null;
   renderViewer();
 }
 
@@ -6780,12 +6787,28 @@ async function showCompare() {
 
   $('fv-stage-tools').hidden = true;
   syncViewerToggles();
-  const opts = { path: '', highlight: false };   // a comparison spans many files
-  diffView = null;
-  $('fv-body').innerHTML = state.diffFiles.length
-    ? (viewer.split ? window.Diff.renderSplit(state.diffFiles, [], opts)
-                    : window.Diff.render(state.diffFiles, [], opts))
-    : `<div class="empty-note">${esc(ref)} has nothing that HEAD does not already have.</div>`;
+  /* Drawn through the same window as a file. It was rendered whole, and a
+     comparison spanning many files is exactly the diff too long for that. */
+  if (!state.diffFiles.length) {
+    diffView = null;
+    $('fv-body').innerHTML =
+      `<div class="empty-note">${esc(ref)} has nothing that HEAD does not already have.</div>`;
+  } else {
+    diffView = {
+      actions: [],
+      opts: { path: '', highlight: false },   // a comparison spans many files
+      rows: diffRowTotal(),
+      shown: null,
+      heights: null,
+      heightsAt: '',
+      rowSum: null,
+      wrapOff: false,
+      layout: null,
+      layoutKey: '',
+    };
+    $('fv-body').scrollTop = 0;
+    paintDiff();
+  }
   indexBlocks();
   setStatus(`Comparing HEAD with ${ref}`, 'ok');
 }
@@ -7171,6 +7194,7 @@ function wireFileList(id) {
     pickOne(kind, path);
     state.file = { path, kind, status: li.dataset.status,
                    untracked: li.dataset.untracked === '1' };
+    state.compareRef = null;
     $(id).querySelectorAll('li').forEach((n) => n.classList.remove('selected'));
     li.classList.add('selected');
     await showFileDiff();
