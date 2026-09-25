@@ -1098,7 +1098,18 @@ async function refresh({ keepSelection = true } = {}) {
   state.containedBy = computeContainment(state.commits, state.refs.branches);
   // Resolve avatar URLs up front; renderHistory reads the cache synchronously.
   await ensureAvatars(state.commits);
+  settleSelection(keepSelection);
 
+  renderToolbar();
+  renderSidebar();
+  renderHistory();
+  await renderDetail();
+}
+
+/* Where the selection lands once a fresh status is in: on the working tree when
+   nothing was chosen and there is work in it, and off a working tree that has
+   just gone clean. */
+function settleSelection(keepSelection) {
   const dirty = hasChanges();
   if (!keepSelection || !state.selection) {
     state.selection = dirty
@@ -1108,10 +1119,33 @@ async function refresh({ keepSelection = true } = {}) {
   if (state.selection?.kind === 'wip' && !dirty && state.commits[0]) {
     state.selection = { kind: 'commit', hash: state.commits[0].hash };
   }
+}
 
+/* Staging, unstaging, discarding and ignoring change what the working tree
+   holds and nothing else: no commit is made, no ref moves, no stash comes or
+   goes. A full refresh after each of them re-read the log and every ref, laid
+   the graph out again and walked every branch for the ghost badges — six git
+   processes and the whole history redrawn to move one file between two lists.
+   This asks only for the status and for any operation git stopped part-way,
+   and redraws only what reads them: the op bar, the toolbar counts, the
+   pending row, and the panel of files. */
+async function refreshStatus() {
+  if (!state.repo) return;
+  const tab = state;
+  const repo = tab.repo.path;
+  const [status, op] = await Promise.all([
+    call('repo:status', repo),
+    call('repo:state', repo),
+  ]);
+  if (status) tab.status = status;
+  tab.op = op || null;
+
+  if (tab !== state) return;      // the reader moved on: keep the data, draw nothing
+
+  renderOpState();
+  settleSelection(true);
   renderToolbar();
-  renderSidebar();
-  renderHistory();
+  renderHistory();                // the pending row; the layout stands unless dirty flipped
   await renderDetail();
 }
 
@@ -3292,12 +3326,12 @@ const repoPath = () => state.repo.path;
 async function stage(paths) {
   await call('repo:stage', repoPath(), paths);
   clearPicked();
-  await refresh();
+  await refreshStatus();
 }
 async function unstage(paths) {
   await call('repo:unstage', repoPath(), paths);
   clearPicked();
-  await refresh();
+  await refreshStatus();
 }
 async function discard(path, untracked) {
   const ok = await confirmAction(
@@ -3308,7 +3342,14 @@ async function discard(path, untracked) {
   if (!ok) return;
   await call('repo:discard', repoPath(), [path], untracked);
   state.file = null;
-  await refresh();
+  await refreshStatus();
+}
+
+/* git takes the whole list at once, so two calls cover any number of files:
+   the tracked ones go back to the index, the untracked ones are deleted. */
+async function discardLists(kept, gone) {
+  if (kept.length) await call('repo:discard', repoPath(), kept, false);
+  if (gone.length) await call('repo:discard', repoPath(), gone, true);
 }
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -3331,11 +3372,10 @@ async function discardMany(paths) {
     'Discard'
   );
   if (!ok) return;
-  if (kept.length) await call('repo:discard', repoPath(), kept, false);
-  if (gone.length) await call('repo:discard', repoPath(), gone, true);
+  await discardLists(kept, gone);
   if (paths.includes(state.file?.path)) { state.file = null; closeFile(); }
   clearPicked();
-  await refresh();
+  await refreshStatus();
   setStatus(`Discarded ${plural(paths.length, 'file')}`, 'ok');
 }
 
@@ -3398,8 +3438,12 @@ async function applyHunk(fileIndex, hunkIndex, action) {
   const patch = window.Diff.hunkPatch(file, hunk);
   const res = await call('repo:applyPatch', repoPath(), patch, action);
   if (res === null) return;
-  await refresh();
-  await showFileDiff();
+  /* renderWip() already redraws the open file from the new status, so asking
+     for the diff again here fetched it twice. When the last hunk went and the
+     tree came up clean, the selection has moved to a commit: the file it was
+     showing no longer has a diff, so it is closed rather than left behind. */
+  await refreshStatus();
+  if (state.file && state.selection?.kind !== 'wip') closeFile();
   setStatus(`Hunk ${action === 'stage' ? 'staged' : action === 'unstage' ? 'unstaged' : 'discarded'}`, 'ok');
 }
 
@@ -7183,11 +7227,14 @@ $('btn-discard-all').addEventListener('click', async () => {
     'Discard everything'
   );
   if (!ok) return;
-  for (const f of paths) {
-    await call('repo:discard', repoPath(), [f.path], f.status === '?');
-  }
+  // One process per file, in turn, was a long wait on a big tree; git takes
+  // the whole list, so this is the same two calls discardMany makes.
+  await discardLists(
+    paths.filter((f) => f.status !== '?').map((f) => f.path),
+    paths.filter((f) => f.status === '?').map((f) => f.path)
+  );
   closeFile();
-  await refresh();
+  await refreshStatus();
   setStatus(`Discarded ${paths.length} file${paths.length === 1 ? '' : 's'}`, 'ok');
 });
 
@@ -7386,7 +7433,7 @@ async function ignoreFiles(paths) {
   const out = await call('repo:ignore', repoPath(), patterns);
   if (out === null) return;
   clearPicked();
-  await refresh();
+  await refreshStatus();
   setStatus(out.added.length
     ? `Added ${plural(out.added.length, 'line')} to .gitignore`
     : 'Already in .gitignore', 'ok');
@@ -7410,7 +7457,7 @@ async function untrackAndIgnore(paths) {
   await call('repo:ignore', repoPath(), paths);
   if (paths.includes(state.file?.path)) { state.file = null; closeFile(); }
   clearPicked();
-  await refresh();
+  await refreshStatus();
   setStatus(`Stopped tracking ${plural(paths.length, 'file')}`, 'ok');
 }
 
@@ -7429,11 +7476,11 @@ function isDeleted(path) {
 
 $('btn-stage-all').addEventListener('click', async () => {
   await call('repo:stageAll', repoPath());
-  await refresh();
+  await refreshStatus();
 });
 $('btn-unstage-all').addEventListener('click', async () => {
   await call('repo:unstageAll', repoPath());
-  await refresh();
+  await refreshStatus();
 });
 
 /* hunk buttons */
