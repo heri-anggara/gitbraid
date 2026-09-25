@@ -92,6 +92,7 @@ function newTab(repo) {
     containedBy: new Map(),   // hash -> nama cabang yang memuatnya
     find: { query: '', hits: [], hitSet: new Set(), index: 0 },
     layout: null,        // graph lanes for every loaded commit, rebuilt with them
+    layoutKey: null,     // what `layout` was made from, so it is reused until that changes
     rowIndex: new Map(),      // hash -> row number, for scrolling to a commit
     rowsShown: { first: 0, last: 0 },
     // Carried across tab switches so nothing typed is lost.
@@ -1877,25 +1878,34 @@ function scrollToCommit(hash) {
 
 function renderHistory() {
   const dirty = hasChanges();
-  const rowsData = dirty
-    ? [{
-        hash: 'WORKDIR',
-        parents: state.status?.oid ? [state.status.oid] : [],
-        pending: true,
-        subject: 'Uncommitted changes',
-        author: '',
-        refs: [],
-        commitDate: Date.now(),
-      }, ...state.commits]
-    : state.commits;
+  /* The layout follows from the commits, whether a pending row sits above
+     them and what it hangs from, and the lane metrics of the style — nothing
+     else. It used to be laid out again on every call, and since the row cache
+     is keyed on the layout, flipping a date format or a badge threw away
+     every row on screen along with it. Held on the tab, with what it was made
+     from, so scrolling and cosmetic toggles re-slice the same layout. */
+  const key = { commits: state.commits, dirty, oid: state.status?.oid || '', style: prefs.uiStyle };
+  const was = state.layoutKey;
+  const fresh = !state.layout || !was || was.commits !== key.commits || was.dirty !== key.dirty
+    || was.oid !== key.oid || was.style !== key.style;
+  if (fresh) {
+    const rowsData = dirty
+      ? [{
+          hash: 'WORKDIR',
+          parents: state.status?.oid ? [state.status.oid] : [],
+          pending: true,
+          subject: 'Uncommitted changes',
+          author: '',
+          refs: [],
+          commitDate: Date.now(),
+        }, ...state.commits]
+      : state.commits;
+    state.layout = window.Graph.layout(rowsData);
+    state.rowIndex = new Map(rowsData.map((c, i) => [c.hash, i]));
+    state.layoutKey = key;
+  }
 
-  const layout = window.Graph.layout(rowsData);
-  // Held on the tab so scrolling can re-slice the view without laying the
-  // graph out again — the layout only changes when the commits do.
-  state.layout = layout;
-  state.rowIndex = new Map(rowsData.map((c, i) => [c.hash, i]));
-
-  document.documentElement.style.setProperty('--graph-w', layout.width + 'px');
+  document.documentElement.style.setProperty('--graph-w', state.layout.width + 'px');
   renderRows();
   $('btn-more').hidden = state.commits.length < state.limit;
 }
