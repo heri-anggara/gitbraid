@@ -2102,18 +2102,28 @@ handle('repo:status', async (repo) =>
    refs/stash, which is the top of the stack — so with two stashes the older
    one's rows vanished entirely while the newer one's were drawn. Naming them
    all is what makes the history say the same thing however many there are. */
+/* What the window is told about a stash's parents is cut to the first one, so
+   the graph does not draw edges to the two commits hidden above. The full list
+   is kept here, from the same listing, for the two handlers that are handed a
+   row's parents back: a stash has to go on reading as the merge it is, and the
+   commit holding its untracked files is the third of them. */
+const stashParents = new Map();   // repo path -> Map(stash hash -> [parents])
+
 async function stashShape(repo) {
   const hide = new Set();
   const marks = new Set();
   let list = '';
   try { list = await git(repo, ['stash', 'list', '--format=%H %P']); } catch { return { hide, marks }; }
+  const known = new Map();
   for (const line of list.split('\n')) {
-    const [hash, , index, untracked] = line.trim().split(' ');
+    const [hash, ...parents] = line.trim().split(' ').filter(Boolean);
     if (!hash) continue;
     marks.add(hash);
-    if (index) hide.add(index);
-    if (untracked) hide.add(untracked);
+    known.set(hash, parents);
+    if (parents[1]) hide.add(parents[1]);   // the index commit
+    if (parents[2]) hide.add(parents[2]);   // the untracked files, when any went in
   }
+  stashParents.set(repo, known);
   return { hide, marks };
 }
 
@@ -2460,15 +2470,41 @@ handle('repo:conflictFile', async (repo, file) => {
   }
 });
 
-/** One file's changes inside one commit, rather than the whole commit. */
-/** How many parents a commit has, without loading its whole log entry. */
-async function isMerge(repo, hash) {
-  const parents = (await git(repo, ['rev-list', '--parents', '-n', '1', hash])).trim().split(' ');
-  return parents.length > 2;   // the commit's own hash, then its parents
+/* A commit's parents, from what is already known before git is asked. The
+   window was handed them with the row, and may hand them back; the listing's
+   own record of a stash comes first, since the row's copy of that one was cut
+   to a single parent for the graph's sake. Null when nobody knows. */
+function knownParents(repo, hash, parents) {
+  return stashParents.get(repo)?.get(hash) || (Array.isArray(parents) ? parents : null);
 }
 
-handle('repo:diffCommitFile', async (repo, { hash, file, ignoreWhitespace, context, side = 'in' }) => {
-  const merge = await isMerge(repo, hash);
+/** Whether a commit has more than one parent. Asked of git only when the caller
+    did not say: the window asks this three times for one merge commit. */
+async function isMerge(repo, hash, parents) {
+  const known = knownParents(repo, hash, parents);
+  if (known) return known.length > 1;
+  const out = (await git(repo, ['rev-list', '--parents', '-n', '1', hash])).trim().split(' ');
+  return out.length > 2;   // the commit's own hash, then its parents
+}
+
+/* The tree with nothing in it, for showing a file the branch has never seen as
+   all additions. Asked of git rather than written down, because it is one hash
+   in a SHA-1 repository and another in a SHA-256 one — and asked once per
+   repository, since it is the same answer every time after that. */
+const emptyTrees = new Map();   // repo path -> hash
+
+async function emptyTree(repo) {
+  let hash = emptyTrees.get(repo);
+  if (!hash) {
+    hash = (await git(repo, ['hash-object', '-t', 'tree', NULL_DEVICE])).trim();
+    emptyTrees.set(repo, hash);
+  }
+  return hash;
+}
+
+/** One file's changes inside one commit, rather than the whole commit. */
+handle('repo:diffCommitFile', async (repo, { hash, file, ignoreWhitespace, context, side = 'in', parents }) => {
+  const merge = await isMerge(repo, hash, parents);
   const args = diffArgs('diff', '--no-color', '--find-renames');
   if (ignoreWhitespace) args.push('-w');
   args.push(...contextArg(context));
@@ -2486,17 +2522,10 @@ handle('repo:diffCommitFile', async (repo, { hash, file, ignoreWhitespace, conte
        pane came up empty. Shown against the empty tree instead, which is how a
        file the branch has never seen ought to read: every line added. */
     if (side === 'in') {
-      let third = '';
-      try { third = (await git(repo, ['rev-parse', '--verify', '-q', `${hash}^3`])).trim(); }
-      catch { /* not a stash, or nothing untracked in it */ }
-      if (third) {
-        const inThird = (await git(repo, ['ls-tree', '-r', '--name-only', '-z', third]))
-          .split('\0').filter(Boolean);
-        if (inThird.includes(file)) {
-          const empty = (await git(repo, ['hash-object', '-t', 'tree', '/dev/null'])).trim();
-          args.push(empty, third, '--', file);
-          return git(repo, args);
-        }
+      const { third, files } = await stashThirdParent(repo, hash, parents);
+      if (third && files.includes(file)) {
+        args.push(await emptyTree(repo), third, '--', file);
+        return git(repo, args);
       }
     }
     args.push(`${hash}${MERGE_SIDES[side] || '^1'}`, hash, '--', file);
@@ -2568,27 +2597,36 @@ handle('repo:rewordCommit', async (repo, { hash, message }) => {
  */
 const MERGE_SIDES = { in: '^1', other: '^2' };
 
-/* The files a stash is holding.
+/* The commit a stash keeps its untracked files in, and the paths inside it.
 
    A stash keeps its untracked files in a third parent of its own, not in its
    tree, so comparing it with the commit it was taken from finds none of them —
    a stash of nothing but new files read as "no files" in the panel, which is
-   exactly as wrong as it sounds. They are listed from that third parent and
-   marked added, which is what they are: files the branch has never seen. */
-async function stashUntracked(repo, hash) {
-  let third = '';
-  try { third = (await git(repo, ['rev-parse', '--verify', '-q', `${hash}^3`])).trim(); }
-  catch { return []; }            // nothing untracked went in, which is ordinary
-  if (!third) return [];
+   exactly as wrong as it sounds. Only a stash has a third parent, so asking
+   costs one rev-parse and answers for every commit that is not one — and
+   nothing at all when the parents came with the request. The one place this is
+   asked, for the file list and for the diff alike; the diff used to carry a
+   copy of it that spelled the null device out by hand. */
+async function stashThirdParent(repo, hash, parents) {
+  const known = knownParents(repo, hash, parents);
+  let third = known ? (known[2] || '') : null;
+  if (third === null) {
+    try { third = (await git(repo, ['rev-parse', '--verify', '-q', `${hash}^3`])).trim(); }
+    catch { third = ''; }          // nothing untracked went in, which is ordinary
+  }
+  if (!third) return { third: '', files: [] };
   const raw = await git(repo, ['ls-tree', '-r', '-z', '--name-only', third]);
-  return raw.split('\0').filter(Boolean).map((path) => ({ status: 'A', path, untracked: true }));
+  return { third, files: raw.split('\0').filter(Boolean) };
 }
 
-handle('repo:commitFiles', async (repo, hash, side = 'in') => {
+/* `parents` is optional and comes from the row the window is showing: with it,
+   whether this is a merge is known without asking git. Without it, git is
+   asked, as before. */
+handle('repo:commitFiles', async (repo, hash, side = 'in', { parents } = {}) => {
   const args = ['diff-tree', '--no-commit-id', '--name-status', '-r', '-z', '--find-renames'];
   if (side === 'combined') {
     args.push('--cc', hash);
-  } else if (MERGE_SIDES[side] && await isMerge(repo, hash)) {
+  } else if (MERGE_SIDES[side] && await isMerge(repo, hash, parents)) {
     args.push(`${hash}${MERGE_SIDES[side]}`, hash);
   } else {
     /* `--root` matters for the very first commit of a repository: without it
@@ -2608,14 +2646,17 @@ handle('repo:commitFiles', async (repo, hash, side = 'in') => {
     }
   }
 
-  /* Only a stash has a third parent, so asking costs one rev-parse and answers
-     for every commit that is not one. A path already listed is left alone: it
-     was tracked and changed, and saying it twice would be worse than either. */
+  /* The untracked files a stash holds, listed from its third parent and marked
+     added, which is what they are: files the branch has never seen. A path
+     already listed is left alone: it was tracked and changed, and saying it
+     twice would be worse than either. */
   if (side === 'in') {
-    const extra = await stashUntracked(repo, hash);
-    if (extra.length) {
+    const { files: untracked } = await stashThirdParent(repo, hash, parents);
+    if (untracked.length) {
       const seen = new Set(files.map((f) => f.path));
-      for (const f of extra) if (!seen.has(f.path)) files.push(f);
+      for (const path of untracked) {
+        if (!seen.has(path)) files.push({ status: 'A', path, untracked: true });
+      }
     }
   }
   return files;
