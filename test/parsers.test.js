@@ -2055,6 +2055,37 @@ console.log('\ngraph layout on hand-written histories');
   }
 }
 
+/* ── the highlighter, table by table ────────────────────────────── */
+console.log('\nthe highlighter, table by table');
+{
+  // Loaded alone into a bare context, as the audit section does: the file
+  // has to stand on its own.
+  const hl = { window: {} };
+  vm.createContext(hl);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src/highlight.js'), 'utf8'), hl);
+  const H = hl.window.Hl;
+
+  /* esc is applied to every token, so it is written as one pass with a fast
+     path for the common token that has nothing in it. The five entities and
+     their spelling are what every consumer has been receiving. */
+  check('esc rewrites all five characters, and only those',
+    H.esc('& < > " \' plain') === '&amp; &lt; &gt; &quot; &#39; plain', H.esc('& < > " \' plain'));
+  check('esc hands back a string with nothing to escape as it is',
+    H.esc('const x = 1;') === 'const x = 1;' && H.esc('') === '');
+  check('esc does not escape twice',
+    H.esc('&amp;') === '&amp;amp;' && H.esc('<<>>') === '&lt;&lt;&gt;&gt;');
+
+  /* A minified line is a wall of short tokens that each try every rule. Past
+     500 characters the line goes out escaped and plain — the same characters,
+     without the spans. */
+  const wall = 'var a=b<c&&d>"e";'.repeat(40);   // 680 characters
+  check('a 600-character line comes back as plain escaped text',
+    wall.length > 600 && H.line(wall, 'js') === H.esc(wall) && !H.line(wall, 'js').includes('<span'),
+    H.line(wall, 'js').slice(0, 60));
+  check('and a line just under the limit is still coloured',
+    H.line('const x = 1; '.repeat(38), 'js').includes('<span class="hl-key">const</span>'));
+}
+
 fs.rmSync(REPO, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
