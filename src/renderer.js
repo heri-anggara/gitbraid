@@ -2447,15 +2447,17 @@ async function renderCommitPanel(hash) {
      counts belong on the buttons: a side that turns out to be empty should say
      so before you click it, not after. */
   const side = isMergeCommit ? (state.mergeSide || 'in') : 'in';
+  // The parents go along: main otherwise spawns git rev-list to learn whether
+  // this is a merge, on every click, when the log already said.
   const sides = isMergeCommit
     ? await Promise.all(MERGE_SIDES.map((m) =>
-        call('repo:commitFiles', state.repo.path, hash, m.key).then((r) => r || [])))
+        call('repo:commitFiles', state.repo.path, hash, m.key, { parents }).then((r) => r || [])))
     : null;
   renderMergeBar(isMergeCommit ? sides : null, side, parents);
 
   const files = sides
     ? sides[MERGE_SIDES.findIndex((m) => m.key === side)]
-    : (await call('repo:commitFiles', state.repo.path, hash)) || [];
+    : (await call('repo:commitFiles', state.repo.path, hash, 'in', { parents })) || [];
   commitFiles = files;
   renderCommitFiles();
 
@@ -3245,6 +3247,9 @@ async function showFileDiff() {
         ignoreWhitespace: viewer.ignoreWhitespace,
         context: viewer.allLines ? 100000 : 3,
         side: state.mergeSide || 'in',
+        // From the log already read; a commit the log does not hold (one
+        // reached through file history) leaves main to ask git as before.
+        parents: state.commits.find((c) => c.hash === state.selection?.hash)?.parents,
       })
     : await call('repo:diffFile', repoPath(), {
         file: f.path, staged: f.kind === 'staged', untracked: f.untracked,
@@ -5732,7 +5737,10 @@ function paintGitOutput(title, blocks, failed, took) {
 
 /** Everything written since `since` that kept its output, oldest first. */
 async function outputSince(since) {
-  const rows = await call('app:log');
+  /* Main cuts the log at `since` itself now, rather than sending the whole
+     thing over IPC to be cut here. The comparison is kept as a guard for a
+     main that ignores the argument: it costs nothing on a list already cut. */
+  const rows = await call('app:log', { since });
   // Newest first from main. A refresh fires read-only commands right after an
   // action; none of them keeps output, so none of them can appear here.
   return (rows || [])
