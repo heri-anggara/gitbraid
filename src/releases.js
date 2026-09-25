@@ -7,6 +7,68 @@
  */
 window.Releases = [
   {
+    version: '0.11.0',
+    date: '2026-09-25',
+    title: 'Less work for the same picture',
+    summary:
+      'An audit of everything the application did more than once. Staging a '
+      + 'file, typing in the search box, loading more history and comparing '
+      + 'two branches all did the right thing and then did most of it again. '
+      + 'Each now does it once, the download is 41 MB smaller, and a handful '
+      + 'of bugs found along the way are fixed.',
+    sections: [
+      {
+        heading: 'The working tree and the history',
+        items: [
+          'Staging, unstaging, discarding and ignoring a file re-read only the status. Each used to re-read the whole repository: six git processes, every branch walked for the ghost badges, the graph laid out again and every row on screen rebuilt, to move one file between two lists.',
+          'The graph layout is kept until something it is made from changes. Switching the date format or a badge used to lay it out again and throw away every cached row.',
+          'The commit search waits for a pause in typing, matches against an index built once when the commits arrive, and no longer opens the first hit’s file list on every keystroke — that was one git process per letter typed. Enter runs a search still waiting.',
+          '“Load more” asks git for the next page rather than re-reading everything already on screen with a larger limit.',
+          '“Compare with HEAD” is drawn through the same window as a file. It was the one view still rendered whole, for the comparison most likely to be long. Opening a file now ends the comparison; before, toggling wrap afterwards put the branch comparison back in place of the file.',
+          'The file filter, the branch filter in the sidebar and the repository search wait for a pause in typing, and the file filter no longer fetches the open file’s diff again for each character.',
+          'Which branches contain a commit is worked out in one pass over the history rather than one walk per branch: 5,000 commits across 10 branches went from 100–190 ms to a few milliseconds once warm.',
+          'Auto-fetch does not run while the window is hidden. One fetch runs when it is shown again, if one was skipped.',
+        ],
+      },
+      {
+        heading: 'Fewer git processes',
+        items: [
+          'The stash list is read in one process. It used to be one process plus two per stash, one after another, on every refresh of the history.',
+          'A commit’s parents travel with the request, so git is no longer asked whether a commit is a merge on every click on a file.',
+          'The git output window receives only the lines newer than the action it describes. The whole command log — up to 400 entries of up to 24 KB each — used to cross to the window after every action to be cut down there.',
+          'Your name and email are read in two processes rather than four, and the global pair is kept until the settings dialog changes it. The menu is not rebuilt when nothing in it changed.',
+          'Scanning a folder for repositories no longer holds the application still for the length of the scan, and the uncommitted-work counts in Repository management are answered for every repository rather than the first sixty.',
+          'An update downloads to disk with its checksum computed on the way, instead of being held whole in memory three times over. A connection that drops is retried once.',
+        ],
+      },
+      {
+        heading: 'Long lines, split view, big diffs',
+        items: [
+          'A line longer than 500 characters is shown plain rather than coloured. Nobody reads syntax colour on a minified bundle, and a screen of such lines cost a third of a second per scroll step.',
+          'The split view pairs the lines of a hunk once and keeps the result. On a 50,000-line hunk it cost 15 ms a paint to draw sixty rows.',
+          'Hunks outside the window are folded into one spacer per run rather than one element each: a 200-file comparison put ten thousand of them in the document on every paint.',
+        ],
+      },
+      {
+        heading: 'Fixed along the way',
+        items: [
+          'A commit message containing byte 0x1F, which git keeps, lost everything after it in the panel. The parser now takes the body whole.',
+          'Viewing an untracked file inside a stash on Windows failed, because one path was spelled /dev/null by hand where the rest of the code used the platform’s null device.',
+          '“Discard all” ran one git process per file, in sequence. It is two calls now, tracked and untracked, as discarding a selection already was.',
+          'Opening the tab search from the menu twice left a listener behind on every click.',
+          'The window cannot be navigated away from its own page, and a link that asks for a new window goes to the browser instead. Reset modes and ref names are checked before they reach git’s option parser.',
+        ],
+      },
+      {
+        heading: 'Smaller downloads, and tests that run on their own',
+        items: [
+          'Chromium’s 54 other UI locales, 41 MB of them, are no longer shipped in an application whose only language is English. The seven icon sizes that rode inside the archive, unreadable from there, are out too.',
+          'The test suite runs on every push in GitHub Actions. It grew from 407 checks to 490: hand-written histories lock the graph layout on octopus and criss-cross merges, orphan roots and skewed dates; every one of the seventeen highlighter tables is checked character for character; and one check that had always passed by construction was replaced with four that can fail.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.10.0',
     date: '2026-08-31',
     title: 'It asks for the password now, and there are five themes to read it in',
