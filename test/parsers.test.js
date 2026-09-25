@@ -155,16 +155,47 @@ for (const row of layout.rows) {
 }
 check('parents always sit below their children', ordering, badPair);
 
-// A lane may only hold one hash at a time.
+/* What the lane numbers promise. `width` is (widest lane + 1) lanes plus the
+   padding on both sides, so every lane the rows and edges name has to fit in
+   it, and the first parent continues down the commit's own lane. The old form
+   of this check read a copy of the lane array off every row and could not
+   fail: `&& false` switched the clash test off and a count of filled slots is
+   never larger than the array holding them. */
+const laneCount = (layout.width - PAD_X * 2) / LANE_W;
+const laneOk = (l) => Number.isInteger(l) && l >= 0 && l < laneCount;
+check('every row and edge names a lane the width allows for',
+  Number.isInteger(laneCount) && layout.rows.every((r) =>
+    laneOk(r.lane) && r.edges.every((e) => laneOk(e.lane))),
+  laneCount);
+check('the first parent continues the commit\'s own lane',
+  layout.rows.every((r) => !r.edges.length || r.edges[0].lane === r.lane));
+check('every edge names a commit that was loaded',
+  layout.rows.every((r) => r.edges.every((e) => idx.has(e.parent))));
+
+/* A lane holds one hash at a time. An edge occupies its lane on every row
+   strictly between its child and its parent, so two edges sharing a lane may
+   only overlap there while waiting for the same parent, and no edge may pass
+   through a dot sitting on its lane. */
 let laneClash = null;
-layout.rows.forEach((row, i) => {
-  row.active.forEach((h, l) => {
-    if (h && row.active.filter((x, j) => x === h && j !== l).length && false) laneClash = i;
+{
+  const spans = [];
+  layout.rows.forEach((row, i) => {
+    for (const e of row.edges) {
+      const pi = idx.get(e.parent) ?? layout.rows.length;
+      spans.push({ lane: e.lane, from: i + 1, to: pi - 1, parent: e.parent });
+    }
   });
-  const filled = row.active.filter(Boolean).length;
-  if (filled > row.active.length) laneClash = i;
-});
-check('lane array is well formed', laneClash === null, laneClash);
+  for (const a of spans) {
+    for (const b of spans) {
+      if (a === b || a.lane !== b.lane || a.parent === b.parent) continue;
+      if (a.from <= b.to && b.from <= a.to) laneClash = [a, b];
+    }
+    layout.rows.forEach((row, j) => {
+      if (row.lane === a.lane && j >= a.from && j <= a.to) laneClash = [a, row.commit.hash];
+    });
+  }
+}
+check('no two hashes share a lane on the same row', laneClash === null, laneClash);
 
 /* ── graph rendering: every edge must terminate on its parent dot ─ */
 console.log('\ngraph rendering');
@@ -1912,6 +1943,111 @@ console.log('\ncredentials');
     && /while \(!\$\('modal'\)\.hidden\)/.test(rendererSrc));
   check('cancelling tells git nothing, which fails it exactly as before',
     /call\('askpass:answer', q\.id, res \? res\.value : null/.test(rendererSrc));
+}
+
+/* ── the layout on histories written by hand ────────────────────── */
+/* The fixture repository exercises one shape. These are the shapes it cannot
+   make — an octopus, a criss-cross, two roots, a parent that sorted above its
+   child — with the lane and edges every row came out with frozen as data, so a
+   change to the walk shows up as a diff against a known picture rather than as
+   a drawing that looks slightly off. */
+console.log('\ngraph layout on hand-written histories');
+{
+  const edge = (parent, lane) => ({ parent, lane });
+  const GOLDEN = [
+    { name: 'an octopus merge', width: 120,
+      history: [
+        { hash: 'm', parents: ['a', 'b', 'c', 'd'] },
+        { hash: 'a', parents: ['r'] }, { hash: 'b', parents: ['r'] },
+        { hash: 'c', parents: ['r'] }, { hash: 'd', parents: ['r'] },
+        { hash: 'r', parents: [] },
+      ],
+      rows: [
+        ['m', 0, [edge('a', 0), edge('b', 1), edge('c', 2), edge('d', 3)]],
+        ['a', 0, [edge('r', 0)]], ['b', 1, [edge('r', 1)]],
+        ['c', 2, [edge('r', 2)]], ['d', 3, [edge('r', 3)]],
+        ['r', 0, []],
+      ] },
+    { name: 'criss-cross merges', width: 98,
+      history: [
+        { hash: 'y', parents: ['c', 'b'] },
+        { hash: 'x', parents: ['b', 'c'] },
+        { hash: 'b', parents: ['d'] },
+        { hash: 'c', parents: ['d'] },
+        { hash: 'd', parents: [] },
+      ],
+      rows: [
+        ['y', 0, [edge('c', 0), edge('b', 1)]],
+        ['x', 2, [edge('b', 2), edge('c', 0)]],
+        ['b', 1, [edge('d', 1)]],
+        ['c', 0, [edge('d', 0)]],
+        ['d', 0, []],
+      ] },
+    { name: 'two roots with no common ancestor', width: 76,
+      history: [
+        { hash: 'a2', parents: ['a1'] }, { hash: 'b2', parents: ['b1'] },
+        { hash: 'a1', parents: [] }, { hash: 'b1', parents: [] },
+      ],
+      rows: [
+        ['a2', 0, [edge('a1', 0)]], ['b2', 1, [edge('b1', 1)]],
+        ['a1', 0, []], ['b1', 1, []],
+      ] },
+    /* The second parent is found where the first one was just put, so it takes
+       the same lane rather than opening a new one. */
+    { name: 'a parent listed twice', width: 54,
+      history: [{ hash: 'c', parents: ['x', 'x'] }, { hash: 'x', parents: [] }],
+      rows: [['c', 0, [edge('x', 0), edge('x', 0)]], ['x', 0, []]] },
+    /* --date-order with skewed clocks: the child arrives after its parent, so
+       it is nowhere in the lanes and opens one that nothing ever closes. */
+    { name: 'a parent sorted above its child', width: 76,
+      history: [
+        { hash: 'p', parents: ['r'] }, { hash: 'k', parents: ['p'] }, { hash: 'r', parents: [] },
+      ],
+      rows: [['p', 0, [edge('r', 0)]], ['k', 1, [edge('p', 1)]], ['r', 0, []]] },
+    { name: 'a stash whose extra parents were stripped', width: 54,
+      history: [
+        { hash: 's', stash: true, parents: ['h'] }, { hash: 'h', parents: ['r'] },
+        { hash: 'r', parents: [] },
+      ],
+      rows: [['s', 0, [edge('h', 0)]], ['h', 0, [edge('r', 0)]], ['r', 0, []]] },
+  ];
+
+  /* The same reading of a path the fixture checks rely on: only M, L and A
+     are emitted and each ends on an explicit "x y", so the last two numbers
+     of `d` are the endpoint. */
+  const pathEnds = (svg) => [...svg.matchAll(/<path d="M([\d.]+) ([\d.]+)([^"]*)"/g)]
+    .map((m) => {
+      const nums = m[3].match(/-?[\d.]+/g) || [];
+      return {
+        start: { x: Number(m[1]), y: Number(m[2]) },
+        end: nums.length >= 2
+          ? { x: Number(nums[nums.length - 2]), y: Number(nums[nums.length - 1]) } : null,
+      };
+    });
+
+  for (const g of GOLDEN) {
+    const l = Graph.layout(g.history);
+    const got = l.rows.map((r) => [r.commit.hash, r.lane, r.edges]);
+    check(`${g.name}: every row has the lane and edges it had`,
+      JSON.stringify(got) === JSON.stringify(g.rows), got);
+    check(`${g.name}: the width is what those lanes need`, l.width === g.width, l.width);
+
+    const at = new Map(g.history.map((c, i) => [c.hash, i]));
+    const svg = Graph.render(l, at);
+    const ends = pathEnds(svg);
+    const wanted = l.rows.reduce((n, r) => n + r.edges.length, 0);
+    check(`${g.name}: one path per edge, each ending on an explicit x y`,
+      (svg.match(/<path /g) || []).length === wanted && ends.length === wanted
+      && ends.every((p) => p.end !== null), [ends.length, wanted]);
+    const dot = (i) => ({ x: PAD_X + l.rows[i].lane * LANE_W, y: i * ROW_H + ROW_H / 2 });
+    check(`${g.name}: every edge lands on its parent's dot`,
+      l.rows.every((r, i) => r.edges.every((e) => {
+        const from = dot(i);
+        const to = dot(at.get(e.parent));
+        return ends.some((p) => p.start.x === from.x && p.start.y === from.y
+          && p.end.x === to.x && p.end.y === to.y);
+      })));
+  }
 }
 
 fs.rmSync(REPO, { recursive: true, force: true });
