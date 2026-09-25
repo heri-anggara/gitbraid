@@ -1065,23 +1065,30 @@ const send = (action, extra) => win?.webContents.send('menu:action', { action, .
 /* Read from our own package.json rather than app.getVersion(): that call falls
    back to Electron's own version whenever the app is not started as a package,
    and then the About box reports the wrong product. */
+/* Read once, the first time either is asked. The file is part of the program
+   and does not change while it runs — and both were being read and parsed on
+   every call, which the updater makes once per request and once per redirect. */
+let ownPackage;   // undefined until read; null when it could not be
+
+function readOwnPackage() {
+  if (ownPackage === undefined) {
+    try { ownPackage = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')); }
+    catch { ownPackage = null; }
+  }
+  return ownPackage;
+}
+
 /** Where the status-bar logo points. Empty until it is set in package.json. */
 function ownHomepage() {
-  try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
-    const url = pkg.homepage || (typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url);
-    return /^https?:\/\//.test(url || '') ? url : '';
-  } catch {
-    return '';
-  }
+  const pkg = readOwnPackage();
+  if (!pkg) return '';
+  const url = pkg.homepage || (typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url);
+  return /^https?:\/\//.test(url || '') ? url : '';
 }
 
 function ownVersion() {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version;
-  } catch {
-    return app.getVersion();
-  }
+  const pkg = readOwnPackage();
+  return pkg ? pkg.version : app.getVersion();
 }
 
 /* ------------------------------------------------------------------ */
