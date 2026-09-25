@@ -96,6 +96,22 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.11.0" date="2026-09-25">
+      <description>
+        <p>
+          An audit of everything the application did more than once. Staging a
+          file, searching commits, loading more history and comparing two
+          branches each did the right thing and then did most of it again; each
+          now does it once, and the history stays responsive on repositories
+          with thousands of commits and dozens of branches.
+        </p>
+        <p>
+          The download is 41 MB smaller. A commit message holding a separator
+          byte is no longer cut short, and a handful of other bugs found on the
+          way are fixed.
+        </p>
+      </description>
+    </release>
     <release version="0.10.0" date="2026-08-31">
       <description>
         <p>
