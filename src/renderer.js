@@ -6172,8 +6172,29 @@ $('about-copy').addEventListener('click', async () => {
 
 /* ═════ release notes ═══════════════════════════════════════════ */
 
-function renderNotes() {
-  const list = window.Releases || [];
+/* Fifty-five kilobytes of release notes, read only when the panel opens. They
+   were the first script every start parsed, ahead of the app itself, for a
+   panel most sessions never see. The CSP admits a same-origin script added to
+   the page and refuses fetch(), so the file arrives the way index.html would
+   have brought it. */
+let releasesLoad = null;
+function loadReleases() {
+  if (window.Releases) return Promise.resolve(window.Releases);
+  if (!releasesLoad) {
+    releasesLoad = new Promise((resolve) => {
+      const s = document.createElement('script');
+      s.src = 'releases.js';
+      s.onload = () => resolve(window.Releases || []);
+      // Left unset so the next opening tries again rather than staying empty.
+      s.onerror = () => { releasesLoad = null; s.remove(); resolve([]); };
+      document.head.appendChild(s);
+    });
+  }
+  return releasesLoad;
+}
+
+async function renderNotes() {
+  const list = await loadReleases();
   $('nt-count').textContent = list.length
     ? `${list.length} release${list.length === 1 ? '' : 's'}`
     : '';
@@ -6332,8 +6353,8 @@ function closeFileHistory() {
 
 $('fh-close').addEventListener('click', closeFileHistory);
 
-function openNotes() {
-  renderNotes();
+async function openNotes() {
+  await renderNotes();
   $('app').classList.add('reading-notes');
   $('notes').hidden = false;
   $('nt-body').scrollTop = 0;
