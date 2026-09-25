@@ -1705,6 +1705,21 @@ function createWindow() {
   });
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
 
+  /* The window shows one page and opens no others. A link in release notes or
+     a commit message that wants a new window goes to the browser instead, if
+     it is a web link at all; and nothing — a dropped file, a crafted link —
+     may take the page itself somewhere else. loadFile does not raise
+     will-navigate, and Relaunch goes through app.relaunch, so the page's own
+     loading is untouched by either. */
+  const { webContents } = win;
+  webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  webContents.on('will-navigate', (e, url) => {
+    if (url !== webContents.getURL()) e.preventDefault();
+  });
+
   /* A renderer that never reports in must not cost the user their window. */
   showTimer = setTimeout(revealWindow, 3000);
   win.on('closed', () => { clearTimeout(showTimer); showTimer = null; win = null; });
@@ -2871,9 +2886,18 @@ handle('repo:checkoutWith', async (repo, ref, mode) => {
   }
 });
 
+/* A ref name cannot begin with a dash — git refuses it — but an argument that
+   does would be read as an option before git got to say so. */
+const refName = (name, what) => {
+  const n = String(name || '').trim();
+  if (!n || n.startsWith('-')) throw new Error(`"${name}" is not a valid ${what} name.`);
+  return n;
+};
+
 handle('repo:createBranch', async (repo, name, startPoint, checkout) => {
-  if (checkout) return git(repo, ['checkout', '-b', name, ...(startPoint ? [startPoint] : [])]);
-  return git(repo, ['branch', name, ...(startPoint ? [startPoint] : [])]);
+  const branch = refName(name, 'branch');
+  if (checkout) return git(repo, ['checkout', '-b', branch, ...(startPoint ? [startPoint] : [])]);
+  return git(repo, ['branch', branch, ...(startPoint ? [startPoint] : [])]);
 });
 
 handle('repo:deleteBranch', async (repo, name, force) =>
@@ -2910,9 +2934,12 @@ handle('repo:merge', async (repo, ref, mode = 'ff') => {
 
 handle('repo:rebase', async (repo, ref) => git(repo, ['rebase', ref]));
 
-handle('repo:reset', async (repo, hash, mode) =>
-  git(repo, ['reset', `--${mode}`, hash])
-);
+const RESET_MODES = new Set(['soft', 'mixed', 'hard', 'merge', 'keep']);
+
+handle('repo:reset', async (repo, hash, mode) => {
+  if (!RESET_MODES.has(mode)) throw new Error(`Unknown reset mode: ${mode}`);
+  return git(repo, ['reset', `--${mode}`, hash]);
+});
 
 handle('repo:revert', async (repo, hash) =>
   git(repo, ['revert', '--no-edit', hash])
@@ -2920,9 +2947,10 @@ handle('repo:revert', async (repo, hash) =>
 
 handle('repo:cherryPick', async (repo, hash) => git(repo, ['cherry-pick', hash]));
 
-handle('repo:tag', async (repo, name, hash, message) =>
-  git(repo, message ? ['tag', '-a', name, hash, '-m', message] : ['tag', name, hash])
-);
+handle('repo:tag', async (repo, name, hash, message) => {
+  const tag = refName(name, 'tag');
+  return git(repo, message ? ['tag', '-a', tag, hash, '-m', message] : ['tag', tag, hash]);
+});
 
 /* --- remote ops --- */
 
