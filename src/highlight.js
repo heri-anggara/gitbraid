@@ -9,12 +9,13 @@
 (function () {
   'use strict';
 
+  /* One pass rather than five chained replaces. This runs once per token, and
+     most tokens — keywords, names, runs of spaces — hold nothing to escape, so
+     the test alone answers them and the rest are rewritten in a single walk.
+     Same five entities as before, in the same spelling. */
+  const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
   const esc = (s) =>
-    s.replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+    (/[&<>"']/.test(s) ? s.replace(/[&<>"']/g, (ch) => ESC[ch]) : s);
 
   const words = (list) => new Set(list.split(/\s+/).filter(Boolean));
 
@@ -275,6 +276,13 @@
     const rules = LANGS[lang];
     const src = String(text ?? '');
     if (!rules) return esc(src);
+    /* A minified line is a wall of short tokens and every one of them tries
+       the rules in turn: 2,700 characters cost 3.6 ms, and a window of sixty
+       such rows 215 ms a paint. Nobody reads colour on a line that long, so
+       past this length it goes out escaped and plain — the same characters,
+       without the spans. The guard on the loop below caps iterations, not
+       length, so it never caught this. */
+    if (src.length > 500) return esc(src);
 
     let out = '';
     let i = 0;
