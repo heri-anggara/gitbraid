@@ -123,6 +123,64 @@ check('tag v1.0 present', commits.some((c) => c.refs.some((r) => r.includes('v1.
 check('HEAD ref present', commits.some((c) => c.refs.some((r) => r.startsWith('HEAD ->'))));
 check('dates are sane', commits.every((c) => c.commitDate > 1e12 && c.commitDate <= Date.now() + 5000));
 
+/* ── which branches hold each commit ───────────────────────────── */
+console.log('\nbranch containment');
+{
+  /* Lifted like notesHtml. The bitset sweep replaced one depth-first walk per
+     branch; the walk is kept here as the reference it has to agree with. */
+  const containSrc = rendererSrc.slice(
+    rendererSrc.indexOf('function computeContainment('),
+    rendererSrc.indexOf('\n}\n', rendererSrc.indexOf('function computeContainment(')) + 3
+  );
+  const C = {};
+  vm.runInNewContext(containSrc + '\nthis.computeContainment = computeContainment;', C);
+  const walk = (list, branches) => {
+    const parents = new Map(list.map((c) => [c.hash, c.parents || []]));
+    const out = new Map();
+    for (const b of branches) {
+      const stack = [b.oid];
+      const seen = new Set();
+      while (stack.length) {
+        const h = stack.pop();
+        if (!h || seen.has(h)) continue;
+        seen.add(h);
+        const got = out.get(h);
+        if (got) { if (!got.includes(b.name)) got.push(b.name); }
+        else out.set(h, [b.name]);
+        for (const p of parents.get(h) || []) stack.push(p);
+      }
+    }
+    return out;
+  };
+  const at = (subject) => commits.find((c) => c.subject === subject).hash;
+  const branches = [
+    { name: 'main', oid: commits[0].hash },
+    { name: 'feature', oid: at('feature: add d') },
+    { name: 'hotfix', oid: at('hotfix: patch') },
+    { name: 'gone', oid: 'f'.repeat(40) },      // a tip further back than the log
+  ];
+  const got = C.computeContainment(commits, branches);
+  const sameAs = (a, b) =>
+    a.size === b.size && [...a].every(([k, v]) => JSON.stringify(b.get(k)) === JSON.stringify(v));
+  check('the sweep agrees with a walk from every tip', sameAs(got, walk(commits, branches)));
+  check('the root is on every branch, named in branch order',
+    JSON.stringify(got.get(at('add a'))) === '["main","feature","hotfix"]', got.get(at('add a')));
+  check('a merged feature commit is on main and the feature',
+    JSON.stringify(got.get(at('feature: add d'))) === '["main","feature"]');
+  check('a commit made on main after the fork is only on main',
+    JSON.stringify(got.get(at('main: add e'))) === '["main"]');
+  check('a tip that was not loaded still answers for itself',
+    JSON.stringify(got.get('f'.repeat(40))) === '["gone"]');
+  check('every loaded commit is reached from main, and nothing else is listed',
+    got.size === commits.length + 1, got.size);
+  // A parent above its child, as a wrong clock puts it: the answer must not change.
+  const skewed = [...commits];
+  [skewed[3], skewed[4]] = [skewed[4], skewed[3]];
+  check('a row whose parent sits above it is still counted',
+    sameAs(C.computeContainment(skewed, branches), got));
+  check('no branches, no entries', C.computeContainment(commits, []).size === 0);
+}
+
 /* ── graph layout ──────────────────────────────────────────────── */
 console.log('\ngraph layout');
 const rowsData = [
