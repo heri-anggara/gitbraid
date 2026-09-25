@@ -182,7 +182,7 @@ git config --local user.email "email-yang-Anda-pilih"
 npm test
 ```
 
-55 test yang mengecek parser status, parser log, algoritma lane pada graph,
+490 test yang mengecek parser status, parser log, algoritma lane pada graph,
 titik akhir setiap garis, parser diff, dan — yang paling penting — apakah patch
 per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 
@@ -1289,8 +1289,9 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   ia mengulang nama dan hitungan yang sudah ada di header atas, persis sama
 - **Show all lines** menampilkan seluruh berkas, bukan hanya potongan hunk
   (di balik layar: `-U100000`)
-- **Syntax highlighting** untuk TS/JS/JSX/TSX, JSON, CSS, HTML, Markdown, SQL,
-  shell, Python, YAML, Go, Rust — ditulis sendiri di [`src/highlight.js`](src/highlight.js),
+- **Syntax highlighting** untuk TS/JS/JSX/TSX, JSON, CSS, Sass/SCSS, HTML, Pug,
+  Markdown, SQL, shell, Python, Ruby, PHP, Blade, YAML, TOML, Go, Rust — tujuh
+  belas bahasa, ditulis sendiri di [`src/highlight.js`](src/highlight.js),
   jadi GitBraid tetap tanpa dependensi runtime. Sifatnya per-baris, karena diff
   memang menampilkan potongan; berkas yang tak dikenal tampil tanpa warna dan
   tombolnya nonaktif
@@ -1494,10 +1495,12 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   biasanya tidak menggambar ulang sama sekali: frame median **7 ms, sama rata
   dari 400 sampai 8.951 baris**, dan `refresh()` pada riwayat penuh turun dari
   3.346 ms ke 235 ms
-- Graph tetap digambar utuh: sebuah garis yang melintasi layar dari commit jauh
-  di atas ke induknya jauh di bawah ikut digambar walau kedua ujungnya tak
-  terlihat. Diperiksa terhadap perhitungan acuan di 65 pita berbeda yang semuanya
-  mengandung merge — nol selisih
+- Graph hanya menggambar pita yang terlihat: `Graph.render` menerima
+  `first`/`last`, menggambar baris di dalam pita itu (plus satu di atas dan di
+  bawahnya), lalu menyusul garis panjang yang melintasi pita dari luar — garis
+  dari commit jauh di atas ke induknya jauh di bawah tetap tampak walau kedua
+  ujungnya tak terlihat. Diperiksa terhadap perhitungan acuan di 65 pita berbeda
+  yang semuanya mengandung merge — nol selisih
 - Batas 400 baris itu bukan soal git: membaca seluruh 8.951 commit hanya 40 ms,
   praktis sama dengan membaca 400 (35 ms). Yang dulu mahal adalah menggambarnya
 - Pindah tab memakai data yang sudah dipegang tab itu dulu, baru menyusul
@@ -1551,6 +1554,51 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Diff dengan nomor baris ganda (lama/baru) dan penghitung +/−
 - Commit, amend, dan `Ctrl+Enter` untuk commit cepat
 - Discard selalu minta konfirmasi dulu
+
+**Nama berkas yang harus di-escape git**
+- git menulis jalur di luar ASCII sebagai string terkutip gaya-C dengan satu
+  escape oktal per byte: `diff --git "a/beraksen-\303\251.txt" "b/…"`. Regex
+  kepala yang lama tidak cocok dengannya, jadi nama berkasnya jadi kosong dan
+  `hunkPatch` menghasilkan `diff --git a/ b/` — ditolak `git apply` dengan
+  `error: dev/null: No such file or directory`. Stage, unstage, dan discard per
+  hunk **gagal tanpa berkata apa-apa** pada berkas bernama é, ñ, atau huruf
+  non-Latin
+- Setiap perintah `diff` dan `show` kini dijalankan dengan `core.quotePath`
+  dimatikan lewat satu helper, jadi jalur beraksen datang apa adanya. Perintah
+  ber-`-z` tidak disentuh: format itu memang tidak pernah mengutip, dan itulah
+  sebabnya stage seluruh berkas selama ini bekerja sementara stage satu
+  hunk-nya tidak
+- Parser tetap mengerti bentuk terkutip, karena flag saja tidak cukup — nama
+  yang memuat tanda kutip atau backslash di-escape apa pun setelannya, dan diff
+  yang ditempel dari tempat lain tidak lewat flag kita. Escape oktal itu byte
+  UTF-8 dan harus didekode bersama; `TextDecoder` tidak bisa dipakai karena
+  berkas ini juga dijalankan di konteks `vm` telanjang oleh uji, jadi byte-nya
+  diserahkan ke `decodeURIComponent` sebagai escape persen
+- **Nama dikembalikan ke git persis seperti git menulisnya** — tanda kutip,
+  escape, dan awalan `a/ b/` utuh. Mendekodenya lalu menulis hasilnya apa adanya
+  terlihat lebih rapi dan salah: `git apply` membaca baris `---` dan `+++` hanya
+  sampai karakter tab, jadi `ada<TAB>tab.txt` yang ditulis mentah menjawab
+  `error: ada: does not exist in index`. Efek sampingnya bagus — nama yang salah
+  didekode hanya merugikan labelnya, tidak pernah menggagalkan stage
+
+**Spasi yang tidak bisa dilihat**
+- Baris yang mendapat spasi di ujung, atau yang indentasinya berganti dari spasi
+  ke tab, dulu tergambar identik dengan baris yang digantikannya
+- Spasi ujung dan karakter tab kini diberi latar, pada baris tambah dan hapus
+  saja. Baris konteks dibiarkan: tab di sana bentuk berkasnya, bukan bentuk
+  suntingannya
+- **Latar belaka, tidak ada glif pengganti dan tidak ada yang disisipkan.** Panel
+  memotong jendelanya dalam piksel dan model tingginya dibangun dari salinan
+  yang dirender tanpa markup ini; penanda yang memakan ruang akan mematikan
+  virtualisasi untuk seluruh diff. Uji menjaga ini sebagai aturan CSS —
+  `padding`, `content`, `::after`, dan selektor turunan semuanya ditolak
+- Deret di ujung bisa jatuh **di dalam** span penyorot sintaks, bukan
+  sesudahnya. Pola yang berjangkar di akhir string melihat `</span>` lalu diam
+  saja, jadi penandaannya berjalan mundur melewati potongan teks dan melompati
+  tag. Aman karena semua yang dicat sudah lewat `esc`: satu-satunya `<` yang
+  tersisa membuka span kita sendiri
+- Diukur pada 24.000 baris dengan tab dan spasi ujung di setiap baris berubah:
+  render berjendela 0,90 → 1,10 ms
 
 **Commit merge**
 - `git diff-tree <merge>` tanpa keterangan tambahan **tidak mengeluarkan apa
@@ -1773,6 +1821,110 @@ menulis dua kunci ini; kunci lain ditolak.
 | `Ctrl+Enter` | Commit (saat kursor di kotak pesan) |
 
 ---
+
+**Audit jalur panas: pekerjaan benar yang diulang tanpa perlu**
+- Satu audit menyeluruh atas proses utama, renderer, modul logika murni, dan
+  paketnya. Hampir tidak ada jalur yang lambat — yang ada adalah pekerjaan yang
+  benar dan dijalankan berulang kali tanpa alasan. Semuanya diukur sebelum dan
+  sesudah, dan setiap perubahan dijaga oleh uji; hitungan uji 407 menjadi 490
+- **Stage, unstage, discard, dan ignore hanya membaca ulang status.** Dulu tiap
+  aksi memanggil `refresh()` penuh: enam proses git (status, log, refs, daftar
+  stash, config flow, state), lalu cabang pemuat commit dihitung ulang dan
+  sidebar serta riwayat digambar ulang — untuk memindahkan satu berkas antara
+  dua daftar. `refreshStatus()` membaca status dan state, lalu hanya menggambar
+  ulang yang membacanya: bilah operasi, toolbar, baris pending, panel berkas
+- **Tata letak graf disimpan bersama bahan pembuatnya** — larik commit, ada
+  tidaknya baris pending dan apa yang digantunginya, gaya graf. Dulu setiap
+  `renderHistory()` menata ulang, dan karena cache baris dikunci pada objek
+  layout, mengganti format tanggal atau badge membuang setiap baris di layar
+- **Kotak cari commit** menunggu jeda ketik 120 ms, mencocokkan pada indeks
+  huruf kecil yang dibuat sekali saat commit tiba (5.000 commit × 6 kueri:
+  21,6 ms menjadi 3,6 ms), dan memanggil `renderRows()` bukan `renderHistory()`
+  — pencarian tidak mengubah satu pun tautan induk. Dulu tiap huruf menata
+  ulang graf, membuang cache baris, dan membuka daftar berkas hit pertama:
+  satu proses git per huruf. Enter menjalankan pencarian yang masih menunggu
+- **Cabang pemuat commit dalam satu sapuan bitset**, bukan satu DFS per cabang
+  dengan `includes` di dalamnya. 5.000 commit × 10 cabang: 100–190 ms menjadi
+  20–60 ms dingin, 2–5 ms hangat; 20.000 × 20: 400–600 ms menjadi 30–45 ms.
+  Baris yang induknya di atasnya (jam yang salah) ditangkap dengan sapuan
+  ulang selama masih ada yang berubah
+- **"Load more" meminta halaman berikutnya** lewat `--skip`, bukan mengulang
+  refresh penuh dengan batas lebih besar — dulu menambah 400 baris berarti
+  membaca, mengirim, dan menata ulang semua yang sudah di layar. Hitungannya
+  dalam satuan git, termasuk commit index dan untracked yang disembunyikan di
+  balik tiap stash: halaman yang dimulai dari hitungan yang terlihat mengulang
+  baris, dan refresh yang meminta tepat sebanyak itu pulang kekurangan tiga
+  baris pada repo demo (171 lalu 168)
+- **Compare with HEAD digambar lewat jendela** yang sama dengan berkas. Dulu
+  ia satu-satunya jalur yang menggambar diff utuh — padahal perbandingan dua
+  cabang justru diff yang paling panjang. `compareRef` kini dibersihkan saat
+  berkas dibuka; dulu menekan wrap sesudah compare melempar panel kembali ke
+  perbandingan cabang
+- **Tiga kotak saring** — berkas, ref di sidebar, pencari repositori — menunggu
+  jeda ketik, dan saring berkas tidak lagi memuat ulang diff berkas yang
+  terbuka (satu proses git per huruf, untuk saringan yang tak bisa mengubah
+  isi berkas itu). `applyHunk` tidak lagi mengambil diff dua kali; "Discard
+  all" dua panggilan batch, bukan satu per berkas. Auto-fetch tidak berjalan
+  selagi jendela tersembunyi; satu kali saat tampak lagi
+- **Proses utama.** `stashShape` satu spawn `git stash list --format=%H %P`,
+  dulu satu ditambah dua `rev-parse` per stash, berurutan, pada setiap refresh.
+  `app:log` disaring di main dengan `since` — dulu hingga 400 entri × 24 KB
+  keluaran menyeberangi IPC setelah tiap aksi untuk diambil dua-tiga barisnya.
+  Identitas git dua spawn `--get-regexp` dan yang global disimpan, dulu empat
+  berurutan tiap pindah tab. Induk commit dikirim dari renderer, jadi
+  `rev-list` tidak di-spawn per klik berkas; karena baris stash dipangkas ke
+  satu induk demi graf, main menyimpan induk lengkapnya dari daftar stash agar
+  stash tetap terbaca sebagai merge. Menu tidak dibangun ulang bila keadaannya
+  tidak berubah, dan recents dibaca sekali sampai ditulis. Editor diingat per
+  repo; `package.json` dibaca sekali. Pemindaian folder async, delapan folder
+  sekaligus — yang sinkron menahan proses utama 290–505 ms pada 4.400 folder.
+  WIP dijawab untuk semua repo, enam sekaligus; dulu 60 pertama dan sisanya
+  dibuang diam-diam. Unduhan pembaruan dialirkan ke berkas `.part` dengan
+  SHA-512 dihitung sambil lewat dan diganti nama hanya setelah cocok: RSS
+  +102 MB menjadi +12 MB pada 100 MB, satu percobaan ulang bila koneksi putus
+- **Pagar kecil**: `setWindowOpenHandler` dan `will-navigate` (CSP tidak
+  membatasi navigasi); `repo:reset` memeriksa modenya seperti tetangganya;
+  nama ref tidak boleh diawali `-`; `shell:openPath` hanya membuka folder
+- **Tiga bug yang ketemu sambil jalan**: `parseLog` memotong pesan commit yang
+  memuat byte 0x1F (git tidak membuangnya) — kini dibaca dengan `indexOf` dan
+  badannya diambil utuh; `/dev/null` ditulis harfiah pada diff berkas
+  untracked di dalam stash, rusak di Windows; menu tab menumpuk listener bila
+  dibuka dua kali lewat menu
+- **graph.js**: setiap baris layout membawa salinan larik jalur (`active`) yang
+  tidak dibaca siapa pun — kecuali satu uji yang ternyata selalu lulus karena
+  `&& false`. Dibuang: 100.000 commit / 8 jalur, layout 262 ms menjadi 72 ms,
+  heap 38,4 MB menjadi 26,9 MB. Uji itu diganti invarian nyata ditambah tabel
+  golden untuk topologi yang rawan: octopus, criss-cross, dua akar, induk
+  ganda, induk di atas anak, stash satu induk
+- **highlight.js**: baris di atas 500 karakter keluar polos — pengaman lama
+  membatasi iterasi, bukan panjang. Baris minified 2.700 karakter: 3,59 ms
+  menjadi 0,11 ms; jendela 60 baris seperti itu 215 ms menjadi 6,8 ms per
+  paint. `esc` satu lintasan dengan jalan pintas untuk token tanpa apa pun
+  yang perlu di-escape. Ke-17 tabel kini diuji karakter demi karakter
+- **diff.js**: pasangan baris split disimpan di WeakMap di samping hunk-nya
+  (hunk 50.000 baris: `renderSplit` 15,3 ms menjadi 0,59 ms untuk 60 baris);
+  hunk di luar jendela dilipat jadi satu pengganjal per deretan (200 berkas ×
+  50 hunk: 9.994 pengganjal menjadi 200, `render` 3,57 ms menjadi 0,86 ms)
+  dengan jumlah tinggi yang sama persis; `markWs` memutuskan dari karakter
+  terakhir sebelum menjalankan polanya
+- **Paket**: `electronLanguages: ["en-US"]` membuang 41 MB `.pak` locale yang
+  tidak pernah dipakai; ikon tidak lagi ikut ke dalam asar (yang di sana
+  memang tidak bisa dibaca); CI di GitHub Actions menjalankan `npm test`;
+  `engines` Node 20; keluaran flatpak-builder masuk `.gitignore` (dulu hanya
+  terabaikan berkat `.gitignore` buatan alatnya sendiri)
+- **Yang sengaja tidak disentuh**, dengan alasannya: Electron 37 (Wayland, di
+  atas); electron-builder 26 (perlu membandingkan ulang `after-install.sh`);
+  pemindaian garis panjang di graph.js dan pencarian jalur dengan `indexOf`
+  (varian Map terukur lebih lambat di bawah 20.000 baris); salinan `raw` di
+  diff.js; penulisan ulang tokenizer menjadi satu alternasi
+- **Menjalankan Electron dari terminal VS Codium** untuk uji asap: terminal itu
+  menyetel `ELECTRON_RUN_AS_NODE=1`, yang membuat `require('electron')`
+  mengembalikan path biner alih-alih API. Cabut dulu, lalu di dalam sandbox
+  flatpak tanpa X, `--ozone-platform=wayland --disable-gpu` membuka jendela.
+  Skrip pemandunya harus berada di dalam folder repo — modul `electron`
+  bawaan hanya diberikan ke berkas di bawah folder aplikasi — dan
+  `XDG_CONFIG_HOME` diarahkan ke folder sementara supaya recents dan tab
+  sesi asli tidak tersentuh
 
 ## Batasan yang perlu diketahui
 

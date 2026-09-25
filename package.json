@@ -1,13 +1,16 @@
 {
   "name": "gitbraid",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Read your Git history as coloured lanes",
   "main": "main.js",
   "author": "Heri Anggara <herianggara2409@gmail.com>",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --linux AppImage deb",
+    "dist": "electron-builder --linux",
     "test": "node test/parsers.test.js",
     "dist:win": "electron-builder --win nsis portable",
     "dist:mac": "electron-builder --mac dmg zip"
@@ -19,11 +22,13 @@
   "build": {
     "appId": "io.github.heri_anggara.GitBraid",
     "productName": "GitBraid",
+    "electronLanguages": [
+      "en-US"
+    ],
     "files": [
       "main.js",
       "preload.js",
       "src/**/*",
-      "build/icons/**/*",
       "package.json",
       "!test/**/*"
     ],

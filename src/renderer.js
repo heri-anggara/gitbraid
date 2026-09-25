@@ -6,6 +6,27 @@ const $ = (id) => document.getElementById(id);
 const el = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => window.Diff.esc(String(s ?? ''));
 
+/* A filter box redraws what it filters, and a redraw per keystroke is paid
+   for by the fingers still typing. This waits for them to pause. `now` runs
+   what is waiting at once — Enter should act on what was typed, not on what
+   was drawn — and `cancel` drops it. */
+function debounced(fn, ms = 120) {
+  let timer = null;
+  const run = (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { timer = null; fn(...args); }, ms);
+  };
+  run.now = (...args) => {
+    if (timer === null) return false;
+    clearTimeout(timer);
+    timer = null;
+    fn(...args);
+    return true;
+  };
+  run.cancel = () => { clearTimeout(timer); timer = null; };
+  return run;
+}
+
 /* Anything here has to change how the app behaves. Where git already owns a
    setting — the default branch for new repositories, the editor to open files
    in — GitBraid writes git's own config key so the command line agrees with it,
@@ -61,6 +82,8 @@ function newTab(repo) {
     remoteRefNames: new Set(),  // "origin/main", … — to tell remotes from locals
     stashes: [],
     limit: prefs.commitLimit,
+    atEnd: false,        // the last page came back short: nothing older to load
+    rawLoaded: 0,        // rows asked of git so far, counting the stash parts it hides
     selection: null,     // {kind:'wip'} | {kind:'commit', hash}
     file: null,          // {path, staged, untracked}
     diffFiles: [],
@@ -68,9 +91,11 @@ function newTab(repo) {
     flow: null,          // gitflow.* config, read with the rest of the repo
     op: null,            // an interrupted merge/rebase/cherry-pick/revert
     mergeSide: 'in',     // which parent a merge commit's file list compares against
+    compareRef: null,    // the ref the middle pane is comparing HEAD with, if any
     containedBy: new Map(),   // hash -> nama cabang yang memuatnya
     find: { query: '', hits: [], hitSet: new Set(), index: 0 },
     layout: null,        // graph lanes for every loaded commit, rebuilt with them
+    layoutKey: null,     // what `layout` was made from, so it is reused until that changes
     rowIndex: new Map(),      // hash -> row number, for scrolling to a commit
     rowsShown: { first: 0, last: 0 },
     // Carried across tab switches so nothing typed is lost.
@@ -840,6 +865,12 @@ async function newEmptyTab() {
    re-reads it from git anyway. Holding it would be pure cost. Commits and refs
    stay — a few hundred kB, and keeping them means a failed refresh still shows
    the history you had. */
+/* Tab ids, the one most recently in front first. A parked tab keeps its commits
+   so switching back is instant, but its layout, row index and containment map
+   are rebuilt on activation whenever the memo misses, so only the two tabs
+   most recently in front keep them; the rest are as large as the history. */
+let tabOrder = [];
+
 function parkTab() {
   if (!tabs.some((t) => t.id === activeId)) return;
   state.commitMsg = $('commit-msg').value;
@@ -848,6 +879,14 @@ function parkTab() {
   state.scrollTop = $('history-scroll').scrollTop;
   state.diffFiles = [];
   state.diffContext = null;
+  const keep = new Set(tabOrder.slice(0, 2));
+  for (const t of tabs) {
+    if (keep.has(t.id) || t.id === activeId) continue;
+    t.layout = null;
+    t.layoutKey = null;
+    t.rowIndex = new Map();
+    t.containedBy = new Map();
+  }
 }
 
 /* ── the commit draft, kept across restarts ──
@@ -961,6 +1000,7 @@ async function activateTab(id) {
   if ($('app').classList.contains('prefs-open')) closePrefs();
   if ($('app').classList.contains('managing')) closeRepoManager();
 
+  tabOrder = [id, ...tabOrder.filter((x) => x !== id)];
   if (activeId && activeId !== id) parkTab();
 
   activeId = id;
@@ -1003,6 +1043,7 @@ async function closeTab(id = activeId) {
   const i = tabs.findIndex((t) => t.id === id);
   if (i < 0) return;
   const [gone] = tabs.splice(i, 1);
+  tabOrder = tabOrder.filter((x) => x !== id);
 
   if (gone.id !== activeId) { renderTabs(); syncMenu(); saveTabs(); return; }
   activeId = null;                       // nothing left to capture UI into
@@ -1022,6 +1063,12 @@ function stepTab(delta) {
 async function showWelcome() {
   activeId = null;
   state = newTab(null);
+  /* These live outside the tab, so the last repository's rows and file list
+     stayed in memory behind the start page. */
+  rowPool.layout = null;
+  rowPool.rows.clear();
+  $('commit-list').textContent = '';
+  commitFiles = [];
   renderShell();
   await loadRecents();
   setStatus('Ready');
@@ -1064,7 +1111,7 @@ async function refresh({ keepSelection = true } = {}) {
   ]);
   if (status) tab.status = status;
   tab.op = op || null;            // a merge or rebase git stopped part-way
-  if (commits) tab.commits = commits;
+  if (commits) { tab.commits = indexForFind(commits); tab.atEnd = false; tab.rawLoaded = tab.limit; }
   if (refs) tab.refs = refs;
   if (stashes) tab.stashes = stashes;
   if (flow) tab.flow = flow;
@@ -1073,10 +1120,21 @@ async function refresh({ keepSelection = true } = {}) {
   if (tab !== state) return;      // the reader moved on: keep the data, draw nothing
 
   renderOpState();
-  state.containedBy = computeContainment();
+  state.containedBy = computeContainment(state.commits, state.refs.branches);
   // Resolve avatar URLs up front; renderHistory reads the cache synchronously.
   await ensureAvatars(state.commits);
+  settleSelection(keepSelection);
 
+  renderToolbar();
+  renderSidebar();
+  renderHistory();
+  await renderDetail();
+}
+
+/* Where the selection lands once a fresh status is in: on the working tree when
+   nothing was chosen and there is work in it, and off a working tree that has
+   just gone clean. */
+function settleSelection(keepSelection) {
   const dirty = hasChanges();
   if (!keepSelection || !state.selection) {
     state.selection = dirty
@@ -1086,10 +1144,33 @@ async function refresh({ keepSelection = true } = {}) {
   if (state.selection?.kind === 'wip' && !dirty && state.commits[0]) {
     state.selection = { kind: 'commit', hash: state.commits[0].hash };
   }
+}
 
+/* Staging, unstaging, discarding and ignoring change what the working tree
+   holds and nothing else: no commit is made, no ref moves, no stash comes or
+   goes. A full refresh after each of them re-read the log and every ref, laid
+   the graph out again and walked every branch for the ghost badges — six git
+   processes and the whole history redrawn to move one file between two lists.
+   This asks only for the status and for any operation git stopped part-way,
+   and redraws only what reads them: the op bar, the toolbar counts, the
+   pending row, and the panel of files. */
+async function refreshStatus() {
+  if (!state.repo) return;
+  const tab = state;
+  const repo = tab.repo.path;
+  const [status, op] = await Promise.all([
+    call('repo:status', repo),
+    call('repo:state', repo),
+  ]);
+  if (status) tab.status = status;
+  tab.op = op || null;
+
+  if (tab !== state) return;      // the reader moved on: keep the data, draw nothing
+
+  renderOpState();
+  settleSelection(true);
   renderToolbar();
-  renderSidebar();
-  renderHistory();
+  renderHistory();                // the pending row; the layout stands unless dirty flipped
   await renderDetail();
 }
 
@@ -1535,21 +1616,64 @@ function branchAt(hash) {
   return hit ? hit.name : '';
 }
 
-function computeContainment() {
-  const parents = new Map(state.commits.map((c) => [c.hash, c.parents || []]));
+/* One pass over the rows rather than one walk per branch. Each row carries a
+   bit per branch; the log already lists children before their parents, so
+   walking it top to bottom and OR-ing every row's bits into its parents'
+   settles the whole history in a single sweep. The walk it replaced took
+   100–190 ms at 5,000 commits × 10 branches and 400–600 ms at 20,000 × 20;
+   this takes 20–60 ms and 30–45 ms cold on the same histories, a few ms once
+   warm. A row whose parent sits above it — a clock set wrong — is caught by
+   sweeping again while such a row still changes anything, which never happens
+   under --date-order. */
+function computeContainment(commits, branches) {
   const out = new Map();
-  for (const b of state.refs.branches) {
-    const stack = [b.oid];
-    const seen = new Set();
-    while (stack.length) {
-      const h = stack.pop();
-      if (!h || seen.has(h)) continue;
-      seen.add(h);
-      const list = out.get(h);
-      if (list) { if (!list.includes(b.name)) list.push(b.name); }
-      else out.set(h, [b.name]);
-      for (const p of parents.get(h) || []) stack.push(p);
+  if (!branches.length) return out;
+  const index = new Map();
+  commits.forEach((c, i) => index.set(c.hash, i));
+  // A tip that is further back than what was loaded still gets its own entry,
+  // as it did when the walk started from it and found nothing to follow.
+  const extra = [];
+  for (const b of branches) {
+    if (!index.has(b.oid)) { index.set(b.oid, commits.length + extra.length); extra.push(b.oid); }
+  }
+  const words = (branches.length + 31) >>> 5;
+  const bits = new Uint32Array((commits.length + extra.length) * words);
+  branches.forEach((b, bi) => {
+    bits[index.get(b.oid) * words + (bi >>> 5)] |= 1 << (bi & 31);
+  });
+
+  const sweep = () => {
+    let moved = false;
+    for (let i = 0; i < commits.length; i++) {
+      const at = i * words;
+      let any = 0;
+      for (let w = 0; w < words; w++) any |= bits[at + w];
+      if (!any) continue;
+      for (const p of commits[i].parents || []) {
+        const pi = index.get(p);
+        if (pi === undefined) continue;
+        const to = pi * words;
+        for (let w = 0; w < words; w++) {
+          const was = bits[to + w];
+          const now = was | bits[at + w];
+          if (now !== was) { bits[to + w] = now; if (pi < i) moved = true; }
+        }
+      }
     }
+    return moved;
+  };
+  // Bounded: each pass only adds bits, and one more than is ever needed here
+  // is still cheaper than the walk this replaced.
+  for (let pass = 0; pass < 4 && sweep(); pass++) { /* skewed dates */ }
+
+  const rows = commits.length + extra.length;
+  for (let i = 0; i < rows; i++) {
+    const at = i * words;
+    const names = [];
+    for (let bi = 0; bi < branches.length; bi++) {
+      if (bits[at + (bi >>> 5)] & (1 << (bi & 31))) names.push(branches[bi].name);
+    }
+    if (names.length) out.set(i < commits.length ? commits[i].hash : extra[i - commits.length], names);
   }
   return out;
 }
@@ -1683,12 +1807,18 @@ function highlight(text, query) {
   }
 }
 
+/* What a search reads, lowered once when the commits arrive rather than four
+   fields per commit per keystroke. The fields are joined with newlines, which
+   a one-line box cannot type, so nothing matches across a seam. */
+function indexForFind(commits) {
+  for (const c of commits) {
+    c.hay = `${c.subject}\n${c.body || ''}\n${c.author}\n${c.email || ''}`.toLowerCase();
+  }
+  return commits;
+}
+
 const commitMatches = (c, q) =>
-  c.subject.toLowerCase().includes(q) ||
-  (c.body || '').toLowerCase().includes(q) ||
-  c.author.toLowerCase().includes(q) ||
-  (c.email || '').toLowerCase().includes(q) ||
-  c.hash.startsWith(q);
+  (c.hay ?? indexForFind([c])[0].hay).includes(q) || c.hash.startsWith(q);
 
 function runFind(query) {
   const f = state.find;
@@ -1697,7 +1827,9 @@ function runFind(query) {
   f.hits = q ? state.commits.filter((c) => commitMatches(c, q)).map((c) => c.hash) : [];
   f.hitSet = new Set(f.hits);
   f.index = 0;
-  renderHistory();
+  // A search changes no parent link, so the layout stands; only the rows whose
+  // markup changed are rebuilt.
+  renderRows();
   renderFindCount();
   if (f.hits.length) gotoMatch(0);
 }
@@ -1768,6 +1900,7 @@ function openFind() {
 /* Esc empties the search instead of hiding the field — with nothing to hide,
    the useful thing left to undo is the filter itself. */
 function closeFind() {
+  queueFind.cancel();
   $('find-input').value = '';
   runFind('');
   $('find-input').blur();
@@ -1804,27 +1937,37 @@ function scrollToCommit(hash) {
 
 function renderHistory() {
   const dirty = hasChanges();
-  const rowsData = dirty
-    ? [{
-        hash: 'WORKDIR',
-        parents: state.status?.oid ? [state.status.oid] : [],
-        pending: true,
-        subject: 'Uncommitted changes',
-        author: '',
-        refs: [],
-        commitDate: Date.now(),
-      }, ...state.commits]
-    : state.commits;
+  /* The layout follows from the commits, whether a pending row sits above
+     them and what it hangs from, and the lane metrics of the style — nothing
+     else. It used to be laid out again on every call, and since the row cache
+     is keyed on the layout, flipping a date format or a badge threw away
+     every row on screen along with it. Held on the tab, with what it was made
+     from, so scrolling and cosmetic toggles re-slice the same layout. */
+  const key = { commits: state.commits, dirty, oid: state.status?.oid || '', style: prefs.uiStyle };
+  const was = state.layoutKey;
+  const fresh = !state.layout || !was || was.commits !== key.commits || was.dirty !== key.dirty
+    || was.oid !== key.oid || was.style !== key.style;
+  if (fresh) {
+    const rowsData = dirty
+      ? [{
+          hash: 'WORKDIR',
+          parents: state.status?.oid ? [state.status.oid] : [],
+          pending: true,
+          subject: 'Uncommitted changes',
+          author: '',
+          refs: [],
+          commitDate: Date.now(),
+        }, ...state.commits]
+      : state.commits;
+    state.layout = window.Graph.layout(rowsData);
+    state.rowIndex = new Map(rowsData.map((c, i) => [c.hash, i]));
+    state.layoutKey = key;
+  }
 
-  const layout = window.Graph.layout(rowsData);
-  // Held on the tab so scrolling can re-slice the view without laying the
-  // graph out again — the layout only changes when the commits do.
-  state.layout = layout;
-  state.rowIndex = new Map(rowsData.map((c, i) => [c.hash, i]));
-
-  document.documentElement.style.setProperty('--graph-w', layout.width + 'px');
+  document.documentElement.style.setProperty('--graph-w', state.layout.width + 'px');
   renderRows();
-  $('btn-more').hidden = state.commits.length < state.limit;
+  // Fewer than asked for, whether by a full read or by the last page: the end.
+  $('btn-more').hidden = state.atEnd || state.commits.length < state.limit;
 }
 
 /* Builds the markup for the visible band only. A ten-thousand-commit history
@@ -2088,7 +2231,9 @@ function wipRows(list, kind) {
   return { html, count: shown.length };
 }
 
-function renderWip() {
+/* `redrawOpenFile` is off when the caller knows the file on screen cannot have
+   changed — a filter hides rows, it does not touch the disk. */
+function renderWip({ redrawOpenFile = true } = {}) {
   const s = state.status;
 
   /* Conflicted files are pulled out of the working list into their own group:
@@ -2126,7 +2271,7 @@ function renderWip() {
   renderCommitBox();
 
   // A file already open stays open, and follows what just changed on disk.
-  if (state.file && state.file.kind !== 'commit') showFileDiff();
+  if (redrawOpenFile && state.file && state.file.kind !== 'commit') showFileDiff();
 }
 
 /* The button says what it will do, and the counter warns before a summary grows
@@ -2303,15 +2448,17 @@ async function renderCommitPanel(hash) {
      counts belong on the buttons: a side that turns out to be empty should say
      so before you click it, not after. */
   const side = isMergeCommit ? (state.mergeSide || 'in') : 'in';
+  // The parents go along: main otherwise spawns git rev-list to learn whether
+  // this is a merge, on every click, when the log already said.
   const sides = isMergeCommit
     ? await Promise.all(MERGE_SIDES.map((m) =>
-        call('repo:commitFiles', state.repo.path, hash, m.key).then((r) => r || [])))
+        call('repo:commitFiles', state.repo.path, hash, m.key, { parents }).then((r) => r || [])))
     : null;
   renderMergeBar(isMergeCommit ? sides : null, side, parents);
 
   const files = sides
     ? sides[MERGE_SIDES.findIndex((m) => m.key === side)]
-    : (await call('repo:commitFiles', state.repo.path, hash)) || [];
+    : (await call('repo:commitFiles', state.repo.path, hash, 'in', { parents })) || [];
   commitFiles = files;
   renderCommitFiles();
 
@@ -3089,6 +3236,9 @@ function closeFile() {
 async function showFileDiff() {
   const f = state.file;
   if (!f) return closeFile();
+  // A file on screen ends the comparison; left set, the next toggle of wrap
+  // or whitespace put the branch comparison back in place of the file.
+  state.compareRef = null;
 
   const raw = f.kind === 'conflict'
     ? await call('repo:conflictFile', repoPath(), f.path)
@@ -3098,6 +3248,9 @@ async function showFileDiff() {
         ignoreWhitespace: viewer.ignoreWhitespace,
         context: viewer.allLines ? 100000 : 3,
         side: state.mergeSide || 'in',
+        // From the log already read; a commit the log does not hold (one
+        // reached through file history) leaves main to ask git as before.
+        parents: state.commits.find((c) => c.hash === state.selection?.hash)?.parents,
       })
     : await call('repo:diffFile', repoPath(), {
         file: f.path, staged: f.kind === 'staged', untracked: f.untracked,
@@ -3209,12 +3362,12 @@ const repoPath = () => state.repo.path;
 async function stage(paths) {
   await call('repo:stage', repoPath(), paths);
   clearPicked();
-  await refresh();
+  await refreshStatus();
 }
 async function unstage(paths) {
   await call('repo:unstage', repoPath(), paths);
   clearPicked();
-  await refresh();
+  await refreshStatus();
 }
 async function discard(path, untracked) {
   const ok = await confirmAction(
@@ -3225,7 +3378,14 @@ async function discard(path, untracked) {
   if (!ok) return;
   await call('repo:discard', repoPath(), [path], untracked);
   state.file = null;
-  await refresh();
+  await refreshStatus();
+}
+
+/* git takes the whole list at once, so two calls cover any number of files:
+   the tracked ones go back to the index, the untracked ones are deleted. */
+async function discardLists(kept, gone) {
+  if (kept.length) await call('repo:discard', repoPath(), kept, false);
+  if (gone.length) await call('repo:discard', repoPath(), gone, true);
 }
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -3248,11 +3408,10 @@ async function discardMany(paths) {
     'Discard'
   );
   if (!ok) return;
-  if (kept.length) await call('repo:discard', repoPath(), kept, false);
-  if (gone.length) await call('repo:discard', repoPath(), gone, true);
+  await discardLists(kept, gone);
   if (paths.includes(state.file?.path)) { state.file = null; closeFile(); }
   clearPicked();
-  await refresh();
+  await refreshStatus();
   setStatus(`Discarded ${plural(paths.length, 'file')}`, 'ok');
 }
 
@@ -3315,8 +3474,12 @@ async function applyHunk(fileIndex, hunkIndex, action) {
   const patch = window.Diff.hunkPatch(file, hunk);
   const res = await call('repo:applyPatch', repoPath(), patch, action);
   if (res === null) return;
-  await refresh();
-  await showFileDiff();
+  /* renderWip() already redraws the open file from the new status, so asking
+     for the diff again here fetched it twice. When the last hunk went and the
+     tree came up clean, the selection has moved to a commit: the file it was
+     showing no longer has a diff, so it is closed rather than left behind. */
+  await refreshStatus();
+  if (state.file && state.selection?.kind !== 'wip') closeFile();
   setStatus(`Hunk ${action === 'stage' ? 'staged' : action === 'unstage' ? 'unstaged' : 'discarded'}`, 'ok');
 }
 
@@ -3900,8 +4063,11 @@ function renderTabMenu(query = '') {
 
 function openTabMenu() {
   if (!tabs.length) return;
-  const btn = $('btn-tabsearch').getBoundingClientRect();
   const menu = $('tabmenu');
+  // Asked for again from the menu while already open, it added a second
+  // dismiss listener and lost its handle on the first.
+  if (!menu.hidden) { $('tabmenu-input').focus(); return; }
+  const btn = $('btn-tabsearch').getBoundingClientRect();
   menu.hidden = false;
   menu.style.top = `${btn.bottom + 4}px`;
   menu.style.right = `${window.innerWidth - btn.right}px`;
@@ -4207,10 +4373,19 @@ $('btn-profile').addEventListener('click', async () => {
 
 /* ═════ find bar ════════════════════════════════════════════════ */
 
-$('find-input').addEventListener('input', (e) => runFind(e.target.value));
+/* Each keystroke used to filter every commit, redraw the rows and open the
+   first hit's file list — a git process per letter typed. The search now waits
+   for the typing to pause; Enter and Escape act at once. */
+const queueFind = debounced((value) => runFind(value));
+$('find-input').addEventListener('input', (e) => queueFind(e.target.value));
 $('find-input').addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
-  else if (e.key === 'Enter') { e.preventDefault(); gotoMatch(state.find.index + (e.shiftKey ? -1 : 1)); }
+  else if (e.key === 'Enter') {
+    e.preventDefault();
+    // A search still waiting runs now and lands on its first hit; the next
+    // Enter moves on from there.
+    if (!queueFind.now(e.target.value)) gotoMatch(state.find.index + (e.shiftKey ? -1 : 1));
+  }
 });
 $('find-prev').addEventListener('click', () => gotoMatch(state.find.index - 1));
 $('find-next').addEventListener('click', () => gotoMatch(state.find.index + 1));
@@ -4378,7 +4553,9 @@ $('rm-scan').addEventListener('click', async () => {
     : 'No repositories found in that folder', 'ok');
 });
 
-$('rm-search').addEventListener('input', (e) => { rm.query = e.target.value; renderRepoManager(); });
+// The whole manager is one innerHTML, so it is drawn once the typing pauses.
+const drawRepoManager = debounced(() => renderRepoManager());
+$('rm-search').addEventListener('input', (e) => { rm.query = e.target.value; drawRepoManager(); });
 
 $('rm-wip').addEventListener('change', async (e) => {
   rm.wip = e.target.checked;
@@ -4736,13 +4913,25 @@ function scheduleAutoFetch() {
   autoFetchTimer = setInterval(autoFetchTick, mins * 60_000);
 }
 
+/* A window nobody can see fetches for nobody, and every tick behind it also
+   re-read and redrew the whole repository. The tick is noted instead and
+   runs once when the window is next shown. */
+let autoFetchMissed = false;
+
 async function autoFetchTick() {
+  if (document.visibilityState !== 'visible') { autoFetchMissed = true; return; }
   if (!state.repo || busy) return;
   const res = await call('repo:fetch', repoPath(), { prune: prefs.autoPrune });
   if (res === null) return;                  // a failed fetch already reported itself
   await refresh();
   setStatus('Auto-fetched', 'ok');
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !autoFetchMissed) return;
+  autoFetchMissed = false;
+  if (autoFetchTimer) autoFetchTick();
+});
 
 /* ── the pages ─────────────────────────────────────────────────── */
 
@@ -5549,7 +5738,10 @@ function paintGitOutput(title, blocks, failed, took) {
 
 /** Everything written since `since` that kept its output, oldest first. */
 async function outputSince(since) {
-  const rows = await call('app:log');
+  /* Main cuts the log at `since` itself now, rather than sending the whole
+     thing over IPC to be cut here. The comparison is kept as a guard for a
+     main that ignores the argument: it costs nothing on a list already cut. */
+  const rows = await call('app:log', { since });
   // Newest first from main. A refresh fires read-only commands right after an
   // action; none of them keeps output, so none of them can appear here.
   return (rows || [])
@@ -5981,8 +6173,29 @@ $('about-copy').addEventListener('click', async () => {
 
 /* ═════ release notes ═══════════════════════════════════════════ */
 
-function renderNotes() {
-  const list = window.Releases || [];
+/* Fifty-five kilobytes of release notes, read only when the panel opens. They
+   were the first script every start parsed, ahead of the app itself, for a
+   panel most sessions never see. The CSP admits a same-origin script added to
+   the page and refuses fetch(), so the file arrives the way index.html would
+   have brought it. */
+let releasesLoad = null;
+function loadReleases() {
+  if (window.Releases) return Promise.resolve(window.Releases);
+  if (!releasesLoad) {
+    releasesLoad = new Promise((resolve) => {
+      const s = document.createElement('script');
+      s.src = 'releases.js';
+      s.onload = () => resolve(window.Releases || []);
+      // Left unset so the next opening tries again rather than staying empty.
+      s.onerror = () => { releasesLoad = null; s.remove(); resolve([]); };
+      document.head.appendChild(s);
+    });
+  }
+  return releasesLoad;
+}
+
+async function renderNotes() {
+  const list = await loadReleases();
   $('nt-count').textContent = list.length
     ? `${list.length} release${list.length === 1 ? '' : 's'}`
     : '';
@@ -6046,7 +6259,9 @@ function unmountViewer() {
 
 async function openFileHistory(file) {
   // Whatever the middle pane was showing comes back when this panel closes.
-  if (!fhist.home) fhist.was = { file: state.file, selection: state.selection };
+  if (!fhist.home) {
+    fhist.was = { file: state.file, selection: state.selection, compareRef: state.compareRef };
+  }
   fhist.path = file;
   fhist.commits = [];
   fhist.names = {};
@@ -6129,17 +6344,18 @@ function closeFileHistory() {
   fhist.at = -1;
   $('fh-list').innerHTML = '';
   // Put back whatever the middle pane was showing before this opened.
-  const was = fhist.was || { file: null, selection: null };
+  const was = fhist.was || { file: null, selection: null, compareRef: null };
   fhist.was = null;
   state.file = was.file;
   state.selection = was.selection;
+  state.compareRef = was.compareRef || null;
   renderViewer();
 }
 
 $('fh-close').addEventListener('click', closeFileHistory);
 
-function openNotes() {
-  renderNotes();
+async function openNotes() {
+  await renderNotes();
   $('app').classList.add('reading-notes');
   $('notes').hidden = false;
   $('nt-body').scrollTop = 0;
@@ -6628,12 +6844,28 @@ async function showCompare() {
 
   $('fv-stage-tools').hidden = true;
   syncViewerToggles();
-  const opts = { path: '', highlight: false };   // a comparison spans many files
-  diffView = null;
-  $('fv-body').innerHTML = state.diffFiles.length
-    ? (viewer.split ? window.Diff.renderSplit(state.diffFiles, [], opts)
-                    : window.Diff.render(state.diffFiles, [], opts))
-    : `<div class="empty-note">${esc(ref)} has nothing that HEAD does not already have.</div>`;
+  /* Drawn through the same window as a file. It was rendered whole, and a
+     comparison spanning many files is exactly the diff too long for that. */
+  if (!state.diffFiles.length) {
+    diffView = null;
+    $('fv-body').innerHTML =
+      `<div class="empty-note">${esc(ref)} has nothing that HEAD does not already have.</div>`;
+  } else {
+    diffView = {
+      actions: [],
+      opts: { path: '', highlight: false },   // a comparison spans many files
+      rows: diffRowTotal(),
+      shown: null,
+      heights: null,
+      heightsAt: '',
+      rowSum: null,
+      wrapOff: false,
+      layout: null,
+      layoutKey: '',
+    };
+    $('fv-body').scrollTop = 0;
+    paintDiff();
+  }
   indexBlocks();
   setStatus(`Comparing HEAD with ${ref}`, 'ok');
 }
@@ -6898,9 +7130,33 @@ $('history-scroll').addEventListener('scroll', () => {
   });
 }, { passive: true });
 
+/* The next page only. Raising the limit and refreshing re-read every commit
+   already on screen — and the status, refs and stashes with them — to add
+   four hundred rows at the bottom. */
 $('btn-more').addEventListener('click', async () => {
-  state.limit += prefs.commitLimit;
-  await refresh();
+  const tab = state;
+  const page = prefs.commitLimit;
+  /* Counted the way git counts: --skip and --max-count see every commit in
+     the walk, while the list on screen is short of the index and untracked
+     commits main hides behind each stash. Paging from the visible count would
+     re-read the last few rows of the previous page, and a later full refresh
+     asking for exactly the visible count would come back a few rows short. */
+  const skip = tab.rawLoaded || tab.commits.length;
+  const more = await call('repo:log', tab.repo.path, { limit: page, all: true, skip });
+  if (!more) return;
+  // A commit that landed between the two pages shifts everything below it
+  // down by one, so the page can begin with a commit already here.
+  const known = tab.rowIndex?.size ? tab.rowIndex : new Set(tab.commits.map((c) => c.hash));
+  const fresh = indexForFind(more.filter((c) => !known.has(c.hash)));
+  tab.commits = tab.commits.concat(fresh);   // a new array, so the layout memo misses
+  tab.rawLoaded = skip + page;
+  tab.limit = tab.rawLoaded;                  // a later full refresh reloads this much
+  tab.atEnd = more.length < page;
+
+  if (tab !== state) return;      // the reader moved on: keep the data, draw nothing
+  state.containedBy = computeContainment(state.commits, state.refs.branches);
+  await ensureAvatars(fresh);
+  renderHistory();
 });
 
 /* Tombol aksi commit (checkout, cherry-pick, revert, reset) tidak lagi di
@@ -7019,6 +7275,7 @@ function wireFileList(id) {
     pickOne(kind, path);
     state.file = { path, kind, status: li.dataset.status,
                    untracked: li.dataset.untracked === '1' };
+    state.compareRef = null;
     $(id).querySelectorAll('li').forEach((n) => n.classList.remove('selected'));
     li.classList.add('selected');
     await showFileDiff();
@@ -7038,10 +7295,11 @@ function wireFileList(id) {
    the way out, so searching never leaves the sidebar rearranged. */
 let groupsBeforeFilter = null;
 
-$('ref-filter').addEventListener('input', (e) => {
+/* The sidebar is rebuilt from scratch for a filter, so it waits for the typing
+   to pause; the clear button follows the keystroke, since it costs nothing. */
+const applyRefFilter = debounced((value) => {
   const was = refFilter;
-  refFilter = e.target.value.trim().toLowerCase();
-  $('btn-ref-filter-clear').hidden = !refFilter;
+  refFilter = value.trim().toLowerCase();
   if (!was && refFilter) {
     groupsBeforeFilter = new Set([...document.querySelectorAll('.side-group')]
       .filter((g) => g.classList.contains('collapsed'))
@@ -7055,6 +7313,10 @@ $('ref-filter').addEventListener('input', (e) => {
   }
   if (state.refs) renderSidebar();
 });
+$('ref-filter').addEventListener('input', (e) => {
+  $('btn-ref-filter-clear').hidden = !e.target.value.trim();
+  applyRefFilter(e.target.value);
+});
 
 $('btn-ref-filter-clear').addEventListener('click', () => {
   $('ref-filter').value = '';
@@ -7062,16 +7324,22 @@ $('btn-ref-filter-clear').addEventListener('click', () => {
   $('ref-filter').focus();
 });
 
-$('file-filter').addEventListener('input', (e) => {
-  wipFilter = e.target.value.trim().toLowerCase();
-  $('btn-filter-clear').hidden = !wipFilter;
+/* Every keystroke here used to rebuild the three lists and then fetch the open
+   file's diff again — a git process per letter, for a filter that cannot
+   change what that file holds. */
+const applyFileFilter = debounced((value) => {
+  wipFilter = value.trim().toLowerCase();
   if (!state.status) return;
-  renderWip();
+  renderWip({ redrawOpenFile: false });
   if (wipFilter) {
     const shown = document.querySelectorAll(
       '#list-staged li[data-path], #list-unstaged li[data-path]').length;
     setStatus(`${shown} file${shown === 1 ? '' : 's'} match “${wipFilter}”`);
   }
+});
+$('file-filter').addEventListener('input', (e) => {
+  $('btn-filter-clear').hidden = !e.target.value.trim();
+  applyFileFilter(e.target.value);
 });
 
 $('btn-filter-clear').addEventListener('click', () => {
@@ -7091,11 +7359,14 @@ $('btn-discard-all').addEventListener('click', async () => {
     'Discard everything'
   );
   if (!ok) return;
-  for (const f of paths) {
-    await call('repo:discard', repoPath(), [f.path], f.status === '?');
-  }
+  // One process per file, in turn, was a long wait on a big tree; git takes
+  // the whole list, so this is the same two calls discardMany makes.
+  await discardLists(
+    paths.filter((f) => f.status !== '?').map((f) => f.path),
+    paths.filter((f) => f.status === '?').map((f) => f.path)
+  );
   closeFile();
-  await refresh();
+  await refreshStatus();
   setStatus(`Discarded ${paths.length} file${paths.length === 1 ? '' : 's'}`, 'ok');
 });
 
@@ -7294,7 +7565,7 @@ async function ignoreFiles(paths) {
   const out = await call('repo:ignore', repoPath(), patterns);
   if (out === null) return;
   clearPicked();
-  await refresh();
+  await refreshStatus();
   setStatus(out.added.length
     ? `Added ${plural(out.added.length, 'line')} to .gitignore`
     : 'Already in .gitignore', 'ok');
@@ -7318,7 +7589,7 @@ async function untrackAndIgnore(paths) {
   await call('repo:ignore', repoPath(), paths);
   if (paths.includes(state.file?.path)) { state.file = null; closeFile(); }
   clearPicked();
-  await refresh();
+  await refreshStatus();
   setStatus(`Stopped tracking ${plural(paths.length, 'file')}`, 'ok');
 }
 
@@ -7337,11 +7608,11 @@ function isDeleted(path) {
 
 $('btn-stage-all').addEventListener('click', async () => {
   await call('repo:stageAll', repoPath());
-  await refresh();
+  await refreshStatus();
 });
 $('btn-unstage-all').addEventListener('click', async () => {
   await call('repo:unstageAll', repoPath());
-  await refresh();
+  await refreshStatus();
 });
 
 /* hunk buttons */

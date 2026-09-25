@@ -2789,7 +2789,9 @@ textarea {
    the pane is always in reach. */
 .fv-body::-webkit-scrollbar:vertical { width: 0; }
 .fv-body::-webkit-scrollbar:horizontal { height: 0; }
-.fv-marks { position: absolute; inset: 0; }
+/* Contained, so a mark changing under the pointer is laid out inside the strip
+   and never reaches the diff beside it. */
+.fv-marks { position: absolute; inset: 0; contain: layout style; }
 
 /* The part of the file on screen, so the strip answers "where am I" as well as
    "where are the changes". */
@@ -2814,9 +2816,13 @@ textarea {
   border: 0;
   border-radius: 3px;
   cursor: pointer;
-  transition: left .1s ease, right .1s ease;
+  transform-origin: center;
+  transition: transform .1s ease;
 }
-.fv-mark:hover { left: 1px; right: 1px; }
+/* Wider under the pointer: 12 px to 16 px on the 18 px strip, the width `.here`
+   has. A transform rather than left/right, so the hover costs a composite and
+   not a layout of a strip that can hold thousands of marks. */
+.fv-mark:hover { transform: scaleX(1.333); }
 .fv-mark.m-add { background: var(--map-add); }
 .fv-mark.m-del { background: var(--map-del); }
 /* A block that both adds and removes is not one or the other, so it is drawn
@@ -2829,6 +2835,7 @@ textarea {
 .fv-mark.here {
   left: 1px;
   right: 1px;
+  transform: none;   /* already that wide; it did not move under the pointer before either */
   box-shadow: 0 0 0 1px var(--bg), 0 0 0 2px var(--accent);
 }
 .fv-mark:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
@@ -3703,23 +3710,6 @@ mark {
 .cb-count.over { color: var(--danger); font-weight: 600; }
 .commitbox-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .panel { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
-.panel-head { padding: 12px 14px 10px; border-bottom: 1px solid var(--line-soft); }
-.panel-head h2 {
-  margin: 0 0 6px;
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -.01em;
-}
-.c-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  align-items: center;
-  color: var(--text-faint);
-  font-size: 12px;
-  min-width: 0;
-}
-.c-meta > span { overflow: hidden; text-overflow: ellipsis; }
 .hashbtn {
   margin-left: auto;
   background: var(--surface-2);
@@ -3740,7 +3730,6 @@ mark {
   max-height: 140px;
   overflow: auto;
 }
-.c-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
 
 .filegroup { border-bottom: 1px solid var(--line-soft); }
 .filegroup-head {
@@ -3831,20 +3820,6 @@ mark {
 .check { display: flex; align-items: center; gap: 5px; color: var(--text-dim); font-size: 12px; }
 
 /* ── diff ───────────────────────────────────────────────────── */
-.diffpane { display: grid; grid-template-rows: auto 1fr; min-height: 0; border-top: 1px solid var(--line); }
-.diff-head {
-  padding: 6px 14px;
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--line);
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.diff-body { overflow: auto; background: var(--bg); }
-
 .difffile { border-bottom: 1px solid var(--line); }
 .difffile-head {
   display: flex;
@@ -3932,6 +3907,18 @@ mark {
 .dl-del { background: var(--del-bg); }
 .dl-del .dl-sign, .dl-del .dl-text { color: var(--del-ink); }
 .dl-meta .dl-text { color: var(--text-faint); font-style: italic; }
+
+/* Whitespace that changed, on the lines that changed. Background and nothing
+   else: the pane cuts its window in pixels and builds the height model from a
+   copy rendered without this markup, so a mark that took up room — padding, a
+   border, a glyph in ::before — would put the two out of step and turn the
+   windowing off for the whole diff.
+
+   Laid on with color-mix rather than a token of their own, so the two rules
+   follow every theme without five more entries in five token lists. The tab
+   wash paints the tab's own advance, so it already follows --diff-tab. */
+.ws-eol { background: color-mix(in srgb, var(--danger) 34%, transparent); }
+.ws-tab { background: color-mix(in srgb, var(--text-faint) 26%, transparent); }
 
 .empty-note { padding: 24px 16px; text-align: center; color: var(--text-faint); font-size: 12px; }
 

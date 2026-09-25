@@ -118,8 +118,14 @@
 
       while (lanes.length && lanes[lanes.length - 1] === null) lanes.pop();
 
-      maxLane = Math.max(maxLane, lane, ...edges.map((e) => e.lane));
-      rows.push({ commit, lane, edges, active: lanes.slice() });
+      /* A plain loop rather than Math.max over a spread: this runs once per
+         commit, and the array it would build each time is thrown away at once.
+         Rows used to carry a copy of the lane array as well, which nothing
+         read — at 100k commits that copy was half the layout's time and more
+         than half its memory. */
+      if (lane > maxLane) maxLane = lane;
+      for (const e of edges) if (e.lane > maxLane) maxLane = e.lane;
+      rows.push({ commit, lane, edges });
     }
 
     return { rows, width: (maxLane + 1) * LANE_W + PAD_X * 2 };
