@@ -4876,13 +4876,25 @@ function scheduleAutoFetch() {
   autoFetchTimer = setInterval(autoFetchTick, mins * 60_000);
 }
 
+/* A window nobody can see fetches for nobody, and every tick behind it also
+   re-read and redrew the whole repository. The tick is noted instead and
+   runs once when the window is next shown. */
+let autoFetchMissed = false;
+
 async function autoFetchTick() {
+  if (document.visibilityState !== 'visible') { autoFetchMissed = true; return; }
   if (!state.repo || busy) return;
   const res = await call('repo:fetch', repoPath(), { prune: prefs.autoPrune });
   if (res === null) return;                  // a failed fetch already reported itself
   await refresh();
   setStatus('Auto-fetched', 'ok');
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !autoFetchMissed) return;
+  autoFetchMissed = false;
+  if (autoFetchTimer) autoFetchTick();
+});
 
 /* ── the pages ─────────────────────────────────────────────────── */
 
