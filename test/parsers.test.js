@@ -2084,6 +2084,85 @@ console.log('\nthe highlighter, table by table');
     H.line(wall, 'js').slice(0, 60));
   check('and a line just under the limit is still coloured',
     H.line('const x = 1; '.repeat(38), 'js').includes('<span class="hl-key">const</span>'));
+
+  /* Every table there is. Hl.languages() is a count, so the names are listed
+     here by hand: a table added without a line in this list fails the count,
+     which is the point — every one of them has to hold the invariant below. */
+  const TABLES = {
+    js: 'const s = `a<&>${b}` + "c\'d"; // <&> "q" /* x */',
+    ruby: 'def x(a) "s<&>" + \'t\' end # c <&>',
+    php: '$x = "a<&>b"; // <&> \'q\'',
+    json: '{"k<&>": "v\'", "n": -1.5e3, "b": [true, null]}',
+    css: '.a > b::after { content: "<&>\'"; } /* <&> */',
+    html: '<div data-x="<&>" class=\'y\'>a & b</div> <!-- <&> -->',
+    md: '# H <&> `c<&>` **b** [l<&>](u) - "q"',
+    sh: 'echo "$HOME/<&>" \'x\' ${y} # <&>',
+    py: 'def f(x): return f"<&>{x}" + \'y\' # <&>',
+    sql: "SELECT 'a<&>''b' FROM t WHERE x > 1 -- <&>",
+    yaml: 'key: "v<&>" # <&> \'q\'',
+    go: 'x := "a<&>" + `b` // <&>',
+    rust: 'let x = "a<&>"; // <&> \'c\'',
+    pug: '  h1.judul#utama Halo #{nama} <&> "x"',
+    scss: '.a { &:hover { color: darken($x, 10%); } } // <&>',
+    blade: '<li>{!! $x->html !!}</li> {{-- <&> --}}',
+    toml: 'nama = "uji <&>"  # catatan',
+  };
+  check('the seventeen tables are all listed here',
+    H.languages() === Object.keys(TABLES).length && Object.keys(TABLES).every(H.has),
+    [H.languages(), Object.keys(TABLES).filter((t) => !H.has(t))]);
+  const lossyTables = Object.keys(TABLES).filter((lang) =>
+    H.line(TABLES[lang], lang).replace(/<\/?span[^>]*>/g, '') !== H.esc(TABLES[lang]));
+  check('every table hands back its line character for character',
+    lossyTables.length === 0, lossyTables);
+  check('and an unknown table hands the line back escaped and plain',
+    H.line(TABLES.js, 'nonsense') === H.esc(TABLES.js) && !H.has('nonsense'));
+
+  /* What each table finds on a line of its own language, frozen. The audit
+     section covers Ruby, PHP, Pug, Sass, Blade and TOML; these are the rest.
+     A token here is class:text as it is emitted, entities included. */
+  const cls = (lang, code) =>
+    [...H.line(code, lang).matchAll(/class="hl-(\w+)">([^<]*)</g)].map((m) => m[1] + ':' + m[2]).join('|');
+  const TOKENS = [
+    ['js', 'const n = await fetch(url); // go', 'key:const|op:=|key:await|fn:fetch|com:// go'],
+    ['js', 'return x ? 0x1f : `t${y}`', 'key:return|op:?|num:0x1f|op::|str:`t${y}`'],
+    ['js', '<Item key="a" />', 'tag:&lt;Item|op:=|str:&quot;a&quot;|op:/&gt;'],
+    ['json', '{"name": "x", "n": 1.5, "ok": true, "z": null}',
+      'prop:&quot;name&quot;|str:&quot;x&quot;|prop:&quot;n&quot;|num:1.5|prop:&quot;ok&quot;|lit:true|prop:&quot;z&quot;|lit:null'],
+    ['css', '.card:hover { color: #fff; margin: 4px 0; }',
+      'tag:.card|tag::hover|prop:color|num:#fff|prop:margin|num:4px|num:0'],
+    ['css', '@media (max-width: 40rem) { }', 'key:@media|prop:max-width|num:40rem'],
+    ['html', '<a href="/x" class=\'b\'>hi</a> <!-- c -->',
+      'tag:&lt;a|attr:href|str:&quot;/x&quot;|attr:class|str:&#39;b&#39;|tag:&gt;|tag:&lt;/a|tag:&gt;|com:&lt;!-- c --&gt;'],
+    ['md', '## Heading', 'key:## Heading'],
+    ['md', '- item with `code` and **bold**', 'lit:- |str:`code`|lit:**bold**'],
+    ['md', '[link](http://x)', 'tag:[link](http://x)'],
+    ['sh', 'if [ -f "$HOME/.rc" ]; then echo ok; fi # note',
+      'key:if|str:&quot;$HOME/.rc&quot;|key:then|key:echo|key:fi|com:# note'],
+    ['sh', 'export PATH=${PATH}:1', 'key:export|prop:${PATH}|num:1'],
+    ['py', 'def f(self, n=3):  # note', 'key:def|fn:f|lit:self|num:3|com:# note'],
+    ['py', 'return @deco or None', 'key:return|attr:@deco|key:or|lit:None'],
+    ['py', 'x = f\'a\' + r"b" + 1_000', 'str:f&#39;a&#39;|str:r&quot;b&quot;|num:1_000'],
+    ['sql', "SELECT id, name FROM users WHERE n > 10 AND s = 'x' -- c",
+      'key:SELECT|key:FROM|key:WHERE|num:10|key:AND|str:&#39;x&#39;|com:-- c'],
+    ['sql', 'create table t (id serial)', 'key:create|key:table|type:serial'],
+    ['yaml', 'name: value # note', 'prop:name|com:# note'],
+    ['yaml', '  - key: "quoted"', 'prop:  - key|str:&quot;quoted&quot;'],
+    ['yaml', 'flag: true', 'prop:flag|lit:true'],
+    ['go', 'func main() { x := 42; return nil } // c',
+      'key:func|fn:main|op::=|num:42|key:return|key:nil|com:// c'],
+    ['go', 'var s string = "hi"', 'key:var|key:string|op:=|str:&quot;hi&quot;'],
+    ['rust', 'fn main() -> Result<(), Error> { let x = Some(1); }',
+      'key:fn|fn:main|op:-&gt;|key:Result|op:&lt;|op:&gt;|key:let|op:=|fn:Some|num:1'],
+    ['rust', 'pub struct S; // c', 'key:pub|key:struct|com:// c'],
+  ];
+  const wrongTokens = TOKENS.filter(([lang, code, want]) => cls(lang, code) !== want)
+    .map(([lang, code]) => `${lang}: ${cls(lang, code)}`);
+  check('each table finds the tokens it found on the day this was written',
+    wrongTokens.length === 0, wrongTokens);
+  check('and the extensions reach those tables',
+    ['a.ts', 'a.json', 'a.css', 'a.html', 'a.md', 'a.sh', 'a.py', 'a.sql', 'a.yml', 'a.go', 'a.rs']
+      .map(H.langOf).join() === 'js,json,css,html,md,sh,py,sql,yaml,go,rust'
+    && H.langOf('Dockerfile') === 'sh' && H.langOf('x.unknown') === null);
 }
 
 /* ── what the diff pane rebuilds on every paint, and what it keeps ── */
