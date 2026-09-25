@@ -83,6 +83,7 @@ function newTab(repo) {
     stashes: [],
     limit: prefs.commitLimit,
     atEnd: false,        // the last page came back short: nothing older to load
+    rawLoaded: 0,        // rows asked of git so far, counting the stash parts it hides
     selection: null,     // {kind:'wip'} | {kind:'commit', hash}
     file: null,          // {path, staged, untracked}
     diffFiles: [],
@@ -1110,7 +1111,7 @@ async function refresh({ keepSelection = true } = {}) {
   ]);
   if (status) tab.status = status;
   tab.op = op || null;            // a merge or rebase git stopped part-way
-  if (commits) { tab.commits = indexForFind(commits); tab.atEnd = false; }
+  if (commits) { tab.commits = indexForFind(commits); tab.atEnd = false; tab.rawLoaded = tab.limit; }
   if (refs) tab.refs = refs;
   if (stashes) tab.stashes = stashes;
   if (flow) tab.flow = flow;
@@ -7135,15 +7136,21 @@ $('history-scroll').addEventListener('scroll', () => {
 $('btn-more').addEventListener('click', async () => {
   const tab = state;
   const page = prefs.commitLimit;
-  const more = await call('repo:log', tab.repo.path,
-    { limit: page, all: true, skip: tab.commits.length });
+  /* Counted the way git counts: --skip and --max-count see every commit in
+     the walk, while the list on screen is short of the index and untracked
+     commits main hides behind each stash. Paging from the visible count would
+     re-read the last few rows of the previous page, and a later full refresh
+     asking for exactly the visible count would come back a few rows short. */
+  const skip = tab.rawLoaded || tab.commits.length;
+  const more = await call('repo:log', tab.repo.path, { limit: page, all: true, skip });
   if (!more) return;
   // A commit that landed between the two pages shifts everything below it
   // down by one, so the page can begin with a commit already here.
   const known = tab.rowIndex?.size ? tab.rowIndex : new Set(tab.commits.map((c) => c.hash));
   const fresh = indexForFind(more.filter((c) => !known.has(c.hash)));
   tab.commits = tab.commits.concat(fresh);   // a new array, so the layout memo misses
-  tab.limit = tab.commits.length;             // a later full refresh reloads this much
+  tab.rawLoaded = skip + page;
+  tab.limit = tab.rawLoaded;                  // a later full refresh reloads this much
   tab.atEnd = more.length < page;
 
   if (tab !== state) return;      // the reader moved on: keep the data, draw nothing
