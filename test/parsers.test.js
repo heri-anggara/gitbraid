@@ -2231,6 +2231,47 @@ console.log('\nthe diff pane on every paint');
     SHAPES.every((s, i) => bare(marked[i]) === bare(s)));
 }
 
+/* ── the release notes as data ──────────────────────────────────── */
+/* renderNotes() reads version, state, date, title, summary, sections with a
+   heading and items, and an optional known list. An entry missing one of
+   those renders as "undefined" in the dialog, which nothing else would catch. */
+console.log('\nthe release notes as data');
+{
+  const rl = { window: {} };
+  vm.createContext(rl);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src/releases.js'), 'utf8'), rl);
+  const R = rl.window.Releases;
+  const str = (v) => typeof v === 'string' && v.trim().length > 0;
+  const semver = (v) => /^\d+\.\d+\.\d+$/.test(v);
+  const newer = (a, b) => {
+    const [x, y] = [a, b].map((v) => v.split('.').map(Number));
+    for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+    return false;
+  };
+  check('there are release notes, and every one has a semver version',
+    Array.isArray(R) && R.length > 0 && R.every((r) => semver(r.version)),
+    R.map((r) => r.version));
+  check('every entry carries what the dialog reads',
+    R.every((r) => str(r.title) && str(r.summary)
+      && Array.isArray(r.sections) && r.sections.length > 0
+      && r.sections.every((s) => str(s.heading) && Array.isArray(s.items)
+        && s.items.length > 0 && s.items.every(str))
+      && (r.known === undefined || (Array.isArray(r.known) && r.known.every(str)))),
+    R.filter((r) => !(str(r.title) && Array.isArray(r.sections))).map((r) => r.version));
+  check('a shipped version has a date, and one in development has none yet',
+    R.every((r) => (r.state === 'development'
+      ? r.date === undefined
+      : r.state === undefined && /^\d{4}-\d{2}-\d{2}$/.test(r.date))),
+    R.map((r) => [r.version, r.state, r.date]));
+  check('versions are unique and run newest first',
+    new Set(R.map((r) => r.version)).size === R.length
+    && R.every((r, i) => i === 0 || newer(R[i - 1].version, r.version)),
+    R.map((r) => r.version));
+  check('at most one version is in development, and it is the newest',
+    R.filter((r) => r.state === 'development').length <= 1
+    && R.every((r, i) => r.state !== 'development' || i === 0));
+}
+
 fs.rmSync(REPO, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
