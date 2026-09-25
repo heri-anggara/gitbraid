@@ -194,11 +194,11 @@
            either means one of the parents had it and the result does not. */
         const marks = line.slice(0, sides);
         const text = line.slice(sides);
-        if (/\+/.test(marks)) {
+        if (marks.includes('+')) {
           hunk.lines.push({ type: 'add', old: null, new: newNo++, text, marks });
           hunk.raw.push(line);
           file.additions++;
-        } else if (/-/.test(marks)) {
+        } else if (marks.includes('-')) {
           hunk.lines.push({ type: 'del', old: oldNo++, new: null, text, marks });
           hunk.raw.push(line);
           file.deletions++;
@@ -311,8 +311,17 @@
   function markWs(html) {
     if (!html) return html;
     /* "Ends in whitespace" has to mean after the last tag: a trailing run that
-       fell inside a highlight span is the case a cheaper test would miss. */
-    if (!html.includes('\t') && !/[ \t]$/.test(html.replace(TRAILING_TAGS, ''))) return html;
+       fell inside a highlight span is the case a cheaper test would miss. But
+       the pattern that strips the tags walks the whole line, and most lines
+       end in a letter or a bracket with no tab anywhere — for those the last
+       character alone says there is nothing to do. Only a line ending in `>`
+       can be hiding a run inside a span, and only that one pays for the
+       stripping. */
+    if (!html.includes('\t')) {
+      const last = html.charCodeAt(html.length - 1);
+      if (last !== 32 /* space */ &&
+          (last !== 62 /* > */ || !/[ \t]$/.test(html.replace(TRAILING_TAGS, '')))) return html;
+    }
 
     const parts = html.split(/(<[^>]*>)/);   // even: text, odd: tag
     let inTail = true;                       // still walking the run at the end

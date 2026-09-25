@@ -2193,6 +2193,42 @@ console.log('\nthe diff pane on every paint');
     && sum(spacers(Diff.renderSplit(mf, [], win))) === sum(flatPer));
   check('and a diff drawn whole has no spacer at all',
     spacers(Diff.render(mf, [])).length === 0 && spacers(Diff.renderSplit(mf, [])).length === 0);
+
+  /* markWs decides from the last character whether there is anything to look
+     for, and only a line ending in `>` still pays for stripping the tags. The
+     answer must not change for any shape of line. */
+  const SHAPES = [
+    'const x = 1;',
+    '<span class="hl-key">const</span> x = <span class="hl-num">1</span>;',
+    '<span class="hl-com">// catatan</span>',
+    'a &amp; b',
+    'trailing &gt;',
+    'x  ',
+    '<span class="hl-com">// catatan  </span>',
+    '<span class="hl-key">const</span> x;  ',
+    '\tindent',
+    '<span class="hl-str">"a\tb"</span>',
+    'a<span class="hl-op">&gt;</span>',
+    '>',
+    ' ',
+    '&gt; ',
+  ];
+  const marked = SHAPES.map((s) => Diff.markWs(s));
+  check('a line ending in a letter, a bracket or an entity is handed back as is',
+    SHAPES.slice(0, 5).every((s, i) => marked[i] === s) && marked[10] === SHAPES[10]
+    && marked[11] === '>', marked.slice(0, 5));
+  check('one ending in a space, in or out of a span, is still marked',
+    marked[5] === 'x<span class="ws-eol">  </span>'
+    && marked[6] === '<span class="hl-com">// catatan<span class="ws-eol">  </span></span>'
+    && /ws-eol">  <\/span>$/.test(marked[7])
+    && marked[12] === '<span class="ws-eol"> </span>'
+    && marked[13] === '&gt;<span class="ws-eol"> </span>', marked.slice(5, 8));
+  check('and a tab anywhere is still marked whatever the line ends in',
+    marked[8] === '<span class="ws-tab">\t</span>indent'
+    && marked[9] === '<span class="hl-str">"a<span class="ws-tab">\t</span>b"</span>', marked.slice(8, 10));
+  const bare = (s) => s.replace(/<\/?span[^>]*>/g, '');
+  check('the marks are spans and nothing else, for every shape',
+    SHAPES.every((s, i) => bare(marked[i]) === bare(s)));
 }
 
 fs.rmSync(REPO, { recursive: true, force: true });
