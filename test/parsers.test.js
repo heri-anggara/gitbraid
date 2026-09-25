@@ -123,6 +123,103 @@ check('tag v1.0 present', commits.some((c) => c.refs.some((r) => r.includes('v1.
 check('HEAD ref present', commits.some((c) => c.refs.some((r) => r.startsWith('HEAD ->'))));
 check('dates are sane', commits.every((c) => c.commitDate > 1e12 && c.commitDate <= Date.now() + 5000));
 
+/* Records built by hand, because what matters here is the byte the format
+   uses as its separator turning up inside a body. git does not strip it from
+   a message, and a parser that split the whole record on it put everything
+   after the tenth field where nobody read it. */
+{
+  const U = '\x1f';
+  const H = 'h'.repeat(40);
+  const mk = (body, refs = '', parents = 'p1 p2') => [
+    H, parents, 'Tester', 't@example.com', '1700000000',
+    'Committer', '1700000060', refs, 'the subject', body,
+  ].join(U);
+  const one = P.parseLog(mk('first line\nwith\x1fa separator\n\nand more\n'));
+  check('a body holding the separator byte is kept whole',
+    one.length === 1 && one[0].body === 'first line\nwith\x1fa separator\n\nand more',
+    one[0] && one[0].body);
+  check('and every field before it is where it belongs',
+    one[0].hash === H && one[0].parents.join(' ') === 'p1 p2' && one[0].author === 'Tester'
+    && one[0].email === 't@example.com' && one[0].authorDate === 1700000000000
+    && one[0].committer === 'Committer' && one[0].commitDate === 1700000060000
+    && one[0].subject === 'the subject', one[0]);
+  check('refs split on the comma git writes',
+    P.parseLog(mk('', 'HEAD -> main, tag: v1.0, origin/main'))[0].refs.join('|')
+      === 'HEAD -> main|tag: v1.0|origin/main');
+  check('a root commit has no parents', P.parseLog(mk('', '', ''))[0].parents.length === 0);
+  check('the body is trimmed, and only at its ends',
+    P.parseLog(mk('\n\n  two words  \n\n'))[0].body === 'two words');
+  const three = P.parseLog([mk('a'), mk('b'), mk('c')].join('\0'));
+  check('records split on NUL', three.length === 3 && three.map((c) => c.body).join('') === 'abc');
+  const legacy = '\n' + [mk('a'), mk('b')].join('\0\n') + '\0\n';
+  check('a newline after the NUL, as older gits wrote it, is not part of the hash',
+    P.parseLog(legacy).length === 2 && P.parseLog(legacy).every((c) => c.hash === H));
+  check('empty and blank input parse to nothing',
+    P.parseLog('').length === 0 && P.parseLog('\n \n').length === 0 && P.parseLog('\0\0').length === 0);
+  const short = P.parseLog([H, 'p1', 'Tester'].join(U));
+  check('a record cut short still yields what it had',
+    short.length === 1 && short[0].hash === H && short[0].author === 'Tester'
+    && short[0].subject === '' && short[0].body === '');
+}
+
+/* ── which branches hold each commit ───────────────────────────── */
+console.log('\nbranch containment');
+{
+  /* Lifted like notesHtml. The bitset sweep replaced one depth-first walk per
+     branch; the walk is kept here as the reference it has to agree with. */
+  const containSrc = rendererSrc.slice(
+    rendererSrc.indexOf('function computeContainment('),
+    rendererSrc.indexOf('\n}\n', rendererSrc.indexOf('function computeContainment(')) + 3
+  );
+  const C = {};
+  vm.runInNewContext(containSrc + '\nthis.computeContainment = computeContainment;', C);
+  const walk = (list, branches) => {
+    const parents = new Map(list.map((c) => [c.hash, c.parents || []]));
+    const out = new Map();
+    for (const b of branches) {
+      const stack = [b.oid];
+      const seen = new Set();
+      while (stack.length) {
+        const h = stack.pop();
+        if (!h || seen.has(h)) continue;
+        seen.add(h);
+        const got = out.get(h);
+        if (got) { if (!got.includes(b.name)) got.push(b.name); }
+        else out.set(h, [b.name]);
+        for (const p of parents.get(h) || []) stack.push(p);
+      }
+    }
+    return out;
+  };
+  const at = (subject) => commits.find((c) => c.subject === subject).hash;
+  const branches = [
+    { name: 'main', oid: commits[0].hash },
+    { name: 'feature', oid: at('feature: add d') },
+    { name: 'hotfix', oid: at('hotfix: patch') },
+    { name: 'gone', oid: 'f'.repeat(40) },      // a tip further back than the log
+  ];
+  const got = C.computeContainment(commits, branches);
+  const sameAs = (a, b) =>
+    a.size === b.size && [...a].every(([k, v]) => JSON.stringify(b.get(k)) === JSON.stringify(v));
+  check('the sweep agrees with a walk from every tip', sameAs(got, walk(commits, branches)));
+  check('the root is on every branch, named in branch order',
+    JSON.stringify(got.get(at('add a'))) === '["main","feature","hotfix"]', got.get(at('add a')));
+  check('a merged feature commit is on main and the feature',
+    JSON.stringify(got.get(at('feature: add d'))) === '["main","feature"]');
+  check('a commit made on main after the fork is only on main',
+    JSON.stringify(got.get(at('main: add e'))) === '["main"]');
+  check('a tip that was not loaded still answers for itself',
+    JSON.stringify(got.get('f'.repeat(40))) === '["gone"]');
+  check('every loaded commit is reached from main, and nothing else is listed',
+    got.size === commits.length + 1, got.size);
+  // A parent above its child, as a wrong clock puts it: the answer must not change.
+  const skewed = [...commits];
+  [skewed[3], skewed[4]] = [skewed[4], skewed[3]];
+  check('a row whose parent sits above it is still counted',
+    sameAs(C.computeContainment(skewed, branches), got));
+  check('no branches, no entries', C.computeContainment(commits, []).size === 0);
+}
+
 /* ── graph layout ──────────────────────────────────────────────── */
 console.log('\ngraph layout');
 const rowsData = [
@@ -155,16 +252,47 @@ for (const row of layout.rows) {
 }
 check('parents always sit below their children', ordering, badPair);
 
-// A lane may only hold one hash at a time.
+/* What the lane numbers promise. `width` is (widest lane + 1) lanes plus the
+   padding on both sides, so every lane the rows and edges name has to fit in
+   it, and the first parent continues down the commit's own lane. The old form
+   of this check read a copy of the lane array off every row and could not
+   fail: `&& false` switched the clash test off and a count of filled slots is
+   never larger than the array holding them. */
+const laneCount = (layout.width - PAD_X * 2) / LANE_W;
+const laneOk = (l) => Number.isInteger(l) && l >= 0 && l < laneCount;
+check('every row and edge names a lane the width allows for',
+  Number.isInteger(laneCount) && layout.rows.every((r) =>
+    laneOk(r.lane) && r.edges.every((e) => laneOk(e.lane))),
+  laneCount);
+check('the first parent continues the commit\'s own lane',
+  layout.rows.every((r) => !r.edges.length || r.edges[0].lane === r.lane));
+check('every edge names a commit that was loaded',
+  layout.rows.every((r) => r.edges.every((e) => idx.has(e.parent))));
+
+/* A lane holds one hash at a time. An edge occupies its lane on every row
+   strictly between its child and its parent, so two edges sharing a lane may
+   only overlap there while waiting for the same parent, and no edge may pass
+   through a dot sitting on its lane. */
 let laneClash = null;
-layout.rows.forEach((row, i) => {
-  row.active.forEach((h, l) => {
-    if (h && row.active.filter((x, j) => x === h && j !== l).length && false) laneClash = i;
+{
+  const spans = [];
+  layout.rows.forEach((row, i) => {
+    for (const e of row.edges) {
+      const pi = idx.get(e.parent) ?? layout.rows.length;
+      spans.push({ lane: e.lane, from: i + 1, to: pi - 1, parent: e.parent });
+    }
   });
-  const filled = row.active.filter(Boolean).length;
-  if (filled > row.active.length) laneClash = i;
-});
-check('lane array is well formed', laneClash === null, laneClash);
+  for (const a of spans) {
+    for (const b of spans) {
+      if (a === b || a.lane !== b.lane || a.parent === b.parent) continue;
+      if (a.from <= b.to && b.from <= a.to) laneClash = [a, b];
+    }
+    layout.rows.forEach((row, j) => {
+      if (row.lane === a.lane && j >= a.from && j <= a.to) laneClash = [a, row.commit.hash];
+    });
+  }
+}
+check('no two hashes share a lane on the same row', laneClash === null, laneClash);
 
 /* ── graph rendering: every edge must terminate on its parent dot ─ */
 console.log('\ngraph rendering');
@@ -1554,7 +1682,7 @@ console.log('\na stash in the history');
   try { git(['rev-parse', '--verify', '-q', `${second}^3`]); } catch { threw = true; }
   check('asking for a third parent that does not exist fails rather than answering', threw);
   check('and the code that asks for it expects that',
-    /catch \{ \/\* no staged part, or no untracked part \*\/ \}/.test(mainSrc));
+    /\^3`\]\)\)\.trim\(\); \}\s*catch \{[^\n]*nothing untracked went in, which is ordinary/.test(mainSrc));
 
   /* --all only reaches refs/stash, which is the newest. Older stashes vanish
      unless they are named, which is why the walk lists them all by hash. */
@@ -1912,6 +2040,412 @@ console.log('\ncredentials');
     && /while \(!\$\('modal'\)\.hidden\)/.test(rendererSrc));
   check('cancelling tells git nothing, which fails it exactly as before',
     /call\('askpass:answer', q\.id, res \? res\.value : null/.test(rendererSrc));
+}
+
+/* ── the layout on histories written by hand ────────────────────── */
+/* The fixture repository exercises one shape. These are the shapes it cannot
+   make — an octopus, a criss-cross, two roots, a parent that sorted above its
+   child — with the lane and edges every row came out with frozen as data, so a
+   change to the walk shows up as a diff against a known picture rather than as
+   a drawing that looks slightly off. */
+console.log('\ngraph layout on hand-written histories');
+{
+  const edge = (parent, lane) => ({ parent, lane });
+  const GOLDEN = [
+    { name: 'an octopus merge', width: 120,
+      history: [
+        { hash: 'm', parents: ['a', 'b', 'c', 'd'] },
+        { hash: 'a', parents: ['r'] }, { hash: 'b', parents: ['r'] },
+        { hash: 'c', parents: ['r'] }, { hash: 'd', parents: ['r'] },
+        { hash: 'r', parents: [] },
+      ],
+      rows: [
+        ['m', 0, [edge('a', 0), edge('b', 1), edge('c', 2), edge('d', 3)]],
+        ['a', 0, [edge('r', 0)]], ['b', 1, [edge('r', 1)]],
+        ['c', 2, [edge('r', 2)]], ['d', 3, [edge('r', 3)]],
+        ['r', 0, []],
+      ] },
+    { name: 'criss-cross merges', width: 98,
+      history: [
+        { hash: 'y', parents: ['c', 'b'] },
+        { hash: 'x', parents: ['b', 'c'] },
+        { hash: 'b', parents: ['d'] },
+        { hash: 'c', parents: ['d'] },
+        { hash: 'd', parents: [] },
+      ],
+      rows: [
+        ['y', 0, [edge('c', 0), edge('b', 1)]],
+        ['x', 2, [edge('b', 2), edge('c', 0)]],
+        ['b', 1, [edge('d', 1)]],
+        ['c', 0, [edge('d', 0)]],
+        ['d', 0, []],
+      ] },
+    { name: 'two roots with no common ancestor', width: 76,
+      history: [
+        { hash: 'a2', parents: ['a1'] }, { hash: 'b2', parents: ['b1'] },
+        { hash: 'a1', parents: [] }, { hash: 'b1', parents: [] },
+      ],
+      rows: [
+        ['a2', 0, [edge('a1', 0)]], ['b2', 1, [edge('b1', 1)]],
+        ['a1', 0, []], ['b1', 1, []],
+      ] },
+    /* The second parent is found where the first one was just put, so it takes
+       the same lane rather than opening a new one. */
+    { name: 'a parent listed twice', width: 54,
+      history: [{ hash: 'c', parents: ['x', 'x'] }, { hash: 'x', parents: [] }],
+      rows: [['c', 0, [edge('x', 0), edge('x', 0)]], ['x', 0, []]] },
+    /* --date-order with skewed clocks: the child arrives after its parent, so
+       it is nowhere in the lanes and opens one that nothing ever closes. */
+    { name: 'a parent sorted above its child', width: 76,
+      history: [
+        { hash: 'p', parents: ['r'] }, { hash: 'k', parents: ['p'] }, { hash: 'r', parents: [] },
+      ],
+      rows: [['p', 0, [edge('r', 0)]], ['k', 1, [edge('p', 1)]], ['r', 0, []]] },
+    { name: 'a stash whose extra parents were stripped', width: 54,
+      history: [
+        { hash: 's', stash: true, parents: ['h'] }, { hash: 'h', parents: ['r'] },
+        { hash: 'r', parents: [] },
+      ],
+      rows: [['s', 0, [edge('h', 0)]], ['h', 0, [edge('r', 0)]], ['r', 0, []]] },
+  ];
+
+  /* The same reading of a path the fixture checks rely on: only M, L and A
+     are emitted and each ends on an explicit "x y", so the last two numbers
+     of `d` are the endpoint. */
+  const pathEnds = (svg) => [...svg.matchAll(/<path d="M([\d.]+) ([\d.]+)([^"]*)"/g)]
+    .map((m) => {
+      const nums = m[3].match(/-?[\d.]+/g) || [];
+      return {
+        start: { x: Number(m[1]), y: Number(m[2]) },
+        end: nums.length >= 2
+          ? { x: Number(nums[nums.length - 2]), y: Number(nums[nums.length - 1]) } : null,
+      };
+    });
+
+  for (const g of GOLDEN) {
+    const l = Graph.layout(g.history);
+    const got = l.rows.map((r) => [r.commit.hash, r.lane, r.edges]);
+    check(`${g.name}: every row has the lane and edges it had`,
+      JSON.stringify(got) === JSON.stringify(g.rows), got);
+    check(`${g.name}: the width is what those lanes need`, l.width === g.width, l.width);
+    /* Rows used to carry a copy of the whole lane array that nothing read;
+       what render() and the renderer read is exactly these three. */
+    check(`${g.name}: a row carries its commit, lane and edges and nothing else`,
+      l.rows.every((r) => Object.keys(r).sort().join() === 'commit,edges,lane'),
+      Object.keys(l.rows[0]));
+
+    const at = new Map(g.history.map((c, i) => [c.hash, i]));
+    const svg = Graph.render(l, at);
+    const ends = pathEnds(svg);
+    const wanted = l.rows.reduce((n, r) => n + r.edges.length, 0);
+    check(`${g.name}: one path per edge, each ending on an explicit x y`,
+      (svg.match(/<path /g) || []).length === wanted && ends.length === wanted
+      && ends.every((p) => p.end !== null), [ends.length, wanted]);
+    const dot = (i) => ({ x: PAD_X + l.rows[i].lane * LANE_W, y: i * ROW_H + ROW_H / 2 });
+    check(`${g.name}: every edge lands on its parent's dot`,
+      l.rows.every((r, i) => r.edges.every((e) => {
+        const from = dot(i);
+        const to = dot(at.get(e.parent));
+        return ends.some((p) => p.start.x === from.x && p.start.y === from.y
+          && p.end.x === to.x && p.end.y === to.y);
+      })));
+  }
+}
+
+/* ── the highlighter, table by table ────────────────────────────── */
+console.log('\nthe highlighter, table by table');
+{
+  // Loaded alone into a bare context, as the audit section does: the file
+  // has to stand on its own.
+  const hl = { window: {} };
+  vm.createContext(hl);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src/highlight.js'), 'utf8'), hl);
+  const H = hl.window.Hl;
+
+  /* esc is applied to every token, so it is written as one pass with a fast
+     path for the common token that has nothing in it. The five entities and
+     their spelling are what every consumer has been receiving. */
+  check('esc rewrites all five characters, and only those',
+    H.esc('& < > " \' plain') === '&amp; &lt; &gt; &quot; &#39; plain', H.esc('& < > " \' plain'));
+  check('esc hands back a string with nothing to escape as it is',
+    H.esc('const x = 1;') === 'const x = 1;' && H.esc('') === '');
+  check('esc does not escape twice',
+    H.esc('&amp;') === '&amp;amp;' && H.esc('<<>>') === '&lt;&lt;&gt;&gt;');
+
+  /* A minified line is a wall of short tokens that each try every rule. Past
+     500 characters the line goes out escaped and plain — the same characters,
+     without the spans. */
+  const wall = 'var a=b<c&&d>"e";'.repeat(40);   // 680 characters
+  check('a 600-character line comes back as plain escaped text',
+    wall.length > 600 && H.line(wall, 'js') === H.esc(wall) && !H.line(wall, 'js').includes('<span'),
+    H.line(wall, 'js').slice(0, 60));
+  check('and a line just under the limit is still coloured',
+    H.line('const x = 1; '.repeat(38), 'js').includes('<span class="hl-key">const</span>'));
+
+  /* Every table there is. Hl.languages() is a count, so the names are listed
+     here by hand: a table added without a line in this list fails the count,
+     which is the point — every one of them has to hold the invariant below. */
+  const TABLES = {
+    js: 'const s = `a<&>${b}` + "c\'d"; // <&> "q" /* x */',
+    ruby: 'def x(a) "s<&>" + \'t\' end # c <&>',
+    php: '$x = "a<&>b"; // <&> \'q\'',
+    json: '{"k<&>": "v\'", "n": -1.5e3, "b": [true, null]}',
+    css: '.a > b::after { content: "<&>\'"; } /* <&> */',
+    html: '<div data-x="<&>" class=\'y\'>a & b</div> <!-- <&> -->',
+    md: '# H <&> `c<&>` **b** [l<&>](u) - "q"',
+    sh: 'echo "$HOME/<&>" \'x\' ${y} # <&>',
+    py: 'def f(x): return f"<&>{x}" + \'y\' # <&>',
+    sql: "SELECT 'a<&>''b' FROM t WHERE x > 1 -- <&>",
+    yaml: 'key: "v<&>" # <&> \'q\'',
+    go: 'x := "a<&>" + `b` // <&>',
+    rust: 'let x = "a<&>"; // <&> \'c\'',
+    pug: '  h1.judul#utama Halo #{nama} <&> "x"',
+    scss: '.a { &:hover { color: darken($x, 10%); } } // <&>',
+    blade: '<li>{!! $x->html !!}</li> {{-- <&> --}}',
+    toml: 'nama = "uji <&>"  # catatan',
+  };
+  check('the seventeen tables are all listed here',
+    H.languages() === Object.keys(TABLES).length && Object.keys(TABLES).every(H.has),
+    [H.languages(), Object.keys(TABLES).filter((t) => !H.has(t))]);
+  const lossyTables = Object.keys(TABLES).filter((lang) =>
+    H.line(TABLES[lang], lang).replace(/<\/?span[^>]*>/g, '') !== H.esc(TABLES[lang]));
+  check('every table hands back its line character for character',
+    lossyTables.length === 0, lossyTables);
+  check('and an unknown table hands the line back escaped and plain',
+    H.line(TABLES.js, 'nonsense') === H.esc(TABLES.js) && !H.has('nonsense'));
+
+  /* What each table finds on a line of its own language, frozen. The audit
+     section covers Ruby, PHP, Pug, Sass, Blade and TOML; these are the rest.
+     A token here is class:text as it is emitted, entities included. */
+  const cls = (lang, code) =>
+    [...H.line(code, lang).matchAll(/class="hl-(\w+)">([^<]*)</g)].map((m) => m[1] + ':' + m[2]).join('|');
+  const TOKENS = [
+    ['js', 'const n = await fetch(url); // go', 'key:const|op:=|key:await|fn:fetch|com:// go'],
+    ['js', 'return x ? 0x1f : `t${y}`', 'key:return|op:?|num:0x1f|op::|str:`t${y}`'],
+    ['js', '<Item key="a" />', 'tag:&lt;Item|op:=|str:&quot;a&quot;|op:/&gt;'],
+    ['json', '{"name": "x", "n": 1.5, "ok": true, "z": null}',
+      'prop:&quot;name&quot;|str:&quot;x&quot;|prop:&quot;n&quot;|num:1.5|prop:&quot;ok&quot;|lit:true|prop:&quot;z&quot;|lit:null'],
+    ['css', '.card:hover { color: #fff; margin: 4px 0; }',
+      'tag:.card|tag::hover|prop:color|num:#fff|prop:margin|num:4px|num:0'],
+    ['css', '@media (max-width: 40rem) { }', 'key:@media|prop:max-width|num:40rem'],
+    ['html', '<a href="/x" class=\'b\'>hi</a> <!-- c -->',
+      'tag:&lt;a|attr:href|str:&quot;/x&quot;|attr:class|str:&#39;b&#39;|tag:&gt;|tag:&lt;/a|tag:&gt;|com:&lt;!-- c --&gt;'],
+    ['md', '## Heading', 'key:## Heading'],
+    ['md', '- item with `code` and **bold**', 'lit:- |str:`code`|lit:**bold**'],
+    ['md', '[link](http://x)', 'tag:[link](http://x)'],
+    ['sh', 'if [ -f "$HOME/.rc" ]; then echo ok; fi # note',
+      'key:if|str:&quot;$HOME/.rc&quot;|key:then|key:echo|key:fi|com:# note'],
+    ['sh', 'export PATH=${PATH}:1', 'key:export|prop:${PATH}|num:1'],
+    ['py', 'def f(self, n=3):  # note', 'key:def|fn:f|lit:self|num:3|com:# note'],
+    ['py', 'return @deco or None', 'key:return|attr:@deco|key:or|lit:None'],
+    ['py', 'x = f\'a\' + r"b" + 1_000', 'str:f&#39;a&#39;|str:r&quot;b&quot;|num:1_000'],
+    ['sql', "SELECT id, name FROM users WHERE n > 10 AND s = 'x' -- c",
+      'key:SELECT|key:FROM|key:WHERE|num:10|key:AND|str:&#39;x&#39;|com:-- c'],
+    ['sql', 'create table t (id serial)', 'key:create|key:table|type:serial'],
+    ['yaml', 'name: value # note', 'prop:name|com:# note'],
+    ['yaml', '  - key: "quoted"', 'prop:  - key|str:&quot;quoted&quot;'],
+    ['yaml', 'flag: true', 'prop:flag|lit:true'],
+    ['go', 'func main() { x := 42; return nil } // c',
+      'key:func|fn:main|op::=|num:42|key:return|key:nil|com:// c'],
+    ['go', 'var s string = "hi"', 'key:var|key:string|op:=|str:&quot;hi&quot;'],
+    ['rust', 'fn main() -> Result<(), Error> { let x = Some(1); }',
+      'key:fn|fn:main|op:-&gt;|key:Result|op:&lt;|op:&gt;|key:let|op:=|fn:Some|num:1'],
+    ['rust', 'pub struct S; // c', 'key:pub|key:struct|com:// c'],
+  ];
+  const wrongTokens = TOKENS.filter(([lang, code, want]) => cls(lang, code) !== want)
+    .map(([lang, code]) => `${lang}: ${cls(lang, code)}`);
+  check('each table finds the tokens it found on the day this was written',
+    wrongTokens.length === 0, wrongTokens);
+  check('and the extensions reach those tables',
+    ['a.ts', 'a.json', 'a.css', 'a.html', 'a.md', 'a.sh', 'a.py', 'a.sql', 'a.yml', 'a.go', 'a.rs']
+      .map(H.langOf).join() === 'js,json,css,html,md,sh,py,sql,yaml,go,rust'
+    && H.langOf('Dockerfile') === 'sh' && H.langOf('x.unknown') === null);
+}
+
+/* ── what the diff pane rebuilds on every paint, and what it keeps ── */
+console.log('\nthe diff pane on every paint');
+{
+  /* Side-by-side pairs a hunk's lines into rows on every paint and counts
+     them again on every scroll frame. Both are now kept beside the hunk, so
+     the second answer has to be the first one — and the hunk itself must not
+     have changed shape, because hunkPatch() hands its fields straight back
+     to git. */
+  const PAIRED = [
+    'diff --git a/p.txt b/p.txt', '--- a/p.txt', '+++ b/p.txt', '@@ -1,5 +1,5 @@',
+    ' satu', '-dua', '-tiga', '+DUA', ' empat', '+lima', '+enam', '+tujuh',
+  ].join('\n');
+  const pf = Diff.parse(PAIRED);
+  const hunk = pf[0].hunks[0];
+  const before = JSON.stringify(hunk);
+  const first = Diff.pairRows(hunk);
+  const again = Diff.pairRows(hunk);
+  // One context row, two for the run of two removals against one addition,
+  // one more context row, three for the additions at the end.
+  check('pairing a hunk twice hands back the same rows',
+    again === first && first.length === 7, first.length);
+  check('and the rows are what pairing from scratch produces',
+    first.map((r) => `${r.left ? r.left.text : '-'}|${r.right ? r.right.text : '-'}${r.ctx ? '=' : ''}`)
+      .join(',') === 'satu|satu=,dua|DUA,tiga|-,empat|empat=,-|lima,-|enam,-|tujuh',
+    first.map((r) => [r.left && r.left.text, r.right && r.right.text, r.ctx]));
+  check('the count agrees with the rows, asked either way round',
+    Diff.pairCount(hunk) === first.length
+    && Diff.pairCount(Diff.parse(PAIRED)[0].hunks[0]) === first.length);
+  check('and the hunk itself gained nothing from being paired',
+    JSON.stringify(hunk) === before && Object.keys(hunk).sort().join() === 'header,lines,raw');
+  check('a freshly parsed copy is paired on its own',
+    Diff.pairRows(Diff.parse(PAIRED)[0].hunks[0]) !== first);
+  check('the split view draws the same rows before and after the cache is warm',
+    Diff.renderSplit(pf, [], { first: 2, last: 4 }) === Diff.renderSplit(pf, [], { first: 2, last: 4 })
+    && Diff.rowCountSplit(pf) === 7);
+
+  /* Hunks outside the window are kept as height rather than as elements, and
+     consecutive ones now fold into one spacer per run instead of one per
+     hunk. What the renderer's scroll model reads is the sum, so the sum is
+     what has to survive: the same per-hunk terms, rows plus one header each. */
+  const FILES = 3;
+  const HUNKS = 4;
+  const LINES = 5;
+  const multi = [];
+  for (let f = 0; f < FILES; f++) {
+    multi.push(`diff --git a/m${f}.txt b/m${f}.txt`, `--- a/m${f}.txt`, `+++ b/m${f}.txt`);
+    for (let h = 0; h < HUNKS; h++) {
+      multi.push(`@@ -${h * 10 + 1},${LINES} +${h * 10 + 1},${LINES} @@`);
+      for (let l = 0; l < LINES; l++) multi.push(l === 2 ? `+baris ${f} ${h} ${l}` : ` baris ${f} ${h} ${l}`);
+    }
+  }
+  const mf = Diff.parse(multi.join('\n'));
+  const rows = Diff.rowCount(mf);
+  const ROWH = 20;
+  const HEADH = 27;
+  const spacers = (markup) =>
+    [...markup.matchAll(/class="hunk hunk-gap" style="height:([\d.]+)px"/g)].map((m) => Number(m[1]));
+  const sum = (xs) => xs.reduce((a, b) => a + b, 0);
+  /* Per-hunk spacers, the way they were emitted before: one term per hunk
+     wholly outside [first, last). */
+  const perHunk = (first, last, heightOf) => {
+    const out = [];
+    let seen = 0;
+    for (const f of mf) for (const h of f.hunks) {
+      const start = seen;
+      seen += h.lines.length;
+      if (seen <= first || start >= last) out.push(heightOf(start, seen) + HEADH);
+    }
+    return out;
+  };
+
+  // The window sits inside the third hunk of the second file.
+  const win = { first: HUNKS * LINES + 2 * LINES + 1, last: HUNKS * LINES + 2 * LINES + 3,
+                rowH: ROWH, headH: HEADH };
+  const flat = Diff.render(mf, [], win);
+  const flatPer = perHunk(win.first, win.last, (a, b) => (b - a) * ROWH);
+  check('the spacers add up to what one per hunk added up to',
+    sum(spacers(flat)) === sum(flatPer), [sum(spacers(flat)), sum(flatPer)]);
+  check('and there is one per run of folded hunks, not one per hunk',
+    spacers(flat).length === 4 && flatPer.length === FILES * HUNKS - 1,
+    [spacers(flat).length, flatPer.length]);
+  check('the drawn hunk is still drawn, with its own rows',
+    (flat.match(/<div class="hunk">/g) || []).length === 1 && flat.includes('baris 1 2 1'));
+  check('every file keeps its header, because its height is measured off the page',
+    (flat.match(/<header class="difffile-head">/g) || []).length === FILES);
+
+  /* Wrapped rows: the spacer takes the measured distance, and the sum of
+     measured distances is the measured distance of the sum. */
+  const rowSum = new Float64Array(rows + 1);
+  for (let i = 0; i < rows; i++) rowSum[i + 1] = rowSum[i] + 20 + (i % 3) * 7;
+  const wrapped = Diff.render(mf, [], { ...win, rowSum });
+  const wrappedPer = perHunk(win.first, win.last, (a, b) => rowSum[b] - rowSum[a]);
+  check('with measured row heights the spacers still add up',
+    Math.abs(sum(spacers(wrapped)) - sum(wrappedPer)) < 1e-6,
+    [sum(spacers(wrapped)), sum(wrappedPer)]);
+
+  // A diff wholly beyond the window folds to one spacer per file.
+  const beyond = Diff.render(mf, [], { first: rows + 5, last: rows + 65, rowH: ROWH, headH: HEADH });
+  check('a diff entirely outside the window is one spacer per file',
+    spacers(beyond).length === FILES
+    && spacers(beyond).every((px) => px === HUNKS * (LINES * ROWH + HEADH)),
+    spacers(beyond));
+  check('side-by-side folds the same way',
+    spacers(Diff.renderSplit(mf, [], win)).length === 4
+    && sum(spacers(Diff.renderSplit(mf, [], win))) === sum(flatPer));
+  check('and a diff drawn whole has no spacer at all',
+    spacers(Diff.render(mf, [])).length === 0 && spacers(Diff.renderSplit(mf, [])).length === 0);
+
+  /* markWs decides from the last character whether there is anything to look
+     for, and only a line ending in `>` still pays for stripping the tags. The
+     answer must not change for any shape of line. */
+  const SHAPES = [
+    'const x = 1;',
+    '<span class="hl-key">const</span> x = <span class="hl-num">1</span>;',
+    '<span class="hl-com">// catatan</span>',
+    'a &amp; b',
+    'trailing &gt;',
+    'x  ',
+    '<span class="hl-com">// catatan  </span>',
+    '<span class="hl-key">const</span> x;  ',
+    '\tindent',
+    '<span class="hl-str">"a\tb"</span>',
+    'a<span class="hl-op">&gt;</span>',
+    '>',
+    ' ',
+    '&gt; ',
+  ];
+  const marked = SHAPES.map((s) => Diff.markWs(s));
+  check('a line ending in a letter, a bracket or an entity is handed back as is',
+    SHAPES.slice(0, 5).every((s, i) => marked[i] === s) && marked[10] === SHAPES[10]
+    && marked[11] === '>', marked.slice(0, 5));
+  check('one ending in a space, in or out of a span, is still marked',
+    marked[5] === 'x<span class="ws-eol">  </span>'
+    && marked[6] === '<span class="hl-com">// catatan<span class="ws-eol">  </span></span>'
+    && /ws-eol">  <\/span>$/.test(marked[7])
+    && marked[12] === '<span class="ws-eol"> </span>'
+    && marked[13] === '&gt;<span class="ws-eol"> </span>', marked.slice(5, 8));
+  check('and a tab anywhere is still marked whatever the line ends in',
+    marked[8] === '<span class="ws-tab">\t</span>indent'
+    && marked[9] === '<span class="hl-str">"a<span class="ws-tab">\t</span>b"</span>', marked.slice(8, 10));
+  const bare = (s) => s.replace(/<\/?span[^>]*>/g, '');
+  check('the marks are spans and nothing else, for every shape',
+    SHAPES.every((s, i) => bare(marked[i]) === bare(s)));
+}
+
+/* ── the release notes as data ──────────────────────────────────── */
+/* renderNotes() reads version, state, date, title, summary, sections with a
+   heading and items, and an optional known list. An entry missing one of
+   those renders as "undefined" in the dialog, which nothing else would catch. */
+console.log('\nthe release notes as data');
+{
+  const rl = { window: {} };
+  vm.createContext(rl);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src/releases.js'), 'utf8'), rl);
+  const R = rl.window.Releases;
+  const str = (v) => typeof v === 'string' && v.trim().length > 0;
+  const semver = (v) => /^\d+\.\d+\.\d+$/.test(v);
+  const newer = (a, b) => {
+    const [x, y] = [a, b].map((v) => v.split('.').map(Number));
+    for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+    return false;
+  };
+  check('there are release notes, and every one has a semver version',
+    Array.isArray(R) && R.length > 0 && R.every((r) => semver(r.version)),
+    R.map((r) => r.version));
+  check('every entry carries what the dialog reads',
+    R.every((r) => str(r.title) && str(r.summary)
+      && Array.isArray(r.sections) && r.sections.length > 0
+      && r.sections.every((s) => str(s.heading) && Array.isArray(s.items)
+        && s.items.length > 0 && s.items.every(str))
+      && (r.known === undefined || (Array.isArray(r.known) && r.known.every(str)))),
+    R.filter((r) => !(str(r.title) && Array.isArray(r.sections))).map((r) => r.version));
+  check('a shipped version has a date, and one in development has none yet',
+    R.every((r) => (r.state === 'development'
+      ? r.date === undefined
+      : r.state === undefined && /^\d{4}-\d{2}-\d{2}$/.test(r.date))),
+    R.map((r) => [r.version, r.state, r.date]));
+  check('versions are unique and run newest first',
+    new Set(R.map((r) => r.version)).size === R.length
+    && R.every((r, i) => i === 0 || newer(R[i - 1].version, r.version)),
+    R.map((r) => r.version));
+  check('at most one version is in development, and it is the newest',
+    R.filter((r) => r.state === 'development').length <= 1
+    && R.every((r, i) => r.state !== 'development' || i === 0));
 }
 
 fs.rmSync(REPO, { recursive: true, force: true });

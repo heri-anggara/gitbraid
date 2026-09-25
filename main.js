@@ -449,7 +449,20 @@ function recordGit(cwd, args, ms, stderr, code, output) {
   if (gitLog.length > LOG_MAX) gitLog.splice(0, gitLog.length - LOG_MAX);
 }
 
-handle('app:log', async () => gitLog.slice().reverse());
+/* Newest first. `since` is the timestamp the window already has entries up to,
+   so only what arrived after it travels: the whole log went over IPC after
+   every action — up to LOG_MAX entries carrying up to OUT_MAX_CHARS each — for
+   the window to keep the last few. Walked from the tail rather than copied and
+   reversed, since the tail is where the new entries are. */
+handle('app:log', async (opts = {}) => {
+  const since = Number(opts?.since) || 0;
+  if (!since) return gitLog.slice().reverse();
+  const out = [];
+  for (let i = gitLog.length - 1; i >= 0; i--) {
+    if (gitLog[i].at >= since) out.push(gitLog[i]);
+  }
+  return out;
+});
 handle('app:clearLog', async () => { gitLog.length = 0; return true; });
 
 /** `extraEnv` is for the few commands that need to drive git's editors. */
@@ -716,26 +729,61 @@ const LOG_FORMAT = [
   '%H', '%P', '%an', '%ae', '%at', '%cn', '%ct', '%D', '%s', '%b',
 ].join('%x1f');
 
+/* Records are separated by NUL and the ten fields inside one by 0x1F. Walked
+   by index rather than split: `split('\0')`, then `trim` on every chunk, then
+   `split(UNIT)` on each, made a second copy of the whole log as fragments
+   before a single record object existed. Worse, the last split cut the body
+   wherever it happened to hold a 0x1F — git does not strip the byte from a
+   message — and kept only the piece before it. The body is the tenth field
+   and the last, so it is taken whole from the ninth separator to the end of
+   the record, whatever it contains. A record with fewer fields yields what it
+   has, as the split did. */
+
+/* The characters trim() removes. A record that is nothing but these is the gap
+   between two records, not one — checked by hand because a regular expression
+   run against the whole log for each record was the slowest part of the walk. */
+function isSpace(c) {
+  return c === 32 || (c >= 9 && c <= 13) || c === 0xa0 || c === 0xfeff
+    || c === 0x1680 || (c >= 0x2000 && c <= 0x200a)
+    || c === 0x2028 || c === 0x2029 || c === 0x202f || c === 0x205f || c === 0x3000;
+}
+
 function parseLog(raw) {
-  if (!raw.trim()) return [];
-  return raw
-    .split('\0')
-    .filter((c) => c.trim())
-    .map((chunk) => {
-      const f = chunk.replace(/^\n/, '').split(UNIT);
-      return {
-        hash: f[0],
-        parents: f[1] ? f[1].split(' ').filter(Boolean) : [],
-        author: f[2],
-        email: f[3],
-        authorDate: Number(f[4]) * 1000,
-        committer: f[5],
-        commitDate: Number(f[6]) * 1000,
-        refs: f[7] ? f[7].split(', ').filter(Boolean) : [],
-        subject: f[8] || '',
-        body: (f[9] || '').trim(),
-      };
+  const out = [];
+  const len = raw.length;
+  for (let start = 0; start < len;) {
+    let end = raw.indexOf('\0', start);
+    if (end < 0) end = len;
+    let at = start;
+    start = end + 1;
+    // Older gits wrote a newline after the NUL; it is not part of the hash.
+    if (raw.charCodeAt(at) === 10) at++;
+    let probe = at;
+    while (probe < end && isSpace(raw.charCodeAt(probe))) probe++;
+    if (probe >= end) continue;
+    const f = new Array(10);
+    let i = 0;
+    for (; i < 9; i++) {
+      const sep = raw.indexOf(UNIT, at);
+      if (sep < 0 || sep >= end) break;
+      f[i] = raw.slice(at, sep);
+      at = sep + 1;
+    }
+    f[i] = raw.slice(at, end);   // the body, whole — or the last field there was
+    out.push({
+      hash: f[0],
+      parents: f[1] ? f[1].split(' ').filter(Boolean) : [],
+      author: f[2],
+      email: f[3],
+      authorDate: Number(f[4]) * 1000,
+      committer: f[5],
+      commitDate: Number(f[6]) * 1000,
+      refs: f[7] ? f[7].split(', ').filter(Boolean) : [],
+      subject: f[8] || '',
+      body: (f[9] || '').trim(),
     });
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ */
@@ -746,20 +794,30 @@ function recentsFile() {
   return path.join(app.getPath('userData'), 'recent-repos.json');
 }
 
+/* The file is read once and kept until this process writes it: every write goes
+   through writeRecents, which is what pushRecent, forgetting a repository and
+   the two "remove" actions call before rebuilding the menu. Nothing else writes
+   it while the application runs. Callers get a copy, since two of them filter
+   and re-order what they are handed. */
+let recentsRaw = null;
+
 /** Entries on disk. Older builds stored bare path strings — read those too. */
 function readRecentsRaw() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(recentsFile(), 'utf8'));
-    if (!Array.isArray(raw)) return [];
-    return raw
-      .map((e) => (typeof e === 'string' ? { path: e, openedAt: 0 } : e))
-      .filter((e) => e && typeof e.path === 'string');
-  } catch {
-    return [];
+  if (!recentsRaw) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(recentsFile(), 'utf8'));
+      recentsRaw = !Array.isArray(raw) ? [] : raw
+        .map((e) => (typeof e === 'string' ? { path: e, openedAt: 0 } : e))
+        .filter((e) => e && typeof e.path === 'string');
+    } catch {
+      recentsRaw = [];
+    }
   }
+  return recentsRaw.slice();
 }
 
 function writeRecents(list) {
+  recentsRaw = null;
   try {
     fs.mkdirSync(path.dirname(recentsFile()), { recursive: true });
     fs.writeFileSync(recentsFile(), JSON.stringify(list, null, 2));
@@ -769,7 +827,10 @@ function writeRecents(list) {
   return list;
 }
 
-/** Entries the welcome screen can render: still on disk, still a repository. */
+/** Entries the welcome screen can render: still on disk, still a repository.
+    The check is made each time, and kept out of the cache on purpose: a
+    repository deleted while the application runs should drop out of the list,
+    and a dozen stats are not the cost the read and parse were. */
 function readRecents() {
   return readRecentsRaw()
     .filter((e) => fs.existsSync(path.join(e.path, '.git')))
@@ -969,23 +1030,36 @@ function which(cmd) {
   return null;
 }
 
-let editorCache = null;
+/* Both answers are kept. The sweep over the candidates is a stat per PATH entry
+   for each of some twenty names, and it used to run again on every open when
+   nothing was found; and the configured choice cost a git process per open
+   before the sweep was even consulted. What is installed does not change while
+   the application runs, and the setting is invalidated where it is written. */
+let editorCache;                       // undefined until the sweep has run; null when it found nothing
+const configuredEditor = new Map();    // repo path -> the editor gitbraid.editor names, or null
 
 async function resolveEditor(repo) {
   // An explicit choice always wins: git config gitbraid.editor "code -w"
-  const configured = repo ? await readConfig(repo, '--get', 'gitbraid.editor') : '';
-  if (configured) {
-    const [cmd, ...args] = configured.split(/\s+/);
-    if (which(cmd)) return { cmd, args, label: configured, configured: true };
+  if (repo) {
+    if (!configuredEditor.has(repo)) {
+      let editor = null;
+      const configured = await readConfig(repo, '--get', 'gitbraid.editor');
+      if (configured) {
+        const [cmd, ...args] = configured.split(/\s+/);
+        if (which(cmd)) editor = { cmd, args, label: configured, configured: true };
+      }
+      configuredEditor.set(repo, editor);
+    }
+    const editor = configuredEditor.get(repo);
+    if (editor) return editor;
   }
-  if (editorCache) return editorCache;
-  for (const cmd of [...CODE_EDITORS, ...TEXT_EDITORS]) {
-    if (which(cmd)) {
-      editorCache = { cmd, args: [], label: cmd };
-      return editorCache;
+  if (editorCache === undefined) {
+    editorCache = null;
+    for (const cmd of [...CODE_EDITORS, ...TEXT_EDITORS]) {
+      if (which(cmd)) { editorCache = { cmd, args: [], label: cmd }; break; }
     }
   }
-  return null;
+  return editorCache;
 }
 
 handle('shell:openInEditor', async (repo, file) => {
@@ -1026,23 +1100,30 @@ const send = (action, extra) => win?.webContents.send('menu:action', { action, .
 /* Read from our own package.json rather than app.getVersion(): that call falls
    back to Electron's own version whenever the app is not started as a package,
    and then the About box reports the wrong product. */
+/* Read once, the first time either is asked. The file is part of the program
+   and does not change while it runs — and both were being read and parsed on
+   every call, which the updater makes once per request and once per redirect. */
+let ownPackage;   // undefined until read; null when it could not be
+
+function readOwnPackage() {
+  if (ownPackage === undefined) {
+    try { ownPackage = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')); }
+    catch { ownPackage = null; }
+  }
+  return ownPackage;
+}
+
 /** Where the status-bar logo points. Empty until it is set in package.json. */
 function ownHomepage() {
-  try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
-    const url = pkg.homepage || (typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url);
-    return /^https?:\/\//.test(url || '') ? url : '';
-  } catch {
-    return '';
-  }
+  const pkg = readOwnPackage();
+  if (!pkg) return '';
+  const url = pkg.homepage || (typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url);
+  return /^https?:\/\//.test(url || '') ? url : '';
 }
 
 function ownVersion() {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8')).version;
-  } catch {
-    return app.getVersion();
-  }
+  const pkg = readOwnPackage();
+  return pkg ? pkg.version : app.getVersion();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1051,6 +1132,7 @@ function ownVersion() {
 
 const https = require('https');
 const crypto = require('crypto');
+const { pipeline } = require('stream');
 
 /** owner/repo, read from the project URL already in package.json. */
 function githubSlug() {
@@ -1061,7 +1143,16 @@ function githubSlug() {
 /* Node's own https, deliberately: an updater is exactly the kind of thing one
    reaches for a library to do, and reaching would end this project's habit of
    shipping no runtime dependencies at all. */
-function getUrl(url, { onProgress = null, hops = 5 } = {}) {
+/* Two shapes of answer. Without `toFile` the body comes back as a Buffer, which
+   is right for the release metadata and the checksum file: a few kilobytes.
+   With it the body is written to that path as it arrives and hashed on the
+   way past, and what comes back is `{ sha512, bytes }` — the program being
+   downloaded is a hundred megabytes, and it used to be held whole in memory
+   three times over: the chunks, their concatenation, and the hash's read of
+   it. `pipeline` tears down both ends when either fails; the half-written
+   file is the caller's to remove, since the caller knows whether to try
+   again. */
+function getUrl(url, { onProgress = null, hops = 5, toFile = null } = {}) {
   return new Promise((resolve, reject) => {
     const req = https.get(url, {
       headers: {
@@ -1074,25 +1165,42 @@ function getUrl(url, { onProgress = null, hops = 5 } = {}) {
       if (statusCode >= 300 && statusCode < 400 && headers.location) {
         res.resume();
         if (!hops) return reject(new Error('Too many redirects.'));
-        return resolve(getUrl(new URL(headers.location, url).href, { onProgress, hops: hops - 1 }));
+        return resolve(getUrl(new URL(headers.location, url).href,
+          { onProgress, hops: hops - 1, toFile }));
       }
       if (statusCode !== 200) {
         res.resume();
         return reject(new Error(`${url.replace(/\?.*/, '')} answered ${statusCode}.`));
       }
       const total = Number(headers['content-length']) || 0;
-      const chunks = [];
       let read = 0;
+      if (!toFile) {
+        const chunks = [];
+        res.on('data', (c) => {
+          chunks.push(c);
+          read += c.length;
+          if (onProgress) onProgress(read, total);
+        });
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+        res.on('error', reject);
+        return;
+      }
+      const hash = crypto.createHash('sha512');
       res.on('data', (c) => {
-        chunks.push(c);
+        hash.update(c);
         read += c.length;
         if (onProgress) onProgress(read, total);
       });
-      res.on('end', () => resolve(Buffer.concat(chunks)));
-      res.on('error', reject);
+      pipeline(res, fs.createWriteStream(toFile), (err) => {
+        if (err) return reject(err);
+        resolve({ sha512: hash.digest('base64'), bytes: read });
+      });
     });
     req.on('error', reject);
-    req.setTimeout(30000, () => req.destroy(new Error('The update server did not answer.')));
+    /* Inactivity, not a deadline: a download that is still moving is left
+       alone. Given a code so that the download can tell it from a refusal. */
+    req.setTimeout(30000, () => req.destroy(Object.assign(
+      new Error('The update server did not answer.'), { code: 'ETIMEDOUT' })));
   });
 }
 
@@ -1160,19 +1268,38 @@ handle('update:download', async (info) => {
   const want = matchChecksum(yml, asset.name);
   if (!want) throw new Error(`latest-linux.yml carries no checksum for ${asset.name}.`);
 
-  const file = await getUrl(asset.url, {
-    onProgress: (read, total) => sendUpdateProgress(read, total),
-  });
-  const got = crypto.createHash('sha512').update(file).digest('base64');
-  if (got !== want) {
+  /* Written beside where it will end up and renamed into place only once the
+     checksum has matched, so a file bearing the release's name is never one
+     that failed the check. A connection that drops gets one more attempt, and
+     only that: a mismatch or a refusal will not change its mind. */
+  const target = path.join(os.tmpdir(), asset.name);
+  const part = `${target}.part`;
+  let got;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      got = await getUrl(asset.url, {
+        toFile: part,
+        onProgress: (read, total) => sendUpdateProgress(read, total),
+      });
+      break;
+    } catch (e) {
+      fs.rmSync(part, { force: true });
+      if (attempt || !RETRY_CODES.has(e.code)) throw e;
+    }
+  }
+  if (got.sha512 !== want) {
+    fs.rmSync(part, { force: true });
     throw new Error('The download does not match its published checksum. Nothing was '
       + 'installed.');
   }
-
-  const target = path.join(os.tmpdir(), asset.name);
-  fs.writeFileSync(target, file, { mode: kind === 'appimage' ? 0o755 : 0o644 });
+  fs.chmodSync(part, kind === 'appimage' ? 0o755 : 0o644);
+  fs.renameSync(part, target);
   return { path: target, name: asset.name, kind };
 });
+
+/* The ways a connection dies under a download, as Node names them. Anything
+   else — a 404, a bad certificate, a mismatch — is an answer, not an accident. */
+const RETRY_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED']);
 
 /* The yml is small and regular; a parser for the two lines that matter beats a
    dependency for reading the whole format. */
@@ -1479,23 +1606,59 @@ handle('repos:forget', async (repo) => {
   return true;
 });
 
+/** gitDirOf's question — is this a repository? — asked without blocking, for a
+    walk that asks it of every folder it visits. */
+async function isRepoDir(dir) {
+  const dot = path.join(dir, '.git');
+  try {
+    const st = await fs.promises.stat(dot);
+    if (st.isDirectory()) return true;
+    return /^gitdir:/m.test(await fs.promises.readFile(dot, 'utf8'));
+  } catch {
+    return false;   // not a repository
+  }
+}
+
 /** Walk a folder looking for repositories. Shallow on purpose: a deep scan of
     a home directory would crawl through every node_modules on the disk. */
+/* An explicit stack worked by a few folders at a time, where this was a
+   synchronous recursion: a home directory three levels deep held the main
+   process — every other tab, the menu, the askpass dialog — for the whole of
+   the walk. One folder at a time would have freed the loop just as well but
+   costs two round trips to the thread pool in series per folder; measured on a
+   tree of 4,400 folders that made a 244 ms walk a 2.2 s one. Eight in flight
+   lets the pool overlap them. */
 handle('repos:scan', async (root, depth = 3) => {
   const skip = new Set(['node_modules', '.git', 'vendor', 'dist', 'build', '.cache', 'target']);
   const found = [];
-  const walk = (dir, left) => {
-    if (found.length >= 300) return;
-    if (gitDirOf(dir)) { found.push(dir); return; }   // do not descend into a repo
+  const stack = [[root, depth]];
+  const visit = async ([dir, left]) => {
+    if (await isRepoDir(dir)) {   // do not descend into a repo
+      if (found.length < 300) found.push(dir);
+      return;
+    }
     if (left <= 0) return;
     let entries = [];
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
       if (!e.isDirectory() || e.name.startsWith('.') || skip.has(e.name)) continue;
-      walk(path.join(dir, e.name), left - 1);
+      stack.push([path.join(dir, e.name), left - 1]);
     }
   };
-  walk(root, depth);
+  await new Promise((resolve) => {
+    let busy = 0;
+    const pump = () => {
+      while (busy < 8 && stack.length && found.length < 300) {
+        busy++;
+        visit(stack.pop()).then(settle, settle);
+      }
+      if (!busy) resolve();
+    };
+    const settle = () => { busy--; pump(); };
+    pump();
+  });
+  // Which folder finished first is timing; the list the reader sees should not be.
+  found.sort();
 
   const store = readReposStore();
   const added = found.filter((p) => !store.known.includes(p));
@@ -1504,11 +1667,24 @@ handle('repos:scan', async (root, depth = 3) => {
   return { found: found.length, added: added.length };
 });
 
+/** `fn` over every item, at most `limit` of them in flight at once. */
+async function eachLimit(items, limit, fn) {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await fn(items[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
 /** Uncommitted-work counts, asked for separately because this one does spawn
     git — once per repository. */
+/* A few at a time, over the whole list. This used to start the first sixty at
+   once and leave the rest unasked — a list of seventy showed ten rows with no
+   counts and nothing to say why. Six in flight is enough to keep the list
+   filling without the machine noticing sixty git processes at once. */
 handle('repos:wip', async (paths) => {
   const out = {};
-  const jobs = paths.slice(0, 60).map(async (repo) => {
+  await eachLimit(Array.isArray(paths) ? paths : [], 6, async (repo) => {
     try {
       const raw = await git(repo, ['status', '--porcelain']);
       let modified = 0, added = 0, deleted = 0;
@@ -1524,7 +1700,6 @@ handle('repos:wip', async (paths) => {
       out[repo] = null;
     }
   });
-  await Promise.all(jobs);
   return out;
 });
 
@@ -1571,6 +1746,21 @@ function createWindow() {
     },
   });
   win.loadFile(path.join(__dirname, 'src', 'index.html'));
+
+  /* The window shows one page and opens no others. A link in release notes or
+     a commit message that wants a new window goes to the browser instead, if
+     it is a web link at all; and nothing — a dropped file, a crafted link —
+     may take the page itself somewhere else. loadFile does not raise
+     will-navigate, and Relaunch goes through app.relaunch, so the page's own
+     loading is untouched by either. */
+  const { webContents } = win;
+  webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  webContents.on('will-navigate', (e, url) => {
+    if (url !== webContents.getURL()) e.preventDefault();
+  });
 
   /* A renderer that never reports in must not cost the user their window. */
   showTimer = setTimeout(revealWindow, 3000);
@@ -1705,6 +1895,8 @@ handle('git:setOption', async (key, value) => {
   if (!GLOBAL_KEYS.has(key)) throw new Error(`${key} is not a setting GitBraid manages.`);
   const home = app.getPath('home');
   const v = String(value || '').trim();
+  // The setting is global, so every repository's remembered answer is stale.
+  if (key === 'gitbraid.editor') configuredEditor.clear();
   if (!v) {
     // Removing the key hands the decision back to git's own default.
     try { await git(home, ['config', '--global', '--unset', key]); } catch { /* was not set */ }
@@ -1714,19 +1906,41 @@ handle('git:setOption', async (key, value) => {
   return v;
 });
 
-handle('git:identity', async (repo) => {
-  const home = app.getPath('home');
-  const out = {
-    globalName: await readConfig(home, '--global', 'user.name'),
-    globalEmail: await readConfig(home, '--global', 'user.email'),
-    localName: '',
-    localEmail: '',
-  };
-  if (repo) {
-    out.localName = await readConfig(repo, '--local', 'user.name');
-    out.localEmail = await readConfig(repo, '--local', 'user.email');
+/* Name and email of one scope in a single process. `--get-regexp` exits 1 when
+   nothing matches, which is an answer rather than an error; with -z each entry
+   is `key\nvalue\0`, so a name with a space in it stays whole. A key set twice
+   is listed twice, and the later one wins, as `git config --get` answers. */
+async function readIdentity(dir, scope) {
+  const out = { name: '', email: '' };
+  let raw = '';
+  try { raw = await git(dir, ['config', scope, '-z', '--get-regexp', '^user\\.(name|email)$']); }
+  catch { return out; }
+  for (const entry of raw.split('\0')) {
+    const nl = entry.indexOf('\n');
+    if (nl < 0) continue;
+    const key = entry.slice(0, nl);
+    const value = entry.slice(nl + 1).trim();
+    if (key === 'user.name') out.name = value;
+    else if (key === 'user.email') out.email = value;
   }
   return out;
+}
+
+/* The global identity is asked for on every tab switch and changes only when
+   the settings dialog changes it, so it is read once and kept until then. It
+   is read from the home directory, as it always was — so a conditional include
+   keyed to one repository's path was never in this answer and is not now. */
+let globalIdentity = null;
+
+handle('git:identity', async (repo) => {
+  if (!globalIdentity) globalIdentity = await readIdentity(app.getPath('home'), '--global');
+  const local = repo ? await readIdentity(repo, '--local') : { name: '', email: '' };
+  return {
+    globalName: globalIdentity.name,
+    globalEmail: globalIdentity.email,
+    localName: local.name,
+    localEmail: local.email,
+  };
 });
 
 handle('git:setIdentity', async (repo, { name, email, local }) => {
@@ -1735,13 +1949,23 @@ handle('git:setIdentity', async (repo, { name, email, local }) => {
   const dir = local ? repo : app.getPath('home');
   if (name) await git(dir, ['config', scope, 'user.name', name]);
   if (email) await git(dir, ['config', scope, 'user.email', email]);
+  if (!local) globalIdentity = null;   // read afresh next time it is asked for
   return true;
 });
 
 /** Renderer tells the menu what to show enabled, checked, or greyed out. */
+/* The window sends this on every selection and tab change, and most of those
+   change nothing the menu shows. Rebuilding it anyway meant reading the recents
+   file and building every template item each time, so a patch that repeats what
+   is already there returns before either. */
 handle('app:menuState', async (patch) => {
-  Object.assign(menuState, patch);
-  buildMenu();
+  let changed = false;
+  for (const key of Object.keys(patch || {})) {
+    if (menuState[key] === patch[key]) continue;
+    menuState[key] = patch[key];
+    changed = true;
+  }
+  if (changed) buildMenu();
   return menuState;
 });
 
@@ -2017,29 +2241,40 @@ handle('repo:status', async (repo) =>
    three used to be drawn, so stashing once put three rows in the history — two
    of them plumbing the user never made.
 
-   They are identified by asking git, not by reading their messages: the second
-   parent of a stash is the index commit and the third is the untracked one.
-   A stash made with nothing staged has no third parent, so ^3 is allowed to
-   fail.
+   They are identified by their parents, not by reading their messages: the
+   second parent of a stash is the index commit and the third, when there is
+   one, holds the untracked files. Both are in the listing itself — `%P` names
+   every parent on the stash's own line — so nothing has to be asked per stash.
+   This used to run `rev-parse` for `^2` and again for `^3` of each one, one
+   after another, on every refresh of the history: one process plus two per
+   stash, where one now does.
 
    The stashes themselves are added to the walk by hash. `--all` only reaches
    refs/stash, which is the top of the stack — so with two stashes the older
    one's rows vanished entirely while the newer one's were drawn. Naming them
    all is what makes the history say the same thing however many there are. */
+/* What the window is told about a stash's parents is cut to the first one, so
+   the graph does not draw edges to the two commits hidden above. The full list
+   is kept here, from the same listing, for the two handlers that are handed a
+   row's parents back: a stash has to go on reading as the merge it is, and the
+   commit holding its untracked files is the third of them. */
+const stashParents = new Map();   // repo path -> Map(stash hash -> [parents])
+
 async function stashShape(repo) {
   const hide = new Set();
   const marks = new Set();
   let list = '';
-  try { list = await git(repo, ['stash', 'list', '--format=%H']); } catch { return { hide, marks }; }
-  for (const hash of list.split('\n').map((h) => h.trim()).filter(Boolean)) {
+  try { list = await git(repo, ['stash', 'list', '--format=%H %P']); } catch { return { hide, marks }; }
+  const known = new Map();
+  for (const line of list.split('\n')) {
+    const [hash, ...parents] = line.trim().split(' ').filter(Boolean);
+    if (!hash) continue;
     marks.add(hash);
-    for (const side of ['^2', '^3']) {
-      try {
-        const h = (await git(repo, ['rev-parse', '--verify', '-q', hash + side])).trim();
-        if (h) hide.add(h);
-      } catch { /* no staged part, or no untracked part */ }
-    }
+    known.set(hash, parents);
+    if (parents[1]) hide.add(parents[1]);   // the index commit
+    if (parents[2]) hide.add(parents[2]);   // the untracked files, when any went in
   }
+  stashParents.set(repo, known);
   return { hide, marks };
 }
 
@@ -2386,15 +2621,41 @@ handle('repo:conflictFile', async (repo, file) => {
   }
 });
 
-/** One file's changes inside one commit, rather than the whole commit. */
-/** How many parents a commit has, without loading its whole log entry. */
-async function isMerge(repo, hash) {
-  const parents = (await git(repo, ['rev-list', '--parents', '-n', '1', hash])).trim().split(' ');
-  return parents.length > 2;   // the commit's own hash, then its parents
+/* A commit's parents, from what is already known before git is asked. The
+   window was handed them with the row, and may hand them back; the listing's
+   own record of a stash comes first, since the row's copy of that one was cut
+   to a single parent for the graph's sake. Null when nobody knows. */
+function knownParents(repo, hash, parents) {
+  return stashParents.get(repo)?.get(hash) || (Array.isArray(parents) ? parents : null);
 }
 
-handle('repo:diffCommitFile', async (repo, { hash, file, ignoreWhitespace, context, side = 'in' }) => {
-  const merge = await isMerge(repo, hash);
+/** Whether a commit has more than one parent. Asked of git only when the caller
+    did not say: the window asks this three times for one merge commit. */
+async function isMerge(repo, hash, parents) {
+  const known = knownParents(repo, hash, parents);
+  if (known) return known.length > 1;
+  const out = (await git(repo, ['rev-list', '--parents', '-n', '1', hash])).trim().split(' ');
+  return out.length > 2;   // the commit's own hash, then its parents
+}
+
+/* The tree with nothing in it, for showing a file the branch has never seen as
+   all additions. Asked of git rather than written down, because it is one hash
+   in a SHA-1 repository and another in a SHA-256 one — and asked once per
+   repository, since it is the same answer every time after that. */
+const emptyTrees = new Map();   // repo path -> hash
+
+async function emptyTree(repo) {
+  let hash = emptyTrees.get(repo);
+  if (!hash) {
+    hash = (await git(repo, ['hash-object', '-t', 'tree', NULL_DEVICE])).trim();
+    emptyTrees.set(repo, hash);
+  }
+  return hash;
+}
+
+/** One file's changes inside one commit, rather than the whole commit. */
+handle('repo:diffCommitFile', async (repo, { hash, file, ignoreWhitespace, context, side = 'in', parents }) => {
+  const merge = await isMerge(repo, hash, parents);
   const args = diffArgs('diff', '--no-color', '--find-renames');
   if (ignoreWhitespace) args.push('-w');
   args.push(...contextArg(context));
@@ -2412,17 +2673,10 @@ handle('repo:diffCommitFile', async (repo, { hash, file, ignoreWhitespace, conte
        pane came up empty. Shown against the empty tree instead, which is how a
        file the branch has never seen ought to read: every line added. */
     if (side === 'in') {
-      let third = '';
-      try { third = (await git(repo, ['rev-parse', '--verify', '-q', `${hash}^3`])).trim(); }
-      catch { /* not a stash, or nothing untracked in it */ }
-      if (third) {
-        const inThird = (await git(repo, ['ls-tree', '-r', '--name-only', '-z', third]))
-          .split('\0').filter(Boolean);
-        if (inThird.includes(file)) {
-          const empty = (await git(repo, ['hash-object', '-t', 'tree', '/dev/null'])).trim();
-          args.push(empty, third, '--', file);
-          return git(repo, args);
-        }
+      const { third, files } = await stashThirdParent(repo, hash, parents);
+      if (third && files.includes(file)) {
+        args.push(await emptyTree(repo), third, '--', file);
+        return git(repo, args);
       }
     }
     args.push(`${hash}${MERGE_SIDES[side] || '^1'}`, hash, '--', file);
@@ -2494,27 +2748,36 @@ handle('repo:rewordCommit', async (repo, { hash, message }) => {
  */
 const MERGE_SIDES = { in: '^1', other: '^2' };
 
-/* The files a stash is holding.
+/* The commit a stash keeps its untracked files in, and the paths inside it.
 
    A stash keeps its untracked files in a third parent of its own, not in its
    tree, so comparing it with the commit it was taken from finds none of them —
    a stash of nothing but new files read as "no files" in the panel, which is
-   exactly as wrong as it sounds. They are listed from that third parent and
-   marked added, which is what they are: files the branch has never seen. */
-async function stashUntracked(repo, hash) {
-  let third = '';
-  try { third = (await git(repo, ['rev-parse', '--verify', '-q', `${hash}^3`])).trim(); }
-  catch { return []; }            // nothing untracked went in, which is ordinary
-  if (!third) return [];
+   exactly as wrong as it sounds. Only a stash has a third parent, so asking
+   costs one rev-parse and answers for every commit that is not one — and
+   nothing at all when the parents came with the request. The one place this is
+   asked, for the file list and for the diff alike; the diff used to carry a
+   copy of it that spelled the null device out by hand. */
+async function stashThirdParent(repo, hash, parents) {
+  const known = knownParents(repo, hash, parents);
+  let third = known ? (known[2] || '') : null;
+  if (third === null) {
+    try { third = (await git(repo, ['rev-parse', '--verify', '-q', `${hash}^3`])).trim(); }
+    catch { third = ''; }          // nothing untracked went in, which is ordinary
+  }
+  if (!third) return { third: '', files: [] };
   const raw = await git(repo, ['ls-tree', '-r', '-z', '--name-only', third]);
-  return raw.split('\0').filter(Boolean).map((path) => ({ status: 'A', path, untracked: true }));
+  return { third, files: raw.split('\0').filter(Boolean) };
 }
 
-handle('repo:commitFiles', async (repo, hash, side = 'in') => {
+/* `parents` is optional and comes from the row the window is showing: with it,
+   whether this is a merge is known without asking git. Without it, git is
+   asked, as before. */
+handle('repo:commitFiles', async (repo, hash, side = 'in', { parents } = {}) => {
   const args = ['diff-tree', '--no-commit-id', '--name-status', '-r', '-z', '--find-renames'];
   if (side === 'combined') {
     args.push('--cc', hash);
-  } else if (MERGE_SIDES[side] && await isMerge(repo, hash)) {
+  } else if (MERGE_SIDES[side] && await isMerge(repo, hash, parents)) {
     args.push(`${hash}${MERGE_SIDES[side]}`, hash);
   } else {
     /* `--root` matters for the very first commit of a repository: without it
@@ -2534,14 +2797,17 @@ handle('repo:commitFiles', async (repo, hash, side = 'in') => {
     }
   }
 
-  /* Only a stash has a third parent, so asking costs one rev-parse and answers
-     for every commit that is not one. A path already listed is left alone: it
-     was tracked and changed, and saying it twice would be worse than either. */
+  /* The untracked files a stash holds, listed from its third parent and marked
+     added, which is what they are: files the branch has never seen. A path
+     already listed is left alone: it was tracked and changed, and saying it
+     twice would be worse than either. */
   if (side === 'in') {
-    const extra = await stashUntracked(repo, hash);
-    if (extra.length) {
+    const { files: untracked } = await stashThirdParent(repo, hash, parents);
+    if (untracked.length) {
       const seen = new Set(files.map((f) => f.path));
-      for (const f of extra) if (!seen.has(f.path)) files.push(f);
+      for (const path of untracked) {
+        if (!seen.has(path)) files.push({ status: 'A', path, untracked: true });
+      }
     }
   }
   return files;
@@ -2662,9 +2928,18 @@ handle('repo:checkoutWith', async (repo, ref, mode) => {
   }
 });
 
+/* A ref name cannot begin with a dash — git refuses it — but an argument that
+   does would be read as an option before git got to say so. */
+const refName = (name, what) => {
+  const n = String(name || '').trim();
+  if (!n || n.startsWith('-')) throw new Error(`"${name}" is not a valid ${what} name.`);
+  return n;
+};
+
 handle('repo:createBranch', async (repo, name, startPoint, checkout) => {
-  if (checkout) return git(repo, ['checkout', '-b', name, ...(startPoint ? [startPoint] : [])]);
-  return git(repo, ['branch', name, ...(startPoint ? [startPoint] : [])]);
+  const branch = refName(name, 'branch');
+  if (checkout) return git(repo, ['checkout', '-b', branch, ...(startPoint ? [startPoint] : [])]);
+  return git(repo, ['branch', branch, ...(startPoint ? [startPoint] : [])]);
 });
 
 handle('repo:deleteBranch', async (repo, name, force) =>
@@ -2701,9 +2976,12 @@ handle('repo:merge', async (repo, ref, mode = 'ff') => {
 
 handle('repo:rebase', async (repo, ref) => git(repo, ['rebase', ref]));
 
-handle('repo:reset', async (repo, hash, mode) =>
-  git(repo, ['reset', `--${mode}`, hash])
-);
+const RESET_MODES = new Set(['soft', 'mixed', 'hard', 'merge', 'keep']);
+
+handle('repo:reset', async (repo, hash, mode) => {
+  if (!RESET_MODES.has(mode)) throw new Error(`Unknown reset mode: ${mode}`);
+  return git(repo, ['reset', `--${mode}`, hash]);
+});
 
 handle('repo:revert', async (repo, hash) =>
   git(repo, ['revert', '--no-edit', hash])
@@ -2711,9 +2989,10 @@ handle('repo:revert', async (repo, hash) =>
 
 handle('repo:cherryPick', async (repo, hash) => git(repo, ['cherry-pick', hash]));
 
-handle('repo:tag', async (repo, name, hash, message) =>
-  git(repo, message ? ['tag', '-a', name, hash, '-m', message] : ['tag', name, hash])
-);
+handle('repo:tag', async (repo, name, hash, message) => {
+  const tag = refName(name, 'tag');
+  return git(repo, message ? ['tag', '-a', tag, hash, '-m', message] : ['tag', tag, hash]);
+});
 
 /* --- remote ops --- */
 
@@ -2920,7 +3199,15 @@ handle('repo:stashDrop', async (repo, ref) => git(repo, ['stash', 'drop', ref]))
 
 /* --- misc --- */
 
-handle('shell:openPath', async (p) => shell.openPath(p));
+/* Every caller hands this a folder — a repository, or the one a file sits in —
+   so a folder is all it opens. A file would go to whatever the desktop has
+   registered for it, and for a .desktop file or a script that is "run it". */
+handle('shell:openPath', async (p) => {
+  let st;
+  try { st = fs.statSync(String(p)); } catch { throw new Error(`No such folder: ${p}`); }
+  if (!st.isDirectory()) throw new Error('Only a folder can be shown in the file manager.');
+  return shell.openPath(p);
+});
 
 handle('shell:openExternal', async (url) => {
   if (/^https?:\/\//i.test(url)) return shell.openExternal(url);

@@ -194,11 +194,11 @@
            either means one of the parents had it and the result does not. */
         const marks = line.slice(0, sides);
         const text = line.slice(sides);
-        if (/\+/.test(marks)) {
+        if (marks.includes('+')) {
           hunk.lines.push({ type: 'add', old: null, new: newNo++, text, marks });
           hunk.raw.push(line);
           file.additions++;
-        } else if (/-/.test(marks)) {
+        } else if (marks.includes('-')) {
           hunk.lines.push({ type: 'del', old: oldNo++, new: null, text, marks });
           hunk.raw.push(line);
           file.deletions++;
@@ -311,8 +311,17 @@
   function markWs(html) {
     if (!html) return html;
     /* "Ends in whitespace" has to mean after the last tag: a trailing run that
-       fell inside a highlight span is the case a cheaper test would miss. */
-    if (!html.includes('\t') && !/[ \t]$/.test(html.replace(TRAILING_TAGS, ''))) return html;
+       fell inside a highlight span is the case a cheaper test would miss. But
+       the pattern that strips the tags walks the whole line, and most lines
+       end in a letter or a bracket with no tab anywhere — for those the last
+       character alone says there is nothing to do. Only a line ending in `>`
+       can be hiding a run inside a span, and only that one pays for the
+       stripping. */
+    if (!html.includes('\t')) {
+      const last = html.charCodeAt(html.length - 1);
+      if (last !== 32 /* space */ &&
+          (last !== 62 /* > */ || !/[ \t]$/.test(html.replace(TRAILING_TAGS, '')))) return html;
+    }
 
     const parts = html.split(/(<[^>]*>)/);   // even: text, odd: tag
     let inTail = true;                       // still walking the run at the end
@@ -417,6 +426,40 @@
     );
   }
 
+  /* One file's hunks, with those wholly outside the window kept as height
+     rather than as elements. Consecutive ones fold into a single spacer: a
+     200-file diff put ten thousand of them in the document on every paint,
+     each an element the browser had to lay out, for scroll arithmetic that
+     only ever reads their sum. The height is that same sum of the same
+     per-hunk terms — the rows' span plus one header height each — so the
+     renderer's model of the page is untouched. The fold stops at the file:
+     its header is a real element whose height the renderer measures off the
+     page, so a file cannot be reduced to a number here. `pos.seen` is the row
+     count so far across the whole diff, which is what the window is cut in. */
+  function hunkBodies(file, fi, actions, first, last, pos, count, draw) {
+    let out = '';
+    let gap = 0;
+    let folded = 0;
+    const flush = () => {
+      if (folded) out += `<div class="hunk hunk-gap" style="height:${gap}px"></div>`;
+      gap = 0;
+      folded = 0;
+    };
+    file.hunks.forEach((h, hi) => {
+      const start = pos.seen;
+      pos.seen += count(h);
+      if (pos.seen <= first || start >= last) {
+        gap += spanPx(start, pos.seen) + HEAD_H;
+        folded += 1;
+        return;
+      }
+      flush();
+      out += draw(file, h, fi, hi, actions, first - start, last - start, start);
+    });
+    flush();
+    return out;
+  }
+
   /** Render a parsed diff. `actions` are the per-hunk buttons to show. */
   function render(files, actions = [], opts = null) {
     setPaint(opts);
@@ -433,7 +476,7 @@
        scroll. */
     const first = opts && Number.isFinite(opts.first) ? opts.first : 0;
     const last = opts && Number.isFinite(opts.last) ? opts.last : Infinity;
-    let seen = 0;
+    const pos = { seen: 0 };
 
     return files
       .map((file, fi) => {
@@ -444,18 +487,7 @@
 
         const body = file.binary
           ? '<div class="empty-note">Binary file — no preview available.</div>'
-          : file.hunks
-              .map((h, hi) => {
-                const start = seen;
-                seen += h.lines.length;
-                // Wholly outside the window: kept as height, not as elements.
-                if (seen <= first || start >= last) {
-                  return `<div class="hunk hunk-gap" style="height:${
-                    spanPx(start, seen) + HEAD_H}px"></div>`;
-                }
-                return renderHunk(file, h, fi, hi, actions, first - start, last - start, start);
-              })
-              .join('');
+          : hunkBodies(file, fi, actions, first, last, pos, (h) => h.lines.length, renderHunk);
 
         return (
           '<section class="difffile">' +
@@ -497,7 +529,7 @@
      was left undrawn-in-a-window because "rows are not countable there" — they
      are: a run of removals beside a run of additions is as many rows as the
      longer of the two, and everything else is one row for one line. */
-  function pairCount(hunk) {
+  function countPairs(hunk) {
     let n = 0;
     let dels = 0;
     let adds = 0;
@@ -507,6 +539,37 @@
       else { n += Math.max(dels, adds) + 1; dels = 0; adds = 0; }
     }
     return n + Math.max(dels, adds);
+  }
+
+  /* Both are asked for on every paint and every scroll frame: renderSplit
+     counts every hunk to find the window and then pairs the whole of the one
+     it draws, and the renderer counts them all again for its height model. On
+     a single 50,000-line hunk that was 15 ms a paint for sixty drawn rows, all
+     of it spent rebuilding the same answer. Kept beside the hunk in a WeakMap
+     rather than on it, so a hunk still deep-compares to what parse() produced
+     and hunkPatch() never sees a field it did not write. parse() builds fresh
+     hunk objects, so nothing here can go stale. The rows are handed out shared
+     and every reader only walks them. */
+  const PAIRS = new WeakMap();
+  const PAIR_COUNTS = new WeakMap();
+
+  function pairRows(hunk) {
+    let rows = PAIRS.get(hunk);
+    if (!rows) {
+      rows = pairHunk(hunk);
+      PAIRS.set(hunk, rows);
+      PAIR_COUNTS.set(hunk, rows.length);
+    }
+    return rows;
+  }
+
+  function pairCount(hunk) {
+    let n = PAIR_COUNTS.get(hunk);
+    if (n === undefined) {
+      n = countPairs(hunk);
+      PAIR_COUNTS.set(hunk, n);
+    }
+    return n;
   }
 
   function rowCountSplit(files) {
@@ -529,7 +592,7 @@
         `<td class="dl-text ${cls}">${painted(l)}</td>`
       );
     };
-    const all = pairHunk(hunk);
+    const all = pairRows(hunk);
     const lo = Math.max(0, from);
     const hi = Math.min(all.length, to);
     const rows = all
@@ -570,7 +633,7 @@
     if (!files.length) return '<div class="empty-note">No textual changes here.</div>';
     const first = opts && Number.isFinite(opts.first) ? opts.first : 0;
     const last = opts && Number.isFinite(opts.last) ? opts.last : Infinity;
-    let seen = 0;
+    const pos = { seen: 0 };
     return files
       .map((file, fi) => {
         const title =
@@ -579,18 +642,7 @@
             : esc(file.newPath || file.oldPath);
         const body = file.binary
           ? '<div class="empty-note">Binary file — no preview available.</div>'
-          : file.hunks
-              .map((h, hi) => {
-                const start = seen;
-                const n = pairCount(h);
-                seen += n;
-                if (seen <= first || start >= last) {
-                  return `<div class="hunk hunk-gap" style="height:${
-                    spanPx(start, seen) + HEAD_H}px"></div>`;
-                }
-                return splitHunk(file, h, fi, hi, actions, first - start, last - start, start);
-              })
-              .join('');
+          : hunkBodies(file, fi, actions, first, last, pos, pairCount, splitHunk);
         return (
           '<section class="difffile">' +
           `<header class="difffile-head"><span class="difffile-name">${title}</span>` +
@@ -604,5 +656,5 @@
   }
 
   window.Diff = { parse, render, renderSplit, hunkPatch, esc, markWs,
-                  rowCount, rowCountSplit, pairCount, pairRows: pairHunk };
+                  rowCount, rowCountSplit, pairCount, pairRows };
 })();
