@@ -759,20 +759,30 @@ function recentsFile() {
   return path.join(app.getPath('userData'), 'recent-repos.json');
 }
 
+/* The file is read once and kept until this process writes it: every write goes
+   through writeRecents, which is what pushRecent, forgetting a repository and
+   the two "remove" actions call before rebuilding the menu. Nothing else writes
+   it while the application runs. Callers get a copy, since two of them filter
+   and re-order what they are handed. */
+let recentsRaw = null;
+
 /** Entries on disk. Older builds stored bare path strings — read those too. */
 function readRecentsRaw() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(recentsFile(), 'utf8'));
-    if (!Array.isArray(raw)) return [];
-    return raw
-      .map((e) => (typeof e === 'string' ? { path: e, openedAt: 0 } : e))
-      .filter((e) => e && typeof e.path === 'string');
-  } catch {
-    return [];
+  if (!recentsRaw) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(recentsFile(), 'utf8'));
+      recentsRaw = !Array.isArray(raw) ? [] : raw
+        .map((e) => (typeof e === 'string' ? { path: e, openedAt: 0 } : e))
+        .filter((e) => e && typeof e.path === 'string');
+    } catch {
+      recentsRaw = [];
+    }
   }
+  return recentsRaw.slice();
 }
 
 function writeRecents(list) {
+  recentsRaw = null;
   try {
     fs.mkdirSync(path.dirname(recentsFile()), { recursive: true });
     fs.writeFileSync(recentsFile(), JSON.stringify(list, null, 2));
@@ -782,7 +792,10 @@ function writeRecents(list) {
   return list;
 }
 
-/** Entries the welcome screen can render: still on disk, still a repository. */
+/** Entries the welcome screen can render: still on disk, still a repository.
+    The check is made each time, and kept out of the cache on purpose: a
+    repository deleted while the application runs should drop out of the list,
+    and a dozen stats are not the cost the read and parse were. */
 function readRecents() {
   return readRecentsRaw()
     .filter((e) => fs.existsSync(path.join(e.path, '.git')))
@@ -1790,9 +1803,18 @@ handle('git:setIdentity', async (repo, { name, email, local }) => {
 });
 
 /** Renderer tells the menu what to show enabled, checked, or greyed out. */
+/* The window sends this on every selection and tab change, and most of those
+   change nothing the menu shows. Rebuilding it anyway meant reading the recents
+   file and building every template item each time, so a patch that repeats what
+   is already there returns before either. */
 handle('app:menuState', async (patch) => {
-  Object.assign(menuState, patch);
-  buildMenu();
+  let changed = false;
+  for (const key of Object.keys(patch || {})) {
+    if (menuState[key] === patch[key]) continue;
+    menuState[key] = patch[key];
+    changed = true;
+  }
+  if (changed) buildMenu();
   return menuState;
 });
 
