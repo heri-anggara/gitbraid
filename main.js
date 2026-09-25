@@ -1727,19 +1727,41 @@ handle('git:setOption', async (key, value) => {
   return v;
 });
 
-handle('git:identity', async (repo) => {
-  const home = app.getPath('home');
-  const out = {
-    globalName: await readConfig(home, '--global', 'user.name'),
-    globalEmail: await readConfig(home, '--global', 'user.email'),
-    localName: '',
-    localEmail: '',
-  };
-  if (repo) {
-    out.localName = await readConfig(repo, '--local', 'user.name');
-    out.localEmail = await readConfig(repo, '--local', 'user.email');
+/* Name and email of one scope in a single process. `--get-regexp` exits 1 when
+   nothing matches, which is an answer rather than an error; with -z each entry
+   is `key\nvalue\0`, so a name with a space in it stays whole. A key set twice
+   is listed twice, and the later one wins, as `git config --get` answers. */
+async function readIdentity(dir, scope) {
+  const out = { name: '', email: '' };
+  let raw = '';
+  try { raw = await git(dir, ['config', scope, '-z', '--get-regexp', '^user\\.(name|email)$']); }
+  catch { return out; }
+  for (const entry of raw.split('\0')) {
+    const nl = entry.indexOf('\n');
+    if (nl < 0) continue;
+    const key = entry.slice(0, nl);
+    const value = entry.slice(nl + 1).trim();
+    if (key === 'user.name') out.name = value;
+    else if (key === 'user.email') out.email = value;
   }
   return out;
+}
+
+/* The global identity is asked for on every tab switch and changes only when
+   the settings dialog changes it, so it is read once and kept until then. It
+   is read from the home directory, as it always was — so a conditional include
+   keyed to one repository's path was never in this answer and is not now. */
+let globalIdentity = null;
+
+handle('git:identity', async (repo) => {
+  if (!globalIdentity) globalIdentity = await readIdentity(app.getPath('home'), '--global');
+  const local = repo ? await readIdentity(repo, '--local') : { name: '', email: '' };
+  return {
+    globalName: globalIdentity.name,
+    globalEmail: globalIdentity.email,
+    localName: local.name,
+    localEmail: local.email,
+  };
 });
 
 handle('git:setIdentity', async (repo, { name, email, local }) => {
@@ -1748,6 +1770,7 @@ handle('git:setIdentity', async (repo, { name, email, local }) => {
   const dir = local ? repo : app.getPath('home');
   if (name) await git(dir, ['config', scope, 'user.name', name]);
   if (email) await git(dir, ['config', scope, 'user.email', email]);
+  if (!local) globalIdentity = null;   // read afresh next time it is asked for
   return true;
 });
 
