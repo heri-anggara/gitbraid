@@ -1494,10 +1494,12 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   biasanya tidak menggambar ulang sama sekali: frame median **7 ms, sama rata
   dari 400 sampai 8.951 baris**, dan `refresh()` pada riwayat penuh turun dari
   3.346 ms ke 235 ms
-- Graph tetap digambar utuh: sebuah garis yang melintasi layar dari commit jauh
-  di atas ke induknya jauh di bawah ikut digambar walau kedua ujungnya tak
-  terlihat. Diperiksa terhadap perhitungan acuan di 65 pita berbeda yang semuanya
-  mengandung merge — nol selisih
+- Graph hanya menggambar pita yang terlihat: `Graph.render` menerima
+  `first`/`last`, menggambar baris di dalam pita itu (plus satu di atas dan di
+  bawahnya), lalu menyusul garis panjang yang melintasi pita dari luar — garis
+  dari commit jauh di atas ke induknya jauh di bawah tetap tampak walau kedua
+  ujungnya tak terlihat. Diperiksa terhadap perhitungan acuan di 65 pita berbeda
+  yang semuanya mengandung merge — nol selisih
 - Batas 400 baris itu bukan soal git: membaca seluruh 8.951 commit hanya 40 ms,
   praktis sama dengan membaca 400 (35 ms). Yang dulu mahal adalah menggambarnya
 - Pindah tab memakai data yang sudah dipegang tab itu dulu, baru menyusul
