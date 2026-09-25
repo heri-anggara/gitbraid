@@ -3199,7 +3199,15 @@ handle('repo:stashDrop', async (repo, ref) => git(repo, ['stash', 'drop', ref]))
 
 /* --- misc --- */
 
-handle('shell:openPath', async (p) => shell.openPath(p));
+/* Every caller hands this a folder — a repository, or the one a file sits in —
+   so a folder is all it opens. A file would go to whatever the desktop has
+   registered for it, and for a .desktop file or a script that is "run it". */
+handle('shell:openPath', async (p) => {
+  let st;
+  try { st = fs.statSync(String(p)); } catch { throw new Error(`No such folder: ${p}`); }
+  if (!st.isDirectory()) throw new Error('Only a folder can be shown in the file manager.');
+  return shell.openPath(p);
+});
 
 handle('shell:openExternal', async (url) => {
   if (/^https?:\/\//i.test(url)) return shell.openExternal(url);
