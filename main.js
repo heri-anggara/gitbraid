@@ -1579,11 +1579,24 @@ handle('repos:scan', async (root, depth = 3) => {
   return { found: found.length, added: added.length };
 });
 
+/** `fn` over every item, at most `limit` of them in flight at once. */
+async function eachLimit(items, limit, fn) {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await fn(items[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
 /** Uncommitted-work counts, asked for separately because this one does spawn
     git — once per repository. */
+/* A few at a time, over the whole list. This used to start the first sixty at
+   once and leave the rest unasked — a list of seventy showed ten rows with no
+   counts and nothing to say why. Six in flight is enough to keep the list
+   filling without the machine noticing sixty git processes at once. */
 handle('repos:wip', async (paths) => {
   const out = {};
-  const jobs = paths.slice(0, 60).map(async (repo) => {
+  await eachLimit(Array.isArray(paths) ? paths : [], 6, async (repo) => {
     try {
       const raw = await git(repo, ['status', '--porcelain']);
       let modified = 0, added = 0, deleted = 0;
@@ -1599,7 +1612,6 @@ handle('repos:wip', async (paths) => {
       out[repo] = null;
     }
   });
-  await Promise.all(jobs);
   return out;
 });
 
