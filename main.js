@@ -449,7 +449,20 @@ function recordGit(cwd, args, ms, stderr, code, output) {
   if (gitLog.length > LOG_MAX) gitLog.splice(0, gitLog.length - LOG_MAX);
 }
 
-handle('app:log', async () => gitLog.slice().reverse());
+/* Newest first. `since` is the timestamp the window already has entries up to,
+   so only what arrived after it travels: the whole log went over IPC after
+   every action — up to LOG_MAX entries carrying up to OUT_MAX_CHARS each — for
+   the window to keep the last few. Walked from the tail rather than copied and
+   reversed, since the tail is where the new entries are. */
+handle('app:log', async (opts = {}) => {
+  const since = Number(opts?.since) || 0;
+  if (!since) return gitLog.slice().reverse();
+  const out = [];
+  for (let i = gitLog.length - 1; i >= 0; i--) {
+    if (gitLog[i].at >= since) out.push(gitLog[i]);
+  }
+  return out;
+});
 handle('app:clearLog', async () => { gitLog.length = 0; return true; });
 
 /** `extraEnv` is for the few commands that need to drive git's editors. */
