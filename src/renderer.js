@@ -863,6 +863,12 @@ async function newEmptyTab() {
    re-reads it from git anyway. Holding it would be pure cost. Commits and refs
    stay — a few hundred kB, and keeping them means a failed refresh still shows
    the history you had. */
+/* Tab ids, the one most recently in front first. A parked tab keeps its commits
+   so switching back is instant, but its layout, row index and containment map
+   are rebuilt on activation whenever the memo misses, so only the two tabs
+   most recently in front keep them; the rest are as large as the history. */
+let tabOrder = [];
+
 function parkTab() {
   if (!tabs.some((t) => t.id === activeId)) return;
   state.commitMsg = $('commit-msg').value;
@@ -871,6 +877,14 @@ function parkTab() {
   state.scrollTop = $('history-scroll').scrollTop;
   state.diffFiles = [];
   state.diffContext = null;
+  const keep = new Set(tabOrder.slice(0, 2));
+  for (const t of tabs) {
+    if (keep.has(t.id) || t.id === activeId) continue;
+    t.layout = null;
+    t.layoutKey = null;
+    t.rowIndex = new Map();
+    t.containedBy = new Map();
+  }
 }
 
 /* ── the commit draft, kept across restarts ──
@@ -984,6 +998,7 @@ async function activateTab(id) {
   if ($('app').classList.contains('prefs-open')) closePrefs();
   if ($('app').classList.contains('managing')) closeRepoManager();
 
+  tabOrder = [id, ...tabOrder.filter((x) => x !== id)];
   if (activeId && activeId !== id) parkTab();
 
   activeId = id;
@@ -1026,6 +1041,7 @@ async function closeTab(id = activeId) {
   const i = tabs.findIndex((t) => t.id === id);
   if (i < 0) return;
   const [gone] = tabs.splice(i, 1);
+  tabOrder = tabOrder.filter((x) => x !== id);
 
   if (gone.id !== activeId) { renderTabs(); syncMenu(); saveTabs(); return; }
   activeId = null;                       // nothing left to capture UI into
@@ -1045,6 +1061,12 @@ function stepTab(delta) {
 async function showWelcome() {
   activeId = null;
   state = newTab(null);
+  /* These live outside the tab, so the last repository's rows and file list
+     stayed in memory behind the start page. */
+  rowPool.layout = null;
+  rowPool.rows.clear();
+  $('commit-list').textContent = '';
+  commitFiles = [];
   renderShell();
   await loadRecents();
   setStatus('Ready');
@@ -4033,8 +4055,11 @@ function renderTabMenu(query = '') {
 
 function openTabMenu() {
   if (!tabs.length) return;
-  const btn = $('btn-tabsearch').getBoundingClientRect();
   const menu = $('tabmenu');
+  // Asked for again from the menu while already open, it added a second
+  // dismiss listener and lost its handle on the first.
+  if (!menu.hidden) { $('tabmenu-input').focus(); return; }
+  const btn = $('btn-tabsearch').getBoundingClientRect();
   menu.hidden = false;
   menu.style.top = `${btn.bottom + 4}px`;
   menu.style.right = `${window.innerWidth - btn.right}px`;
