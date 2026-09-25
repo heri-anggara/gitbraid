@@ -497,7 +497,7 @@
      was left undrawn-in-a-window because "rows are not countable there" — they
      are: a run of removals beside a run of additions is as many rows as the
      longer of the two, and everything else is one row for one line. */
-  function pairCount(hunk) {
+  function countPairs(hunk) {
     let n = 0;
     let dels = 0;
     let adds = 0;
@@ -507,6 +507,37 @@
       else { n += Math.max(dels, adds) + 1; dels = 0; adds = 0; }
     }
     return n + Math.max(dels, adds);
+  }
+
+  /* Both are asked for on every paint and every scroll frame: renderSplit
+     counts every hunk to find the window and then pairs the whole of the one
+     it draws, and the renderer counts them all again for its height model. On
+     a single 50,000-line hunk that was 15 ms a paint for sixty drawn rows, all
+     of it spent rebuilding the same answer. Kept beside the hunk in a WeakMap
+     rather than on it, so a hunk still deep-compares to what parse() produced
+     and hunkPatch() never sees a field it did not write. parse() builds fresh
+     hunk objects, so nothing here can go stale. The rows are handed out shared
+     and every reader only walks them. */
+  const PAIRS = new WeakMap();
+  const PAIR_COUNTS = new WeakMap();
+
+  function pairRows(hunk) {
+    let rows = PAIRS.get(hunk);
+    if (!rows) {
+      rows = pairHunk(hunk);
+      PAIRS.set(hunk, rows);
+      PAIR_COUNTS.set(hunk, rows.length);
+    }
+    return rows;
+  }
+
+  function pairCount(hunk) {
+    let n = PAIR_COUNTS.get(hunk);
+    if (n === undefined) {
+      n = countPairs(hunk);
+      PAIR_COUNTS.set(hunk, n);
+    }
+    return n;
   }
 
   function rowCountSplit(files) {
@@ -529,7 +560,7 @@
         `<td class="dl-text ${cls}">${painted(l)}</td>`
       );
     };
-    const all = pairHunk(hunk);
+    const all = pairRows(hunk);
     const lo = Math.max(0, from);
     const hi = Math.min(all.length, to);
     const rows = all
@@ -604,5 +635,5 @@
   }
 
   window.Diff = { parse, render, renderSplit, hunkPatch, esc, markWs,
-                  rowCount, rowCountSplit, pairCount, pairRows: pairHunk };
+                  rowCount, rowCountSplit, pairCount, pairRows };
 })();

@@ -2086,6 +2086,43 @@ console.log('\nthe highlighter, table by table');
     H.line('const x = 1; '.repeat(38), 'js').includes('<span class="hl-key">const</span>'));
 }
 
+/* ── what the diff pane rebuilds on every paint, and what it keeps ── */
+console.log('\nthe diff pane on every paint');
+{
+  /* Side-by-side pairs a hunk's lines into rows on every paint and counts
+     them again on every scroll frame. Both are now kept beside the hunk, so
+     the second answer has to be the first one — and the hunk itself must not
+     have changed shape, because hunkPatch() hands its fields straight back
+     to git. */
+  const PAIRED = [
+    'diff --git a/p.txt b/p.txt', '--- a/p.txt', '+++ b/p.txt', '@@ -1,5 +1,5 @@',
+    ' satu', '-dua', '-tiga', '+DUA', ' empat', '+lima', '+enam', '+tujuh',
+  ].join('\n');
+  const pf = Diff.parse(PAIRED);
+  const hunk = pf[0].hunks[0];
+  const before = JSON.stringify(hunk);
+  const first = Diff.pairRows(hunk);
+  const again = Diff.pairRows(hunk);
+  // One context row, two for the run of two removals against one addition,
+  // one more context row, three for the additions at the end.
+  check('pairing a hunk twice hands back the same rows',
+    again === first && first.length === 7, first.length);
+  check('and the rows are what pairing from scratch produces',
+    first.map((r) => `${r.left ? r.left.text : '-'}|${r.right ? r.right.text : '-'}${r.ctx ? '=' : ''}`)
+      .join(',') === 'satu|satu=,dua|DUA,tiga|-,empat|empat=,-|lima,-|enam,-|tujuh',
+    first.map((r) => [r.left && r.left.text, r.right && r.right.text, r.ctx]));
+  check('the count agrees with the rows, asked either way round',
+    Diff.pairCount(hunk) === first.length
+    && Diff.pairCount(Diff.parse(PAIRED)[0].hunks[0]) === first.length);
+  check('and the hunk itself gained nothing from being paired',
+    JSON.stringify(hunk) === before && Object.keys(hunk).sort().join() === 'header,lines,raw');
+  check('a freshly parsed copy is paired on its own',
+    Diff.pairRows(Diff.parse(PAIRED)[0].hunks[0]) !== first);
+  check('the split view draws the same rows before and after the cache is warm',
+    Diff.renderSplit(pf, [], { first: 2, last: 4 }) === Diff.renderSplit(pf, [], { first: 2, last: 4 })
+    && Diff.rowCountSplit(pf) === 7);
+}
+
 fs.rmSync(REPO, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
