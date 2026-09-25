@@ -2121,6 +2121,78 @@ console.log('\nthe diff pane on every paint');
   check('the split view draws the same rows before and after the cache is warm',
     Diff.renderSplit(pf, [], { first: 2, last: 4 }) === Diff.renderSplit(pf, [], { first: 2, last: 4 })
     && Diff.rowCountSplit(pf) === 7);
+
+  /* Hunks outside the window are kept as height rather than as elements, and
+     consecutive ones now fold into one spacer per run instead of one per
+     hunk. What the renderer's scroll model reads is the sum, so the sum is
+     what has to survive: the same per-hunk terms, rows plus one header each. */
+  const FILES = 3;
+  const HUNKS = 4;
+  const LINES = 5;
+  const multi = [];
+  for (let f = 0; f < FILES; f++) {
+    multi.push(`diff --git a/m${f}.txt b/m${f}.txt`, `--- a/m${f}.txt`, `+++ b/m${f}.txt`);
+    for (let h = 0; h < HUNKS; h++) {
+      multi.push(`@@ -${h * 10 + 1},${LINES} +${h * 10 + 1},${LINES} @@`);
+      for (let l = 0; l < LINES; l++) multi.push(l === 2 ? `+baris ${f} ${h} ${l}` : ` baris ${f} ${h} ${l}`);
+    }
+  }
+  const mf = Diff.parse(multi.join('\n'));
+  const rows = Diff.rowCount(mf);
+  const ROWH = 20;
+  const HEADH = 27;
+  const spacers = (markup) =>
+    [...markup.matchAll(/class="hunk hunk-gap" style="height:([\d.]+)px"/g)].map((m) => Number(m[1]));
+  const sum = (xs) => xs.reduce((a, b) => a + b, 0);
+  /* Per-hunk spacers, the way they were emitted before: one term per hunk
+     wholly outside [first, last). */
+  const perHunk = (first, last, heightOf) => {
+    const out = [];
+    let seen = 0;
+    for (const f of mf) for (const h of f.hunks) {
+      const start = seen;
+      seen += h.lines.length;
+      if (seen <= first || start >= last) out.push(heightOf(start, seen) + HEADH);
+    }
+    return out;
+  };
+
+  // The window sits inside the third hunk of the second file.
+  const win = { first: HUNKS * LINES + 2 * LINES + 1, last: HUNKS * LINES + 2 * LINES + 3,
+                rowH: ROWH, headH: HEADH };
+  const flat = Diff.render(mf, [], win);
+  const flatPer = perHunk(win.first, win.last, (a, b) => (b - a) * ROWH);
+  check('the spacers add up to what one per hunk added up to',
+    sum(spacers(flat)) === sum(flatPer), [sum(spacers(flat)), sum(flatPer)]);
+  check('and there is one per run of folded hunks, not one per hunk',
+    spacers(flat).length === 4 && flatPer.length === FILES * HUNKS - 1,
+    [spacers(flat).length, flatPer.length]);
+  check('the drawn hunk is still drawn, with its own rows',
+    (flat.match(/<div class="hunk">/g) || []).length === 1 && flat.includes('baris 1 2 1'));
+  check('every file keeps its header, because its height is measured off the page',
+    (flat.match(/<header class="difffile-head">/g) || []).length === FILES);
+
+  /* Wrapped rows: the spacer takes the measured distance, and the sum of
+     measured distances is the measured distance of the sum. */
+  const rowSum = new Float64Array(rows + 1);
+  for (let i = 0; i < rows; i++) rowSum[i + 1] = rowSum[i] + 20 + (i % 3) * 7;
+  const wrapped = Diff.render(mf, [], { ...win, rowSum });
+  const wrappedPer = perHunk(win.first, win.last, (a, b) => rowSum[b] - rowSum[a]);
+  check('with measured row heights the spacers still add up',
+    Math.abs(sum(spacers(wrapped)) - sum(wrappedPer)) < 1e-6,
+    [sum(spacers(wrapped)), sum(wrappedPer)]);
+
+  // A diff wholly beyond the window folds to one spacer per file.
+  const beyond = Diff.render(mf, [], { first: rows + 5, last: rows + 65, rowH: ROWH, headH: HEADH });
+  check('a diff entirely outside the window is one spacer per file',
+    spacers(beyond).length === FILES
+    && spacers(beyond).every((px) => px === HUNKS * (LINES * ROWH + HEADH)),
+    spacers(beyond));
+  check('side-by-side folds the same way',
+    spacers(Diff.renderSplit(mf, [], win)).length === 4
+    && sum(spacers(Diff.renderSplit(mf, [], win))) === sum(flatPer));
+  check('and a diff drawn whole has no spacer at all',
+    spacers(Diff.render(mf, [])).length === 0 && spacers(Diff.renderSplit(mf, [])).length === 0);
 }
 
 fs.rmSync(REPO, { recursive: true, force: true });

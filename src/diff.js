@@ -417,6 +417,40 @@
     );
   }
 
+  /* One file's hunks, with those wholly outside the window kept as height
+     rather than as elements. Consecutive ones fold into a single spacer: a
+     200-file diff put ten thousand of them in the document on every paint,
+     each an element the browser had to lay out, for scroll arithmetic that
+     only ever reads their sum. The height is that same sum of the same
+     per-hunk terms — the rows' span plus one header height each — so the
+     renderer's model of the page is untouched. The fold stops at the file:
+     its header is a real element whose height the renderer measures off the
+     page, so a file cannot be reduced to a number here. `pos.seen` is the row
+     count so far across the whole diff, which is what the window is cut in. */
+  function hunkBodies(file, fi, actions, first, last, pos, count, draw) {
+    let out = '';
+    let gap = 0;
+    let folded = 0;
+    const flush = () => {
+      if (folded) out += `<div class="hunk hunk-gap" style="height:${gap}px"></div>`;
+      gap = 0;
+      folded = 0;
+    };
+    file.hunks.forEach((h, hi) => {
+      const start = pos.seen;
+      pos.seen += count(h);
+      if (pos.seen <= first || start >= last) {
+        gap += spanPx(start, pos.seen) + HEAD_H;
+        folded += 1;
+        return;
+      }
+      flush();
+      out += draw(file, h, fi, hi, actions, first - start, last - start, start);
+    });
+    flush();
+    return out;
+  }
+
   /** Render a parsed diff. `actions` are the per-hunk buttons to show. */
   function render(files, actions = [], opts = null) {
     setPaint(opts);
@@ -433,7 +467,7 @@
        scroll. */
     const first = opts && Number.isFinite(opts.first) ? opts.first : 0;
     const last = opts && Number.isFinite(opts.last) ? opts.last : Infinity;
-    let seen = 0;
+    const pos = { seen: 0 };
 
     return files
       .map((file, fi) => {
@@ -444,18 +478,7 @@
 
         const body = file.binary
           ? '<div class="empty-note">Binary file — no preview available.</div>'
-          : file.hunks
-              .map((h, hi) => {
-                const start = seen;
-                seen += h.lines.length;
-                // Wholly outside the window: kept as height, not as elements.
-                if (seen <= first || start >= last) {
-                  return `<div class="hunk hunk-gap" style="height:${
-                    spanPx(start, seen) + HEAD_H}px"></div>`;
-                }
-                return renderHunk(file, h, fi, hi, actions, first - start, last - start, start);
-              })
-              .join('');
+          : hunkBodies(file, fi, actions, first, last, pos, (h) => h.lines.length, renderHunk);
 
         return (
           '<section class="difffile">' +
@@ -601,7 +624,7 @@
     if (!files.length) return '<div class="empty-note">No textual changes here.</div>';
     const first = opts && Number.isFinite(opts.first) ? opts.first : 0;
     const last = opts && Number.isFinite(opts.last) ? opts.last : Infinity;
-    let seen = 0;
+    const pos = { seen: 0 };
     return files
       .map((file, fi) => {
         const title =
@@ -610,18 +633,7 @@
             : esc(file.newPath || file.oldPath);
         const body = file.binary
           ? '<div class="empty-note">Binary file — no preview available.</div>'
-          : file.hunks
-              .map((h, hi) => {
-                const start = seen;
-                const n = pairCount(h);
-                seen += n;
-                if (seen <= first || start >= last) {
-                  return `<div class="hunk hunk-gap" style="height:${
-                    spanPx(start, seen) + HEAD_H}px"></div>`;
-                }
-                return splitHunk(file, h, fi, hi, actions, first - start, last - start, start);
-              })
-              .join('');
+          : hunkBodies(file, fi, actions, first, last, pos, pairCount, splitHunk);
         return (
           '<section class="difffile">' +
           `<header class="difffile-head"><span class="difffile-name">${title}</span>` +
