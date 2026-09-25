@@ -5,6 +5,9 @@
   "main": "main.js",
   "author": "Heri Anggara <herianggara2409@gmail.com>",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --linux",
