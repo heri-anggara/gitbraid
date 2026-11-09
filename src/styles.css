@@ -3876,6 +3876,7 @@ mark {
   cursor: pointer;
 }
 .hunk-btn:hover { color: var(--text); border-color: var(--accent); }
+.hunk-note { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
 
 .difftable {
   width: 100%;
