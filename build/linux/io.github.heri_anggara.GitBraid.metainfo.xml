@@ -97,6 +97,22 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.11.1" date="2026-11-09">
+      <description>
+        <p>
+          A correctness audit. Rewording an older commit keeps the merges after
+          it and changes the commit you picked, staging a hunk of a deleted or
+          new file no longer leaves an empty file behind, and renamed files are
+          staged and unstaged with both of their names.
+        </p>
+        <p>
+          Shortcuts no longer reach another tab while a confirmation is open,
+          late answers no longer land in the wrong tab, "Load more" works in
+          repositories with stashes, and a merge stopped in a linked worktree
+          is detected.
+        </p>
+      </description>
+    </release>
     <release version="0.11.0" date="2026-09-25">
       <description>
         <p>
