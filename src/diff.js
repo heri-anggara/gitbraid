@@ -108,14 +108,37 @@
     };
   }
 
+  /* The --- and +++ lines name one file each, so unlike the `diff --git` line
+     they cannot be split in the wrong place: a directory called `plan b` put
+     the split of `a/plan b/notes.txt b/plan b/notes.txt` after `a/plan`. git
+     ends either line with a tab when the name holds a space, and `git apply`
+     reads only as far as that tab, so the tab is what marks the end of it. A
+     side that is /dev/null names nothing and leaves the header's name alone. */
+  function sideLine(file, line) {
+    const minus = line[0] === '-';
+    if (minus) file.minus = line; else file.plus = line;
+    const raw = line.slice(4).replace(/\t$/, '');
+    if (raw === '/dev/null') return;
+    const token = readQuoted(raw) || raw;
+    const name = stripSide(unquotePath(token));
+    if (minus) { file.oldRaw = token; file.oldPath = name; }
+    else { file.newRaw = token; file.newPath = name; }
+  }
+
   /**
    * Parse raw `git diff` output into files -> hunks -> lines.
    * Each hunk keeps the exact source text so it can be re-applied verbatim.
    */
   /* `@@ -1,2 +1,2 @@` and `@@@ -1,2 -1,2 +1,2 @@@` both end with the "+" range,
-     which is the only one the viewer numbers lines from. */
+     which is the only one the viewer numbers lines from.
+
+     Only the ranges between the markers are read. git follows the closing
+     marker with the nearest function line, and that is source code: a hunk
+     under `const DEFAULT = -1;` used to take its "+" range from the -1, and
+     numbered the new side of the whole hunk from 1. */
   function hunkRange(line) {
-    const nums = line.match(/[-+]\d+(?:,\d+)?/g) || [];
+    const ranges = /^(@{2,}) (.+?) \1/.exec(line);
+    const nums = (ranges ? ranges[2] : line).match(/[-+]\d+(?:,\d+)?/g) || [];
     const first = nums[0] || '-0';
     const last = nums[nums.length - 1] || '+0';
     return { old: Number(first.slice(1).split(',')[0]) || 0,
@@ -126,7 +149,10 @@
     const files = [];
     if (!raw) return files;
 
-    const lines = raw.split('\n');
+    /* git ends its output with a newline, and split() reads what follows the
+       last one as a line of its own. It was drawn as an empty context row past
+       the end of the last hunk, numbered one beyond it. */
+    const lines = (raw.endsWith('\n') ? raw.slice(0, -1) : raw).split('\n');
     let file = null;
     let hunk = null;
     let oldNo = 0;
@@ -156,6 +182,13 @@
              cannot use the decoded name: building a patch to hand back. */
           oldRaw: names ? names.oldRaw : '',
           newRaw: names ? names.newRaw : '',
+          /* The --- and +++ lines as git wrote them, and what they say about
+             the file: created, deleted, or carried over from another name. */
+          minus: '',
+          plus: '',
+          created: false,
+          deleted: false,
+          renamed: false,
           binary: false,
           combined: cc,
           hunks: [],
@@ -176,6 +209,12 @@
           continue;
         }
         if (/^(Binary files|GIT binary patch)/.test(line)) file.binary = true;
+        if (line.startsWith('new file mode ')) file.created = true;
+        if (line.startsWith('deleted file mode ')) file.deleted = true;
+        if (/^(rename|copy) from /.test(line)) file.renamed = true;
+        if (!file.combined && (line.startsWith('--- ') || line.startsWith('+++ '))) {
+          sideLine(file, line);
+        }
         file.header.push(line);
         continue;
       }
@@ -252,11 +291,21 @@
 
        Handing the token straight back also means a name this parser decodes
        wrongly costs a wrong label in the header and never a failed stage. */
+    /* A file that is created or deleted keeps the lines that say so. Rewritten
+       as `--- a/x` and `+++ b/x`, the one hunk of a deleted file staged as an
+       edit that emptied it: the index held an empty blob where the deletion
+       should have been, and unstaging a new file's hunk left an empty file
+       staged instead of handing it back as untracked. So the header goes back
+       as git wrote it — its first line, the mode line, and the --- and +++
+       lines with /dev/null where git put it. */
     if (file.oldRaw && file.newRaw) {
       return [
-        `diff --git ${file.oldRaw} ${file.newRaw}`,
-        `--- ${file.oldRaw}`,
-        `+++ ${file.newRaw}`,
+        file.header[0].startsWith('diff --git ')
+          ? file.header[0]
+          : `diff --git ${file.oldRaw} ${file.newRaw}`,
+        ...file.header.filter((l) => /^(new|deleted) file mode /.test(l)),
+        file.minus || `--- ${file.oldRaw}`,
+        file.plus || `+++ ${file.newRaw}`,
         ...hunk.raw,
         '',
       ].join('\n');
@@ -378,6 +427,32 @@
   const spanPx = (from, to) =>
     (ROW_SUM ? Math.max(0, ROW_SUM[to] - ROW_SUM[from]) : Math.max(0, to - from) * ROW_H);
 
+  /* A renamed file gets no per-hunk buttons. Its patch names two paths, and
+     applying one hunk of it to the index moves the whole file back to its old
+     name — measured: unstaging the first of two hunks of a staged rename left
+     the old name modified in the index and the new one untracked, with neither
+     hunk where the reader put it. The whole file still stages and unstages
+     from the list, which is the operation a rename actually is. */
+  function hunkButtons(file, fileIndex, hunkIndex, actions) {
+    if (!actions.length) return '';
+    // In place of the buttons, a reason there are none: { note, title }.
+    if (actions[0].note) {
+      return `<span class="hunk-note" title="${esc(actions[0].title || '')}">`
+        + `${esc(actions[0].note)}</span>`;
+    }
+    if (file.renamed) {
+      return '<span class="hunk-note" title="A rename stages as a whole file, from the list">'
+        + 'renamed — stage the whole file</span>';
+    }
+    return actions
+      .map(
+        (a) =>
+          `<button class="hunk-btn" data-hunk-action="${a.action}" ` +
+          `data-file="${fileIndex}" data-hunk="${hunkIndex}">${a.label}</button>`
+      )
+      .join('');
+  }
+
   function renderHunk(file, hunk, fileIndex, hunkIndex, actions, from = 0, to = Infinity,
                       base = 0) {
     // Which of this hunk's rows the window actually asks for.
@@ -404,13 +479,7 @@
       })
       .join('');
 
-    const buttons = actions
-      .map(
-        (a) =>
-          `<button class="hunk-btn" data-hunk-action="${a.action}" ` +
-          `data-file="${fileIndex}" data-hunk="${hunkIndex}">${a.label}</button>`
-      )
-      .join('');
+    const buttons = hunkButtons(file, fileIndex, hunkIndex, actions);
 
     /* The rows left out still take their space, so the scrollbar keeps its
        length and nothing under the pointer moves as the window slides. */
@@ -600,13 +669,7 @@
       .map((r) => `<tr>${cell(r.left, 'left', r.ctx)}${cell(r.right, 'right', r.ctx)}</tr>`)
       .join('');
 
-    const buttons = actions
-      .map(
-        (a) =>
-          `<button class="hunk-btn" data-hunk-action="${a.action}" ` +
-          `data-file="${fileIndex}" data-hunk="${hunkIndex}">${a.label}</button>`
-      )
-      .join('');
+    const buttons = hunkButtons(file, fileIndex, hunkIndex, actions);
 
     return (
       '<div class="hunk">' +

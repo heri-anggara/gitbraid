@@ -26,11 +26,16 @@ chmod 4755 '/opt/GitBraid/chrome-sandbox' || true
 # 3. AppStream metadata. electron-builder cannot place files outside /opt from
 #    its config, so it rides along inside the app and is copied here; without it
 #    GNOME Software has nothing to list and the app is invisible in "Installed".
+#    The file is written for the Flatpak, which installs the desktop entry under
+#    the application id. This package installs it as gitbraid.desktop, so the
+#    launchable is renamed on the way: pointing at a desktop file that is not
+#    there leaves the store listing with nothing to launch.
 SRC=/opt/GitBraid/resources/io.github.heri_anggara.GitBraid.metainfo.xml
 DEST=/usr/share/metainfo/io.github.heri_anggara.GitBraid.metainfo.xml
 if [ -f "$SRC" ]; then
   mkdir -p /usr/share/metainfo
-  cp -f "$SRC" "$DEST"
+  sed 's|<launchable type="desktop-id">io.github.heri_anggara.GitBraid.desktop</launchable>|<launchable type="desktop-id">gitbraid.desktop</launchable>|' \
+    "$SRC" > "$DEST"
 fi
 
 # 4. Let the desktop notice straight away rather than at the next login.

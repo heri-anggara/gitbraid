@@ -50,6 +50,15 @@ there is no lockfile to vendor, no offline mirror to generate, and nothing for
 reader chooses, and no portal offers "open a folder and keep reading it for a
 whole session".
 
+It is the home folder and nothing else. A repository on a second disk, under
+`/mnt`, `/media` or `/srv`, is not visible from the sandbox and will not open.
+Granting more of the filesystem is one command, and it stays with your own
+installation:
+
+```bash
+flatpak override --user --filesystem=/mnt/data io.github.heri_anggara.GitBraid
+```
+
 The one real limitation is **git hooks**. A hook is a script in the repository,
 and it runs inside the sandbox — so a plain `#!/bin/sh` hook works, and one that
 calls `node`, `python` or `npx` fails, because those are on the host and the

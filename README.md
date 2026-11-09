@@ -27,13 +27,13 @@ runtime dependencies.
 
 ## Download
 
-Latest release: **v0.11.0**
+Latest release: **v0.11.1**
 
 | Platform | File | Notes |
 |---|---|---|
-| **Debian / Ubuntu** | [`gitbraid_0.11.0_amd64.deb`](https://github.com/heri-anggara/gitbraid/releases/download/v0.11.0/gitbraid_0.11.0_amd64.deb) | Installs into the applications menu |
-| **Any Linux** | [`GitBraid-0.11.0.AppImage`](https://github.com/heri-anggara/gitbraid/releases/download/v0.11.0/GitBraid-0.11.0.AppImage) | One file, no install, updates itself |
-| **Windows** | [`GitBraid Setup 0.11.0.exe`](https://github.com/heri-anggara/gitbraid/releases/download/v0.11.0/GitBraid.Setup.0.11.0.exe) | Unsigned — see the note below |
+| **Debian / Ubuntu** | [`gitbraid_0.11.1_amd64.deb`](https://github.com/heri-anggara/gitbraid/releases/download/v0.11.1/gitbraid_0.11.1_amd64.deb) | Installs into the applications menu |
+| **Any Linux** | [`GitBraid-0.11.1.AppImage`](https://github.com/heri-anggara/gitbraid/releases/download/v0.11.1/GitBraid-0.11.1.AppImage) | One file, no install, updates itself |
+| **Windows** | [`GitBraid Setup 0.11.1.exe`](https://github.com/heri-anggara/gitbraid/releases/download/v0.11.1/GitBraid.Setup.0.11.1.exe) | Unsigned — see the note below |
 
 Older versions and full notes live on the [releases page](https://github.com/heri-anggara/gitbraid/releases).
 
@@ -105,7 +105,7 @@ mystery.
 **Debian / Ubuntu**
 
 ```bash
-sudo apt install ./gitbraid_0.11.0_amd64.deb
+sudo apt install ./gitbraid_0.11.1_amd64.deb
 ```
 
 Then find GitBraid in your applications menu, or run `gitbraid`.
@@ -113,8 +113,8 @@ Then find GitBraid in your applications menu, or run `gitbraid`.
 **AppImage**
 
 ```bash
-chmod +x GitBraid-0.11.0.AppImage
-./GitBraid-0.11.0.AppImage
+chmod +x GitBraid-0.11.1.AppImage
+./GitBraid-0.11.1.AppImage
 ```
 
 **To remove**
@@ -141,12 +141,12 @@ git clone https://github.com/heri-anggara/gitbraid.git
 cd gitbraid
 npm install
 npm start                 # run it
-npm test                  # 490 checks, no network, no fixtures to download
+npm test                  # 535 checks, no network, no fixtures to download
 npm run dist              # .deb + AppImage into dist/
 npm run dist:win          # Windows installer, cross-built from Linux
 ```
 
-Node 18 or newer. The only development dependencies are Electron and
+Node 20 or newer. The only development dependencies are Electron and
 electron-builder; there are no runtime dependencies at all, which is a property
 worth keeping.
 
@@ -188,9 +188,11 @@ Honest ones, not a wish list:
   measures again, for the same reason.
 - **A real terminal.** The drawer captures command output rather than providing
   a TTY, so full-screen programs will not run in it.
-- **Filtering by anything but a name.** Every list has a search box now, but
-  they all match on the name — there is no way to ask for, say, branches merged
-  into the one you are on.
+- **Filtering by anything but text.** Every list has a search box: the commit
+  search reads messages, authors, email addresses and the start of a SHA, and
+  the others match on names. Nothing filters by date or by the files a commit
+  touched, and there is no way to ask for, say, branches merged into the one
+  you are on.
 
 ---
 

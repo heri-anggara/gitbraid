@@ -3,9 +3,10 @@
      read to build the store listing. Rename the file to match <id> exactly. -->
 <component type="desktop-application">
   <id>io.github.heri_anggara.GitBraid</id>
-  <!-- The name of the desktop file as it is actually installed. The .deb and
-       AppImage ship gitbraid.desktop; a Flatpak renames it to match <id>, and
-       this line has to be changed with it. -->
+  <!-- The name of the desktop file as it is actually installed. Written for
+       the Flatpak, which installs it under <id>. The .deb installs
+       gitbraid.desktop, and build/linux/after-install.sh renames this line to
+       match as it copies the file into /usr/share/metainfo. -->
   <launchable type="desktop-id">io.github.heri_anggara.GitBraid.desktop</launchable>
 
   <name>GitBraid</name>
@@ -96,6 +97,22 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.11.1" date="2026-11-09">
+      <description>
+        <p>
+          A correctness audit. Rewording an older commit keeps the merges after
+          it and changes the commit you picked, staging a hunk of a deleted or
+          new file no longer leaves an empty file behind, and renamed files are
+          staged and unstaged with both of their names.
+        </p>
+        <p>
+          Shortcuts no longer reach another tab while a confirmation is open,
+          late answers no longer land in the wrong tab, "Load more" works in
+          repositories with stashes, and a merge stopped in a linked worktree
+          is detected.
+        </p>
+      </description>
+    </release>
     <release version="0.11.0" date="2026-09-25">
       <description>
         <p>

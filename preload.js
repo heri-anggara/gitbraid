@@ -66,6 +66,4 @@ contextBridge.exposeInMainWorld('gitbraid', {
       return file.path || '';
     }
   },
-
-  platform: process.platform,
 });

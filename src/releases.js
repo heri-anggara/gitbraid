@@ -7,6 +7,59 @@
  */
 window.Releases = [
   {
+    version: '0.11.1',
+    date: '2026-11-09',
+    title: 'Doing what it says',
+    summary:
+      'A second audit, this time looking for wrong answers rather than slow '
+      + 'ones. Rewording an older commit could flatten the merges after it or '
+      + 'change the wrong commit, staging one hunk of a deleted file left an '
+      + 'empty file in the index, and a key pressed under a confirmation could '
+      + 'send it to another repository. Every fix was first reproduced with '
+      + 'real git, and the test suite grew from 490 checks to 535.',
+    sections: [
+      {
+        heading: 'Rewording and hunks',
+        items: [
+          'Rewording an older commit keeps the merges after it. It used to flatten every one of them, and it changed the first commit of the current branch rather than the one you picked when that one lived on another branch. The commit is now found by its hash, a merge commit and the root commit can be reworded too, and a commit that is not on the current branch is refused before anything runs. The selection lands on the reworded commit.',
+          'Staging one hunk of a deleted file removes it from the index; it used to leave an empty file there. Unstaging a hunk of a new file no longer leaves an empty file staged.',
+          'A hunk whose function line holds a negative number, such as const DEFAULT = -1, no longer gets its line numbers from that number. The last line of a diff is no longer followed by an empty context line, and a folder with a space in its name no longer splits the file name in the wrong place.',
+          'A renamed file is staged as a whole: applying a single hunk of a rename put the whole file back under its old name. While whitespace changes are ignored, the hunk buttons give way to a note, because git refuses a patch taken from that view.',
+        ],
+      },
+      {
+        heading: 'The working tree',
+        items: [
+          'A rename is staged, unstaged, shown and saved as a patch with both of its names. Unstaging it through the new name used to split it into a staged deletion and an untracked file.',
+          '“Discard all” leaves conflicted files alone and says so. A conflict used to make git refuse the whole list while the untracked files were deleted anyway, and the status bar reported that everything was discarded.',
+          'Ignoring a file writes a rule that matches that file only. A bare name used to ignore every file of that name at any depth, and a name ending in a space lost the space.',
+          '“Save as patch” from a commit’s file list saves that commit’s change. It used to save the working tree’s diff of the same file.',
+          'Cherry-picking or reverting a merge commit picks its first parent instead of being refused by git, and the history refreshes after one that stops on a conflict.',
+        ],
+      },
+      {
+        heading: 'Tabs, dialogs and late answers',
+        items: [
+          'Keyboard shortcuts for switching or closing a tab wait while a dialog is open. Ctrl+Tab under a confirmation used to move the confirmed action to another repository.',
+          'Switching tabs hides the file viewer of the tab you left. Diffs, the commit panel, a commit in progress and file history no longer write a late answer into a tab or selection that has changed since.',
+          '“Load more” stays available in a repository with stashes. Git counts a stash’s index commit against the page size, so a full page looked like the last one.',
+          'A merge or rebase stopped inside a linked worktree is detected; there the .git entry is a file, not a folder.',
+        ],
+      },
+      {
+        heading: 'Smaller things',
+        items: [
+          'A commit subject containing byte 0x1F is no longer cut at that byte. Messages are read whole and split into subject and body by the same rules git uses.',
+          'The password dialog remembers a credential for the right repository, and checking whether a branch exists on a remote no longer opens a password dialog for a process that has already ended.',
+          'Clearing a field in the local identity removes it from the repository’s configuration instead of leaving the old value in place.',
+          'Help ▸ Check for Updates offers to restart when an update is already downloaded. A command typed into the terminal while another runs is answered instead of dropped.',
+          'Spinners keep turning, slowly, when the system asks for reduced motion. Five style rules that were quietly overridden by older copies are merged, and the Content Security Policy allows images from the two avatar hosts only.',
+          'The .deb package’s metadata points at its own desktop file, so software centres can launch it, and the Flatpak looks for its window icon where the Flatpak installs it.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.11.0',
     date: '2026-09-25',
     title: 'Less work for the same picture',
