@@ -2411,6 +2411,116 @@ console.log('\nthe diff pane on every paint');
 /* renderNotes() reads version, state, date, title, summary, sections with a
    heading and items, and an optional known list. An entry missing one of
    those renders as "undefined" in the dialog, which nothing else would catch. */
+console.log('\nhunks as git writes them in full');
+{
+  /* Real git output in a repository of its own, because what these checks are
+     about is the parts of git's output the hand-written fixtures left out: the
+     function line after a hunk's range, the newline at the very end, the
+     /dev/null side of a created or deleted file, and a header that cannot be
+     split by reading it alone. */
+  const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'gitbraid-hunks-'));
+  const g = (args, opts = {}) => execFileSync('git', args, {
+    cwd: DIR, encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' }, ...opts,
+  });
+  const apply = (patch, args) => {
+    try { g(['apply', '--whitespace=nowarn', '--unidiff-zero', ...args, '-'], { input: patch }); return null; }
+    catch (e) { return String(e.stderr || e.message).trim(); }
+  };
+  const lines = (n, f) => Array.from({ length: n }, (_, i) => f(i + 1)).join('\n') + '\n';
+  g(['init', '-q', '-b', 'main']);
+  g(['config', 'user.email', 't@t.io']);
+  g(['config', 'user.name', 'Tester']);
+  fs.writeFileSync(path.join(DIR, 'fn.js'), `const DEFAULT = -1;\n${lines(20, (i) => `  row ${i}`)}`);
+  fs.writeFileSync(path.join(DIR, 'gone.txt'), 'one\ntwo\n');
+  fs.mkdirSync(path.join(DIR, 'plan b'));
+  fs.writeFileSync(path.join(DIR, 'plan b', 'notes.txt'), 'satu\ndua\n');
+  fs.writeFileSync(path.join(DIR, 'moved.txt'), lines(20, (i) => `line ${i}`));
+  g(['add', '-A']);
+  g(['commit', '-qm', 'base']);
+
+  // The function line holds a -1, and the raw output ends with a newline.
+  fs.writeFileSync(path.join(DIR, 'fn.js'),
+    `const DEFAULT = -1;\n${lines(20, (i) => (i === 15 ? '  ROW 15' : `  row ${i}`))}`);
+  const rawFn = g(['diff', '--no-color', '--', 'fn.js']);
+  const fn = Diff.parse(rawFn)[0];
+  const h = fn.hunks[0];
+  check('the raw diff really does carry a function line with a signed number',
+    / @@ const DEFAULT = -1;$/m.test(rawFn), rawFn.split('\n').find((l) => l.startsWith('@@')));
+  const [, o0, oc, n0, nc] = /^@@ -(\d+),(\d+) \+(\d+),(\d+) @@/.exec(h.header).map(Number);
+  check('the new side is numbered from the "+" range, not from the -1 after it',
+    h.lines[0].new === n0 && h.lines[0].old === o0, [h.header, h.lines[0]]);
+  check('a hand-written header with -1 and +2 in its function line reads the same way',
+    Diff.parse('diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -17,2 +17,2 @@ x = -1 + 2;\n a\n b\n')[0]
+      .hunks[0].lines[1].new === 18);
+  check('a combined header with a number after its markers reads the "+" range too',
+    Diff.parse('diff --cc x\n--- a/x\n+++ b/x\n@@@ -5,2 -5,2 +5,2 @@@ y = n+2\n  a\n  b\n')[0]
+      .hunks[0].lines[0].new === 5);
+  const tally = (t) => h.lines.filter((l) => l.type === t || l.type === 'ctx').length;
+  check('the newline that ends git\'s output is not an extra row in the last hunk',
+    tally('del') === oc && tally('add') === nc && h.lines.at(-1).text !== '',
+    [oc, nc, tally('del'), tally('add'), h.lines.at(-1)]);
+  check('and the row counts agree with the hunk header',
+    Diff.rowCount([fn]) === Diff.rowCount(Diff.parse(rawFn.slice(0, -1))), Diff.rowCount([fn]));
+  g(['checkout', '--', 'fn.js']);
+
+  // A deleted file: staging its one hunk stages the deletion.
+  fs.rmSync(path.join(DIR, 'gone.txt'));
+  const del = Diff.parse(g(['diff', '--no-color', '--', 'gone.txt']))[0];
+  check('a deleted file is recognised as one', del.deleted && !del.created, del.header);
+  const delPatch = Diff.hunkPatch(del, del.hunks[0]);
+  check('its hunk patch keeps the mode line and the /dev/null side',
+    /^deleted file mode /m.test(delPatch) && /^\+\+\+ \/dev\/null$/m.test(delPatch), delPatch);
+  check('staging that hunk stages the deletion, not an empty file',
+    apply(delPatch, ['--cached']) === null && g(['ls-files', '--', 'gone.txt']) === ''
+      && /^D  gone\.txt$/m.test(g(['status', '--porcelain'])),
+    [g(['ls-files', '-s', '--', 'gone.txt']), g(['status', '--porcelain'])]);
+  g(['reset', '-q', '--', 'gone.txt']);
+  check('discarding it brings the file back whole',
+    apply(delPatch, ['--reverse']) === null
+      && fs.readFileSync(path.join(DIR, 'gone.txt'), 'utf8') === 'one\ntwo\n');
+
+  // A new file, staged: unstaging its one hunk hands it back as untracked.
+  fs.writeFileSync(path.join(DIR, 'fresh.txt'), 'a\nb\n');
+  g(['add', '--', 'fresh.txt']);
+  const add = Diff.parse(g(['diff', '--cached', '--no-color', '--', 'fresh.txt']))[0];
+  check('a new file is recognised as one', add.created && !add.deleted, add.header);
+  check('unstaging its hunk leaves it untracked, not an empty file staged',
+    apply(Diff.hunkPatch(add, add.hunks[0]), ['--cached', '--reverse']) === null
+      && /^\?\? fresh\.txt$/m.test(g(['status', '--porcelain']))
+      && g(['ls-files', '--', 'fresh.txt']) === '',
+    g(['status', '--porcelain']));
+  fs.rmSync(path.join(DIR, 'fresh.txt'));
+
+  // A path the diff --git line alone cannot split.
+  fs.writeFileSync(path.join(DIR, 'plan b', 'notes.txt'), 'satu\nDUA\n');
+  const spaced = Diff.parse(g(['-c', 'core.quotePath=false', 'diff', '--no-color']))[0];
+  check('a folder ending in " b" keeps the name whole on both sides',
+    spaced.oldPath === 'plan b/notes.txt' && spaced.newPath === 'plan b/notes.txt',
+    [spaced.oldPath, spaced.newPath]);
+  check('and its hunk stages',
+    apply(Diff.hunkPatch(spaced, spaced.hunks[0]), ['--cached', '--check']) === null,
+    apply(Diff.hunkPatch(spaced, spaced.hunks[0]), ['--cached', '--check']));
+  g(['checkout', '--', '.']);
+
+  // A staged rename: no per-hunk buttons, because one hunk of it cannot move.
+  g(['mv', 'moved.txt', 'renamed.txt']);
+  fs.writeFileSync(path.join(DIR, 'renamed.txt'),
+    lines(20, (i) => (i === 2 || i === 18 ? `LINE ${i}` : `line ${i}`)));
+  g(['add', '--', 'renamed.txt']);
+  const ren = Diff.parse(g(['diff', '--cached', '--no-color', '--find-renames',
+    '--', 'moved.txt', 'renamed.txt']))[0];
+  check('a rename is recognised, with both names',
+    ren.renamed && ren.oldPath === 'moved.txt' && ren.newPath === 'renamed.txt',
+    [ren.renamed, ren.oldPath, ren.newPath]);
+  const drawn = Diff.render([ren], [{ action: 'unstage', label: 'Unstage hunk' }]);
+  check('its hunks offer no buttons, and say why',
+    !drawn.includes('data-hunk-action') && drawn.includes('hunk-note'));
+  const plain = Diff.render([fn], [{ action: 'stage', label: 'Stage hunk' }]);
+  check('an ordinary file still gets them', plain.includes('data-hunk-action="stage"'));
+
+  fs.rmSync(DIR, { recursive: true, force: true });
+}
+
 console.log('\nthe release notes as data');
 {
   const rl = { window: {} };
