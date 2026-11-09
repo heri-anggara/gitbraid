@@ -2624,6 +2624,96 @@ console.log('\nrewording an older commit');
   fs.rmSync(DIR, { recursive: true, force: true });
 }
 
+console.log('\nignoring exactly the file that was picked');
+{
+  /* The rules the Ignore dialog writes, lifted from the renderer and checked
+     with git's own matcher. A rule has to match the picked path and nothing
+     else: written bare, a file at the top ignored every file of its name at
+     any depth, and a name holding a bracket matched some other file. */
+  const from = rendererSrc.indexOf('const ignoreEscape = ');
+  const to = rendererSrc.indexOf('async function ignoreFiles(');
+  const IG = {};
+  vm.runInNewContext(`${rendererSrc.slice(from, to)}
+    this.ignoreRule = ignoreRule; this.ignorePatterns = ignorePatterns;`, IG);
+  /* main.js trims what it is handed before writing it; the same expression. */
+  const trimAt = mainSrc.indexOf("    .map((p) => p.replace(/^\\s+/, '')");
+  const trimSrc = mainSrc.slice(mainSrc.indexOf('(p) =>', trimAt), mainSrc.indexOf(');\n', trimAt) + 1);
+  const trim = vm.runInNewContext(trimSrc.replace(/\)$/, ''));
+
+  const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'gitbraid-ignore-'));
+  execFileSync('git', ['init', '-q', DIR]);
+  const files = ['config.json', 'src/config.json', 'build/out.js', 'src/build/out.js',
+    'notes[1].txt', 'notes1.txt', '#todo', 'a/#todo', 'star*.md', 'starry.md', 'ends in space '];
+  for (const f of files) {
+    fs.mkdirSync(path.join(DIR, path.dirname(f)), { recursive: true });
+    fs.writeFileSync(path.join(DIR, f), 'x\n');
+  }
+  const ignoredBy = (rule) => {
+    fs.writeFileSync(path.join(DIR, '.gitignore'), `${trim(rule)}\n`);
+    return files.filter((f) => {
+      try { execFileSync('git', ['check-ignore', '-q', '--', f], { cwd: DIR }); return true; }
+      catch { return false; }
+    });
+  };
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  check('a file at the top is anchored there, not matched at every depth',
+    same(ignoredBy(IG.ignoreRule('config.json')), ['config.json']), ignoredBy(IG.ignoreRule('config.json')));
+  check('a file further down still means only itself',
+    same(ignoredBy(IG.ignoreRule('src/config.json')), ['src/config.json']));
+  const folder = IG.ignorePatterns('build/out.js').find((o) => o.label === 'Everything in this folder');
+  check('a folder at the top is anchored too',
+    same(ignoredBy(folder.value), ['build/out.js']), [folder.value, ignoredBy(folder.value)]);
+  check('a bracket in the name is that bracket',
+    same(ignoredBy(IG.ignoreRule('notes[1].txt')), ['notes[1].txt']), ignoredBy(IG.ignoreRule('notes[1].txt')));
+  check('a star in the name is that star',
+    same(ignoredBy(IG.ignoreRule('star*.md')), ['star*.md']), ignoredBy(IG.ignoreRule('star*.md')));
+  check('a name opening with # is a file, not a comment',
+    same(ignoredBy(IG.ignoreRule('#todo')), ['#todo'])
+      && same(ignoredBy(IG.ignoreRule('a/#todo')), ['a/#todo']),
+    [IG.ignoreRule('a/#todo'), ignoredBy(IG.ignoreRule('a/#todo'))]);
+  check('a name ending in a space keeps it, through the trim main.js applies',
+    same(ignoredBy(IG.ignoreRule('ends in space ')), ['ends in space ']),
+    [IG.ignoreRule('ends in space '), ignoredBy(IG.ignoreRule('ends in space '))]);
+  const ext = IG.ignorePatterns('src/config.json').find((o) => o.value.startsWith('*'));
+  check('"every .json file" still means every one of them',
+    same(ignoredBy(ext.value), ['config.json', 'src/config.json']), ignoredBy(ext.value));
+  fs.rmSync(DIR, { recursive: true, force: true });
+}
+
+console.log('\na rename is one change with two names');
+{
+  /* The renderer hands git both names of a renamed entry. Handed only the new
+     one, unstaging a staged rename left the old name's deletion staged and the
+     new file untracked — two rows nobody made. */
+  const from = rendererSrc.indexOf('function origOf(kind, path) {');
+  const to = rendererSrc.indexOf('async function stage(paths) {');
+  const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'gitbraid-rename-'));
+  const g = (args) => execFileSync('git', args, { cwd: DIR, encoding: 'utf8' });
+  g(['init', '-q', '-b', 'main']);
+  g(['config', 'user.email', 't@t.io']);
+  g(['config', 'user.name', 'Tester']);
+  fs.writeFileSync(path.join(DIR, 'old.txt'), 'some text\nthat moves\n');
+  g(['add', '-A']);
+  g(['commit', '-qm', 'base']);
+  g(['mv', 'old.txt', 'new.txt']);
+  const status = P.parseStatus(g(['status', '--porcelain=v2', '--branch', '-z']));
+  const RN = { state: { status }, commitFiles: [] };
+  vm.runInNewContext(`${rendererSrc.slice(from, to)}
+    this.origOf = origOf; this.withOrigins = withOrigins;`, RN);
+  check('the staged rename carries the name it came from',
+    RN.origOf('staged', 'new.txt') === 'old.txt', status.staged);
+  const paths = RN.withOrigins('staged', ['new.txt']);
+  check('both names go to git, once each', JSON.stringify(paths) === '["new.txt","old.txt"]', paths);
+  g(['restore', '--staged', '--', ...paths]);
+  const after = g(['status', '--porcelain']);
+  check('unstaging it leaves nothing staged: the rename is back in the working tree only',
+    /^ D old\.txt$/m.test(after) && /^\?\? new\.txt$/m.test(after) && !/^[RDA] /m.test(after), after);
+  check('a file that was not renamed brings no second name',
+    JSON.stringify(RN.withOrigins('staged', ['other.txt'])) === '["other.txt"]');
+  fs.rmSync(DIR, { recursive: true, force: true });
+}
+
 console.log('\nthe release notes as data');
 {
   const rl = { window: {} };
