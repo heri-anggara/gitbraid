@@ -1107,7 +1107,7 @@ async function refresh({ keepSelection = true } = {}) {
   // whatever happens to be in front when git finishes.
   const tab = state;
   const repo = tab.repo.path;
-  const [status, commits, refs, stashes, flow, op] = await Promise.all([
+  const [status, log, refs, stashes, flow, op] = await Promise.all([
     call('repo:status', repo),
     call('repo:log', repo, { limit: tab.limit, all: true }),
     call('repo:refs', repo),
@@ -1117,7 +1117,11 @@ async function refresh({ keepSelection = true } = {}) {
   ]);
   if (status) tab.status = status;
   tab.op = op || null;            // a merge or rebase git stopped part-way
-  if (commits) { tab.commits = indexForFind(commits); tab.atEnd = false; tab.rawLoaded = tab.limit; }
+  if (log) {
+    tab.commits = indexForFind(log.commits);
+    tab.atEnd = log.scanned < tab.limit;   // git's own count; see repo:log
+    tab.rawLoaded = tab.limit;
+  }
   if (refs) tab.refs = refs;
   if (stashes) tab.stashes = stashes;
   if (flow) tab.flow = flow;
@@ -2000,8 +2004,10 @@ function renderHistory() {
 
   document.documentElement.style.setProperty('--graph-w', state.layout.width + 'px');
   renderRows();
-  // Fewer than asked for, whether by a full read or by the last page: the end.
-  $('btn-more').hidden = state.atEnd || state.commits.length < state.limit;
+  /* Fewer than asked for, by git's count, whether by a full read or by the
+     last page: the end. The rows on screen are not that count — a stash's
+     hidden parts are counted by git and drawn by nobody. */
+  $('btn-more').hidden = state.atEnd;
 }
 
 /* Builds the markup for the visible band only. A ten-thousand-commit history
@@ -3721,16 +3727,19 @@ async function revealRef(ref, kind) {
   const oid = list.find((r) => r.name === ref)?.oid;
   if (!oid) return;
 
-  const loaded = () => state.commits.some((c) => c.hash === oid);
+  const tab = state;
+  const loaded = () => tab.commits.some((c) => c.hash === oid);
   // 50 pages is far past any history a person scrolls; it only stops a runaway.
   for (let page = 0; !loaded() && page < 50; page += 1) {
-    if (state.commits.length < state.limit) {   // the whole history is here already
+    if (tab.atEnd) {   // the whole history is here already, by git's own count
       setStatus(`${ref} is not in this view`, 'error');
       return;
     }
-    state.limit += prefs.commitLimit;
-    setStatus(`Looking for ${ref} — ${state.limit} commits loaded…`);
+    tab.limit += prefs.commitLimit;
+    setStatus(`Looking for ${ref} — ${tab.limit} commits loaded…`);
     await refresh();
+    // Switched away mid-search: that tab keeps what it loaded and stops here.
+    if (tab !== state) return;
   }
   if (!loaded()) {
     setStatus(`${ref} is further back than GitBraid will load`, 'error');
@@ -7329,8 +7338,9 @@ $('btn-more').addEventListener('click', async () => {
      re-read the last few rows of the previous page, and a later full refresh
      asking for exactly the visible count would come back a few rows short. */
   const skip = tab.rawLoaded || tab.commits.length;
-  const more = await call('repo:log', tab.repo.path, { limit: page, all: true, skip });
-  if (!more) return;
+  const log = await call('repo:log', tab.repo.path, { limit: page, all: true, skip });
+  if (!log) return;
+  const more = log.commits;
   // A commit that landed between the two pages shifts everything below it
   // down by one, so the page can begin with a commit already here.
   const known = tab.rowIndex?.size ? tab.rowIndex : new Set(tab.commits.map((c) => c.hash));
@@ -7338,7 +7348,7 @@ $('btn-more').addEventListener('click', async () => {
   tab.commits = tab.commits.concat(fresh);   // a new array, so the layout memo misses
   tab.rawLoaded = skip + page;
   tab.limit = tab.rawLoaded;                  // a later full refresh reloads this much
-  tab.atEnd = more.length < page;
+  tab.atEnd = log.scanned < page;
 
   if (tab !== state) return;      // the reader moved on: keep the data, draw nothing
   state.containedBy = computeContainment(state.commits, state.refs.branches);
