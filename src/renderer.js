@@ -2441,8 +2441,11 @@ async function renderCommitPanel(hash) {
       `<span class="cp-sha">${esc(h.slice(0, 7))}</span></button>`;
   }).join('');
 
-  // Leaving reword mode open across commits would edit the wrong message.
-  exitReword();
+  /* Leaving reword mode open across commits would edit the wrong message. On
+     the same commit it stays: this runs on every refresh, and the window
+     refreshes whenever it regains focus, so switching away to look something
+     up threw away whatever had been typed. */
+  if (rewordFor !== hash) exitReword();
 
   /* For a merge the three sides answer three different questions, and the
      counts belong on the buttons: a side that turns out to be empty should say
@@ -2481,7 +2484,10 @@ async function renderCommitPanel(hash) {
 
 /* ── reword in place ── */
 
+let rewordFor = null;   // the commit whose message is open for editing
+
 function exitReword() {
+  rewordFor = null;
   $('c-msg-read').hidden = false;
   $('c-msg-edit').hidden = true;
 }
@@ -2490,30 +2496,45 @@ async function enterReword() {
   const hash = state.selection?.hash;
   const c = state.commits.find((x) => x.hash === hash);
   if (!c) return;
+  rewordFor = hash;
   $('c-edit-subject').value = c.subject;
   $('c-edit-body').value = c.body || '';
   $('c-msg-read').hidden = true;
   $('c-msg-edit').hidden = false;
+  $('c-edit-save').disabled = false;
+  $('c-reword-note').textContent = '';
   $('c-edit-subject').focus();
 
-  const n = await call('repo:descendantCount', repoPath(), hash);
-  $('c-reword-note').textContent = !n
-    ? 'This is the newest commit, so only it changes.'
-    : `Rewording this will rebase the ${n} commit${n === 1 ? '' : 's'} after it, ` +
-      'giving them new hashes.';
+  const info = await call('repo:descendantCount', repoPath(), hash);
+  if (info === null || rewordFor !== hash) return;
+  /* Only a commit the checked-out branch is built on can be rewritten from
+     here; a rebase of this branch never reaches one on another. Saying so
+     before anything is typed beats refusing after. */
+  $('c-edit-save').disabled = !info.onBranch;
+  const n = info.count;
+  $('c-reword-note').textContent = !info.onBranch
+    ? 'This commit is not on the branch you have checked out. Check out a branch '
+      + 'that contains it to reword it.'
+    : !n
+      ? 'This is the newest commit, so only it changes.'
+      : `Rewording this will rebase the ${n} commit${n === 1 ? '' : 's'} after it, ` +
+        'giving them new hashes.';
 }
 
 async function saveReword() {
   const hash = state.selection?.hash;
+  if ($('c-edit-save').disabled || rewordFor !== hash) return;
   const subject = $('c-edit-subject').value.trim();
   if (!subject) { setStatus('A commit needs a summary line', 'error'); return; }
   const body = $('c-edit-body').value.trim();
   const message = body ? `${subject}\n\n${body}` : subject;
 
   setStatus('Rewording…');
-  const res = await call('repo:rewordCommit', repoPath(), { hash, message });
+  const tab = state;
+  const res = await call('repo:rewordCommit', tab.repo.path, { hash, message });
   if (res === null) return;          // reason already in the status bar
-  state.selection = { kind: 'commit', hash: res.hash };
+  tab.selection = { kind: 'commit', hash: res.hash };
+  if (tab !== state) return;         // the next visit to that tab reads it afresh
   exitReword();
   await refresh();
   setStatus(res.rebased

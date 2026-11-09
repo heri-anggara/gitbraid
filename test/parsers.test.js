@@ -2521,6 +2521,109 @@ console.log('\nhunks as git writes them in full');
   fs.rmSync(DIR, { recursive: true, force: true });
 }
 
+console.log('\nrewording an older commit');
+{
+  /* The same scripts and the same rebase the application runs, lifted out of
+     main.js and handed to plain node instead of Electron's. The histories hold
+     a merge after the commit, because that is what the old sequence editor got
+     wrong twice over: it flattened the merge, and with a side branch listed
+     first it reworded the side branch's commit. */
+  const from = mainSrc.indexOf('let editorSeq = 0;');
+  const to = mainSrc.indexOf("const { execFile, spawn } = require('child_process');");
+  const RW = { path, os, fs, process, JSON };
+  vm.runInNewContext(`${mainSrc.slice(from, to)}
+    this.nodeEditor = nodeEditor; this.REWORD_SEQUENCE = REWORD_SEQUENCE;
+    this.REWORD_MESSAGE = REWORD_MESSAGE; this.rewordRebaseArgs = rewordRebaseArgs;`, RW);
+
+  const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'gitbraid-reword-'));
+  const g = (args, env = {}) => execFileSync('git', args, {
+    cwd: DIR, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, LC_ALL: 'C', ...env },
+  });
+  const make = (file, msg) => {
+    fs.writeFileSync(path.join(DIR, file), `${file}\n`);
+    g(['add', '--', file]);
+    g(['commit', '-qm', msg]);
+    return g(['rev-parse', 'HEAD']).trim();
+  };
+  const byMsg = (m) => g(['log', '--all', '--format=%H', `--grep=^${m}$`]).trim();
+  const parentsOf = (h) => g(['rev-list', '--parents', '-n', '1', h]).trim().split(' ').slice(1);
+  /* What repo:rewordCommit does once its checks have passed. */
+  const reword = (hash, message) => {
+    const out = path.join(DIR, '.git', 'reworded');
+    const msgFile = path.join(DIR, '.git', 'new-message');
+    fs.writeFileSync(msgFile, `${message}\n`);
+    const seq = RW.nodeEditor(RW.REWORD_SEQUENCE, hash, out);
+    const msg = RW.nodeEditor(RW.REWORD_MESSAGE, msgFile);
+    try {
+      g(RW.rewordRebaseArgs(hash, parentsOf(hash).length),
+        { GIT_SEQUENCE_EDITOR: seq.command, GIT_EDITOR: msg.command });
+      return fs.readFileSync(out, 'utf8').trim();
+    } catch {
+      try { g(['rebase', '--abort']); } catch { /* nothing to abort */ }
+      return null;
+    } finally {
+      for (const f of [out, msgFile, seq.file, msg.file]) fs.rmSync(f, { force: true });
+    }
+  };
+
+  g(['init', '-q', '-b', 'main']);
+  g(['config', 'user.email', 't@t.io']);
+  g(['config', 'user.name', 'Tester']);
+  make('one', 'one');
+  g(['checkout', '-qb', 'side']);
+  const two = make('two', 'two');
+  g(['checkout', '-q', 'main']);
+  make('three', 'three');
+  g(['merge', '-q', '--no-ff', 'side', '-m', 'merge side']);
+  make('four', 'four');
+  const shape = () => g(['log', '--format=%s|%p', '--topo-order']).trim().split('\n')
+    .map((l) => { const [subject, ps] = l.split('|'); return [subject, ps ? ps.split(' ').length : 0]; });
+  const before = shape();
+
+  const got = reword(byMsg('three'), 'three, reworded');
+  const after = shape();
+  check('rewording the commit before a merge changes that commit\'s message',
+    got && g(['log', '-1', '--format=%s', got]).trim() === 'three, reworded', [got, after]);
+  check('and keeps the merge a merge, with every commit still there',
+    after.length === before.length
+      && after.find(([m]) => m === 'merge side')?.[1] === 2
+      && after.some(([m]) => m === 'two') && !after.some(([m]) => m === 'three'),
+    after);
+  check('the side branch merged in is not rewritten: it never descended from that commit',
+    byMsg('two') === two, [byMsg('two'), two]);
+  check('the hash handed back is the reworded commit, not its parent',
+    got === byMsg('three, reworded') && parentsOf(got)[0] === byMsg('one'));
+
+  const mergeAt = byMsg('merge side');
+  const gotMerge = reword(mergeAt, 'merge side, reworded');
+  check('a merge commit can be reworded too, and stays a merge',
+    gotMerge && g(['log', '-1', '--format=%s', gotMerge]).trim() === 'merge side, reworded'
+      && parentsOf(gotMerge).length === 2,
+    [gotMerge, gotMerge && parentsOf(gotMerge)]);
+
+  const gotRoot = reword(byMsg('one'), 'one, reworded');
+  check('the root commit can be reworded',
+    gotRoot && g(['log', '-1', '--format=%s', gotRoot]).trim() === 'one, reworded'
+      && parentsOf(gotRoot).length === 0 && shape().length === before.length,
+    [gotRoot, shape()]);
+
+  /* A commit on a branch that was never merged: the range the rebase walks
+     does not hold it, and the old editor reworded the first pick it did find. */
+  g(['checkout', '-qb', 'stray', byMsg('one, reworded')]);
+  const stray = make('stray', 'stray');
+  g(['checkout', '-q', 'main']);
+  const head = g(['rev-parse', 'HEAD']).trim();
+  const log = g(['log', '--format=%s']);
+  check('a commit the todo does not hold makes the rebase stop, and nothing moves',
+    reword(stray, 'nope') === null
+      && g(['rev-parse', 'HEAD']).trim() === head && g(['log', '--format=%s']) === log
+      && !fs.existsSync(path.join(DIR, '.git', 'rebase-merge')),
+    g(['log', '--format=%s']));
+
+  fs.rmSync(DIR, { recursive: true, force: true });
+}
+
 console.log('\nthe release notes as data');
 {
   const rl = { window: {} };

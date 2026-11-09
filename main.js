@@ -29,14 +29,36 @@ function nodeEditor(body, ...args) {
   return { command: parts.join(' '), file };
 }
 
-/* argv[2] is the script's own extra argument, argv[3] the file git passes. */
+/* argv[2] is the full hash of the commit being reworded, argv[3] a file to
+   write its new hash to, argv[4] the todo list git passes.
+
+   The commit is found by its hash, not as the first `pick`. With merges in the
+   way the first pick is often some other commit — a side branch's, listed
+   before the line it was merged into — and the wrong message changed. A merge
+   is reworded by turning its `merge -C` into `merge -c`, which opens the
+   editor where -C reuses the message. Right after that line an `exec` writes
+   down the commit the reword produced: that is the only place its new hash is
+   known for certain. A todo without the commit exits non-zero, which makes git
+   stop before anything is rewritten. */
 const REWORD_SEQUENCE = `
 const fs = require('fs');
-const todo = process.argv[2];
+const [, , want, out, todo] = process.argv;
 const lines = fs.readFileSync(todo, 'utf8').split('\\n');
-for (let i = 0; i < lines.length; i++) {
-  if (lines[i].startsWith('pick ')) { lines[i] = 'reword ' + lines[i].slice(5); break; }
+const ours = (short) => short.length >= 4 && want.startsWith(short);
+let at = -1;
+for (let i = 0; i < lines.length && at < 0; i++) {
+  const pick = /^(?:pick|p) ([0-9a-f]+)(?:\\s|$)/.exec(lines[i]);
+  const merge = /^(?:merge|m) -C ([0-9a-f]+)(?:\\s|$)/.exec(lines[i]);
+  if (pick && ours(pick[1])) {
+    lines[i] = 'reword ' + lines[i].slice(lines[i].indexOf(' ') + 1);
+    at = i;
+  } else if (merge && ours(merge[1])) {
+    lines[i] = lines[i].replace(/^(?:merge|m) -C /, 'merge -c ');
+    at = i;
+  }
 }
+if (at < 0) process.exit(1);
+lines.splice(at + 1, 0, 'exec git rev-parse HEAD > ' + JSON.stringify(out));
 fs.writeFileSync(todo, lines.join('\\n'));
 `;
 
@@ -44,6 +66,17 @@ const REWORD_MESSAGE = `
 const fs = require('fs');
 fs.copyFileSync(process.argv[2], process.argv[3]);
 `;
+
+/* --rebase-merges, because without it the rebase lays every commit after the
+   reworded one in a single line: measured, four commits holding one merge came
+   back as four commits and no merge at all. A root commit has no parent to
+   start from, so the whole history is the range. */
+function rewordRebaseArgs(hash, parentCount) {
+  return parentCount
+    ? ['rebase', '-i', '--rebase-merges', `${hash}^`]
+    : ['rebase', '-i', '--rebase-merges', '--root'];
+}
+
 const { execFile, spawn } = require('child_process');
 const net = require('net');
 
@@ -2688,10 +2721,29 @@ handle('repo:diffCommitFile', async (repo, { hash, file, ignoreWhitespace, conte
   return git(repo, show);
 });
 
-/** How many commits sit between this one and HEAD — the ones a reword would
-    have to rewrite. Zero means it is HEAD itself. */
-handle('repo:descendantCount', async (repo, hash) =>
-  Number((await git(repo, ['rev-list', '--count', `${hash}..HEAD`])).trim()) || 0);
+/** Whether a commit is one the checked-out branch is built on. Asked as "is
+    the merge base of the two the commit itself", which needs no exit code to
+    be read: git() turns every non-zero exit into a failure, and `merge-base
+    --is-ancestor` answers no by exiting 1. */
+async function onCurrentBranch(repo, hash) {
+  try {
+    const full = (await git(repo, ['rev-parse', '--verify', `${hash}^{commit}`])).trim();
+    return (await git(repo, ['merge-base', full, 'HEAD'])).trim() === full;
+  } catch {
+    return false;   // no common history at all, or nothing checked out yet
+  }
+}
+
+/** The commits a reword would have to rewrite, and whether it can be done from
+    here at all. Counted along the ancestry path: a side branch merged in later
+    sits in `hash..HEAD` too, but it does not descend from this commit and is
+    left exactly as it is. Zero means it is HEAD itself. */
+handle('repo:descendantCount', async (repo, hash) => {
+  if (!(await onCurrentBranch(repo, hash))) return { count: 0, onBranch: false };
+  const count = Number((await git(repo,
+    ['rev-list', '--count', '--ancestry-path', `${hash}..HEAD`])).trim()) || 0;
+  return { count, onBranch: true };
+});
 
 /**
  * Reword a commit. HEAD is simply amended, which touches nothing else and
@@ -2706,34 +2758,55 @@ handle('repo:rewordCommit', async (repo, { hash, message }) => {
     return { hash: (await git(repo, ['rev-parse', 'HEAD'])).trim(), rebased: 0 };
   }
 
+  /* A commit on another branch is not in the range the rebase walks. Asked to
+     reword one, the old sequence editor reworded the first commit it did find,
+     on the branch that was checked out, and reported success. */
+  if (!(await onCurrentBranch(repo, hash))) {
+    throw new Error('That commit is not on the branch you have checked out, so it '
+      + 'cannot be reworded from here. Check out a branch that contains it first.');
+  }
   const dirty = (await git(repo, ['status', '--porcelain'])).trim();
   if (dirty) {
     throw new Error(
       'Rewording an older commit rewrites the ones after it, which needs a clean ' +
       'working tree. Commit or stash your changes first.');
   }
-  const count = Number((await git(repo, ['rev-list', '--count', `${hash}..HEAD`])).trim()) || 0;
+  const parents = (await git(repo, ['rev-list', '--parents', '-n', '1', hash]))
+    .trim().split(' ').length - 1;
 
-  const msgFile = path.join(os.tmpdir(), `gitbraid-reword-${process.pid}-${count}.txt`);
+  const stamp = `${process.pid}-${++editorSeq}`;
+  const msgFile = path.join(os.tmpdir(), `gitbraid-reword-${stamp}.txt`);
+  const outFile = path.join(os.tmpdir(), `gitbraid-reword-${stamp}.head`);
   fs.writeFileSync(msgFile, message.endsWith('\n') ? message : message + '\n');
-  // Turn the first `pick` into `reword`, then hand git the new message.
-  const seq = nodeEditor(REWORD_SEQUENCE);
+  // Mark this commit for rewording, then hand git the new message.
+  const seq = nodeEditor(REWORD_SEQUENCE, hash, outFile);
   const msg = nodeEditor(REWORD_MESSAGE, msgFile);
+  let reworded = '';
   try {
-    await git(repo, ['rebase', '-i', `${hash}^`], {
+    await git(repo, rewordRebaseArgs(hash, parents), {
       ELECTRON_RUN_AS_NODE: '1',
       GIT_SEQUENCE_EDITOR: seq.command,
       GIT_EDITOR: msg.command,
     });
+    try { reworded = fs.readFileSync(outFile, 'utf8').trim(); } catch { /* see below */ }
   } catch (err) {
     try { await git(repo, ['rebase', '--abort']); } catch { /* nothing to abort */ }
     throw new Error(`Reword failed, nothing was changed: ${(err.message || '').split('\n')[0]}`);
   } finally {
-    for (const f of [msgFile, seq.file, msg.file]) {
+    for (const f of [msgFile, outFile, seq.file, msg.file]) {
       try { fs.unlinkSync(f); } catch { /* already gone */ }
     }
   }
-  return { hash: (await git(repo, ['rev-parse', `${hash}^`])).trim(), rebased: count };
+  /* What changed is everything the new HEAD has that the old one did not: the
+     reworded commit and every commit rewritten on top of it. The hash handed
+     back used to be `${hash}^` — the reworded commit's parent, which the
+     rebase never touched — so the panel jumped to the commit before the one
+     just edited. */
+  const fresh = Number((await git(repo, ['rev-list', '--count', `${head}..HEAD`])).trim()) || 0;
+  return {
+    hash: reworded || (await git(repo, ['rev-parse', 'HEAD'])).trim(),
+    rebased: Math.max(0, fresh - 1),
+  };
 });
 
 /* A merge has two parents, so "what changed" has no single answer and git
