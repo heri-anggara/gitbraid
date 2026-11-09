@@ -263,12 +263,16 @@
   /** Which pattern table fits this path, or null when nothing does. */
   function langOf(pathName) {
     const base = String(pathName || '').split('/').pop() || '';
-    if (/^(Dockerfile|Makefile)/i.test(base)) return 'sh';
+    if (/^(Dockerfile|Makefile)$/i.test(base)) return 'sh';
     /* Checked before the extension, because the last one is `php` and a Blade
        template is only half PHP — the other half is the directives. */
     if (/\.blade\.php$/i.test(base)) return 'blade';
     const ext = base.includes('.') ? base.split('.').pop().toLowerCase() : '';
-    return BY_EXT[ext] || null;
+    /* `Dockerfile.dev` and `Makefile.am` are still those files, but only when
+       what follows the dot is not a language of its own. Matched as a bare
+       prefix, `MakefileParser.py` was coloured as shell and so was
+       `dockerfiles.txt`. */
+    return BY_EXT[ext] || (/^(Dockerfile|Makefile)\./i.test(base) ? 'sh' : null);
   }
 
   /** Escaped HTML for one line, wrapped in spans. Never throws. */

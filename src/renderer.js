@@ -622,7 +622,10 @@ async function askpassDialog(q) {
   /* What "remember" would mean here, asked rather than assumed: with no
      credential helper configured git has nowhere to write one, and a checkbox
      that promised otherwise would be a lie. */
-  const storage = q.canRemember ? await call('askpass:storage', state.repo) : null;
+  /* The path, not the object holding it: handed the object, main tried to run
+     git with it as the working directory and failed every time, so the box
+     always offered "until GitBraid quits" even with a helper configured. */
+  const storage = q.canRemember ? await call('askpass:storage', state.repo?.path || null) : null;
 
   const res = await modal({
     title: ASK_TITLE[q.field] || 'The remote is asking',
@@ -1067,6 +1070,7 @@ function stepTab(delta) {
 /** No tabs left at all: the start page, without a tab strip above it. */
 async function showWelcome() {
   hideViewer();
+  syncTermCwd();
   activeId = null;
   state = newTab(null);
   /* These live outside the tab, so the last repository's rows and file list
@@ -1363,9 +1367,6 @@ function renderTree(node, kind, leafHtml, prefix = '', depth = 0) {
     })
     .join('');
 }
-
-const treeOrEmpty = (items, kind, leafHtml, empty) =>
-  items.length ? renderTree(buildTree(items), kind, leafHtml) : `<li class="empty-row">${empty}</li>`;
 
 /* What the sidebar's filter box holds. Kept out of the tab state on purpose: it
    is a way of looking, not something about the repository. */
@@ -4745,6 +4746,7 @@ $('rm-groups').addEventListener('click', async (e) => {
   if (clear) {
     e.stopPropagation();
     recents = (await call('app:clearRecents')) || [];
+    renderRecents();   // the start page behind the manager lists them too
     await loadRepoManager();
     setStatus('Recent list cleared', 'ok');
     return;
@@ -5534,16 +5536,19 @@ async function loadIdentityPage() {
     const name = $(local ? 'pf-lname' : 'pf-gname').value.trim();
     const email = $(local ? 'pf-lemail' : 'pf-gemail').value.trim();
     if (!local && (!name || !email)) {
-      setStatus('A global identity needs both a name and an email', 'err');
+      setStatus('A global identity needs both a name and an email', 'error');
       return;
     }
-    const ok = await call('git:setIdentity', repoPath(), { name, email, local });
+    /* No repository is a normal state for this page — it says so above — and
+       the global card has to save in it. repoPath() threw there. */
+    const ok = await call('git:setIdentity', state.repo?.path || null, { name, email, local });
     if (ok === null) return;
     const said = $(local ? 'pf-lsaid' : 'pf-gsaid');
     said.textContent = 'Saved';
     setTimeout(() => { said.textContent = ''; }, 2200);
     loadIdentityPage();
-    if (typeof renderIdentityChip === 'function') renderIdentityChip();
+    // The chip in the toolbar shows the same identity; it kept the old one.
+    loadIdentity();
   };
   $('pf-gsave').onclick = () => save(false);
   $('pf-lsave').onclick = () => save(true);
@@ -5621,7 +5626,6 @@ function syncTermCwd() {
 
 function showTerm() {
   $('term').hidden = false;
-  $('app').classList.add('term-open');
   term.open = true;
   saveTerm();
   document.documentElement.style.setProperty('--term-h', `${term.height}px`);
@@ -5636,7 +5640,6 @@ function showTerm() {
 
 function hideTerm() {
   $('term').hidden = true;
-  $('app').classList.remove('term-open');
   term.open = false;
   saveTerm();
 }
@@ -5645,7 +5648,8 @@ const toggleTerm = () => (termOpen() ? hideTerm() : showTerm());
 
 async function termRun(cmd) {
   if (!state.repo) { termWrite('Open a repository first.', 'term-err'); return; }
-  if (term.busy) return;
+  // Said, rather than swallowed: the box had already been emptied.
+  if (term.busy) { termWrite(`A command is still running — stop it first. (${cmd})`, 'term-err'); return; }
   termWrite(`$ ${cmd}`, 'term-cmd-echo');
   term.busy = true;
   $('term-stop').disabled = false;
@@ -5824,8 +5828,10 @@ const OUT_RULES = [
   [/\bdone\.$/, 'faint'],
 ];
 
-/** A diffstat's bar: "src/app.ts | 24 ++++----" — its plusses and minuses. */
-const STAT_BAR = /^(\s*\S.*?\|\s*\d+\s*)(\++)(-*)(\s*)$/;
+/** A diffstat's bar: "src/app.ts | 24 ++++----" — its plusses and minuses.
+    Either run may be empty, but not both: a file that only lost lines draws
+    nothing but minuses, and was left uncoloured. */
+const STAT_BAR = /^(\s*\S.*?\|\s*\d+\s*)(?=[+-])(\+*)(-*)(\s*)$/;
 
 function outLineHtml(line) {
   const bar = STAT_BAR.exec(line);
@@ -6088,13 +6094,15 @@ const markChecked = () => {
    busy, is not something to interrupt anyone about. Pressed by hand, the same
    failures are worth saying out loud. */
 async function checkForUpdates({ quiet = false } = {}) {
-  markChecked();
   if (!quiet) setStatus('Checking for updates…');
   const res = await window.gitbraid.invoke('update:check');
   if (!res.ok) {
     if (!quiet) setStatus(firstLine(res.error), 'error');
     return null;
   }
+  /* Marked once GitHub has answered. Marked before asking, a launch while
+     offline counted as the day's check and the next one waited a day. */
+  markChecked();
   update = res.data.newer ? res.data : null;
   paintUpdateFlag();
   /* Asked for by hand, "there is one" has to be the offer itself. Marking the
@@ -6562,6 +6570,12 @@ const SHORTCUTS = [
     ['Alt O', 'Open in file manager'],
     ['Alt T', 'Open an external terminal'],
   ]],
+  ['A list of files', [
+    ['Enter / Space', 'Stage or unstage the selected files'],
+    ['Delete', 'Discard the selected files'],
+    ['Ctrl A', 'Select every file in the list'],
+    ['Esc', 'Clear a selection of several files'],
+  ]],
   ['Reading a diff', [
     ['Alt Down', 'Next difference'],
     ['Alt Up', 'Previous difference'],
@@ -6630,7 +6644,10 @@ const MENU_ACTIONS = {
   'repo-manager': () => ($('app').classList.contains('managing')
     ? closeRepoManager() : openRepoManager()),
   about: openAbout,
-  'check-updates': () => (update ? offerUpdate() : checkForUpdates()),
+  // An update already downloaded and put off is offered as the restart it
+  // needs, as the status bar's menu does; offering it again downloaded it again.
+  'check-updates': () => (updateReady ? restartForUpdate()
+    : update ? offerUpdate() : checkForUpdates()),
   'release-notes': () => ($('app').classList.contains('reading-notes')
     ? closeNotes() : openNotes()),
   'terminal-panel': toggleTerm,     // the panel inside the window
@@ -7737,7 +7754,7 @@ for (const id of FILE_LISTS) {
       return;
     }
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      if (kind === 'commit') return;
+      if (kind !== 'unstaged' && kind !== 'staged') return;   // a commit, or a conflict
       e.preventDefault();
       discardMany(paths);
       return;
