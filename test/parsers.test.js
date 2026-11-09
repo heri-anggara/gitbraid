@@ -64,7 +64,8 @@ const parserSrc = mainSrc.slice(
   mainSrc.indexOf('/* ------------------------------------------------------------------ */\n/* recent repositories')
 );
 const P = {};
-vm.runInNewContext(parserSrc + '\nthis.parseStatus=parseStatus; this.parseLog=parseLog;', P);
+vm.runInNewContext(parserSrc
+  + '\nthis.parseStatus=parseStatus; this.parseLog=parseLog; this.LOG_FORMAT=LOG_FORMAT;', P);
 
 /* The release-notes renderer, lifted out of the renderer the same way the
    parsers are lifted out of main.js. It turns text fetched from a web page into
@@ -108,7 +109,8 @@ fs.unlinkSync(path.join(REPO, 'a file with spaces.txt'));
 
 /* ── log ───────────────────────────────────────────────────────── */
 console.log('\nlog parser');
-const LOG_FORMAT = ['%H','%P','%an','%ae','%at','%cn','%ct','%D','%s','%b'].join('%x1f');
+// The format main.js asks for, not a copy of it: the parser and it change together.
+const { LOG_FORMAT } = P;
 const commits = P.parseLog(
   git(['log', '--all', '--date-order', '-z', `--pretty=format:${LOG_FORMAT}`, '--max-count=100'])
 );
@@ -124,15 +126,15 @@ check('HEAD ref present', commits.some((c) => c.refs.some((r) => r.startsWith('H
 check('dates are sane', commits.every((c) => c.commitDate > 1e12 && c.commitDate <= Date.now() + 5000));
 
 /* Records built by hand, because what matters here is the byte the format
-   uses as its separator turning up inside a body. git does not strip it from
-   a message, and a parser that split the whole record on it put everything
-   after the tenth field where nobody read it. */
+   uses as its separator turning up inside a message. git does not strip it,
+   and a parser that split the whole record on it put everything after the
+   last field where nobody read it. The last field is the whole message. */
 {
   const U = '\x1f';
   const H = 'h'.repeat(40);
   const mk = (body, refs = '', parents = 'p1 p2') => [
     H, parents, 'Tester', 't@example.com', '1700000000',
-    'Committer', '1700000060', refs, 'the subject', body,
+    'Committer', '1700000060', refs, `the subject\n\n${body}`,
   ].join(U);
   const one = P.parseLog(mk('first line\nwith\x1fa separator\n\nand more\n'));
   check('a body holding the separator byte is kept whole',
@@ -160,6 +162,56 @@ check('dates are sane', commits.every((c) => c.commitDate > 1e12 && c.commitDate
   check('a record cut short still yields what it had',
     short.length === 1 && short[0].hash === H && short[0].author === 'Tester'
     && short[0].subject === '' && short[0].body === '');
+}
+
+/* Subject and body as git itself gives them, compared message by message. The
+   messages are written with commit-tree, which stores them byte for byte, so
+   the odd shapes are really in the repository: blank lines in front, a
+   subject over two lines, trailing spaces, CRLF, a vertical tab, the separator
+   byte in the subject, no newline at the end, and nothing at all. */
+{
+  const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'gitbraid-messages-'));
+  const g = (args, opts = {}) => execFileSync('git', args, {
+    cwd: DIR, encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' }, ...opts,
+  });
+  g(['init', '-q', '-b', 'main']);
+  g(['config', 'user.email', 't@t.io']);
+  g(['config', 'user.name', 'Tester']);
+  fs.writeFileSync(path.join(DIR, 'f'), 'x\n');
+  g(['add', 'f']);
+  g(['commit', '-qm', 'base']);
+  const tree = g(['rev-parse', 'HEAD^{tree}']).trim();
+  const messages = [
+    'subject\n\nbody line\n',
+    'subject only\n',
+    'no newline at the end',
+    'line one\nline two\n\nbody\n',
+    '\n\n  leading blanks\n\nbody\n',
+    'trailing spaces   \t\n\n\n\nbody after many blanks\n\n',
+    'crlf subject\r\n\r\nbody\r\n',
+    'sub\x1fject with the separator\n\nbo\x1fdy too\n',
+    '   \n\t\nafter whitespace-only lines\nnext\n \nbody\n',
+    'a\vb with a vertical tab\n\nbody\n',
+    '',
+  ];
+  let parent = g(['rev-parse', 'HEAD']).trim();
+  for (const m of messages) {
+    parent = g(['commit-tree', tree, '-p', parent], { input: m }).trim();
+  }
+  g(['update-ref', 'refs/heads/main', parent]);
+  const ours = P.parseLog(g(['log', '-z', `--pretty=format:${LOG_FORMAT}`, `-${messages.length}`]));
+  const hashes = g(['log', '--format=%H', `-${messages.length}`]).trim().split('\n');
+  const theirs = hashes.map((h) => ({
+    subject: g(['log', '-1', '--format=%s', h]).replace(/\n$/, ''),
+    body: g(['log', '-1', '--format=%b', h]).trim(),
+  }));
+  const wrong = ours.map((c, i) => [c.subject, c.body, theirs[i].subject, theirs[i].body])
+    .filter(([s1, b1, s2, b2]) => s1 !== s2 || b1 !== b2);
+  check('every subject and body is what git\'s own %s and %b give',
+    ours.length === messages.length && wrong.length === 0, wrong);
+  check('a subject holding the separator byte is whole, and its body is its own',
+    ours.some((c) => c.subject === 'sub\x1fject with the separator' && c.body === 'bo\x1fdy too'));
+  fs.rmSync(DIR, { recursive: true, force: true });
 }
 
 /* ── which branches hold each commit ───────────────────────────── */
@@ -2716,6 +2768,71 @@ console.log('\na rename is one change with two names');
   check('a file that was not renamed brings no second name',
     JSON.stringify(RN.withOrigins('staged', ['other.txt'])) === '["other.txt"]');
   fs.rmSync(DIR, { recursive: true, force: true });
+}
+
+console.log('\nsmaller things the audit found');
+{
+  /* A merge in a linked worktree. Its `.git` is a file naming a folder under
+     the main repository, and that folder is where MERGE_HEAD is written; the
+     banner looked in `<worktree>/.git`, found a file, and saw nothing. */
+  const gdFrom = mainSrc.indexOf('function gitDirOf(repo) {');
+  const gdTo = mainSrc.indexOf('\n}\n', gdFrom) + 3;
+  const opFrom = mainSrc.indexOf('function readGitFile(gitDir, ...parts) {');
+  const opTo = mainSrc.indexOf("handle('repo:state'");
+  const OP = { fs, path };
+  vm.runInNewContext(`${mainSrc.slice(gdFrom, gdTo)}\n${mainSrc.slice(opFrom, opTo)}
+    this.gitDirOf = gitDirOf; this.operationState = operationState;`, OP);
+  const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'gitbraid-worktree-'));
+  const MAINDIR = path.join(DIR, 'main');
+  const WT = path.join(DIR, 'wt');
+  const g = (cwd, args) => execFileSync('git', args, {
+    cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, LC_ALL: 'C' },
+  });
+  fs.mkdirSync(MAINDIR);
+  g(MAINDIR, ['init', '-q', '-b', 'main']);
+  g(MAINDIR, ['config', 'user.email', 't@t.io']);
+  g(MAINDIR, ['config', 'user.name', 'Tester']);
+  fs.writeFileSync(path.join(MAINDIR, 'x'), '1\n');
+  g(MAINDIR, ['add', 'x']);
+  g(MAINDIR, ['commit', '-qm', 'one']);
+  g(MAINDIR, ['checkout', '-qb', 'side']);
+  fs.writeFileSync(path.join(MAINDIR, 'x'), '2\n');
+  g(MAINDIR, ['commit', '-qam', 'two']);
+  g(MAINDIR, ['checkout', '-q', 'main']);
+  g(MAINDIR, ['worktree', 'add', '-q', '-b', 'wt', WT, 'main']);
+  fs.writeFileSync(path.join(WT, 'x'), '3\n');
+  g(WT, ['commit', '-qam', 'three']);
+  try { g(WT, ['merge', 'side']); } catch { /* a conflict, on purpose */ }
+  check('in a worktree, .git is a file and the merge state is elsewhere',
+    fs.statSync(path.join(WT, '.git')).isFile() && !fs.existsSync(path.join(WT, '.git', 'MERGE_HEAD')));
+  const op = OP.operationState(OP.gitDirOf(WT));
+  check('a merge stopped in a worktree is still seen, and named',
+    op && op.kind === 'merge' && op.target === 'side', op);
+  check('and the main checkout beside it is not mistaken for it',
+    OP.operationState(OP.gitDirOf(MAINDIR)) === null);
+  fs.rmSync(DIR, { recursive: true, force: true });
+
+  /* Dockerfile and Makefile are known by name, not by a name that starts with
+     them. */
+  const HL = { window: {} };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'src/highlight.js'), 'utf8'), HL);
+  const langOf = HL.window.Hl.langOf;
+  check('Dockerfile, Makefile and their dotted variants are shell',
+    ['Dockerfile', 'Makefile', 'Dockerfile.dev', 'Makefile.am', 'a/b/Makefile']
+      .every((f) => langOf(f) === 'sh'));
+  check('a file whose name only starts with one keeps its own language',
+    langOf('MakefileParser.py') === 'py' && langOf('Dockerfile.md') === 'md'
+      && langOf('dockerfiles.txt') === null,
+    ['MakefileParser.py', 'Dockerfile.md', 'dockerfiles.txt'].map(langOf));
+
+  /* A diffstat line that only lost lines is a bar too. */
+  const barSrc = rendererSrc.match(/const STAT_BAR = (\/.*\/);/)[1];
+  const BAR = vm.runInNewContext(barSrc);
+  check('a diffstat line of minuses only is coloured like one of plusses',
+    BAR.exec(' src/old.js | 3 ---')?.[3] === '---' && BAR.exec(' src/new.js | 3 +++')?.[2] === '+++'
+      && BAR.exec(' src/a.js | 12 ++++----')?.[3] === '----');
+  check('and a summary line is not mistaken for a bar',
+    !BAR.test(' 2 files changed, 3 insertions(+)') && !BAR.test(' bin/x | Bin 0 -> 12 bytes'));
 }
 
 console.log('\nthe release notes as data');

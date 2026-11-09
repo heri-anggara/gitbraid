@@ -758,19 +758,54 @@ function parseStatus(raw) {
   return res;
 }
 
+/* The whole message is the last field, and the subject and body are worked
+   out from it here rather than asked for as %s and %b. Those were two fields,
+   and either can hold the 0x1F the format separates fields with — git does not
+   strip the byte from a message — so a subject holding one ended at it, and
+   the rest of the subject was read as the start of the body. As one last field
+   the message is taken whole, whatever it holds. */
 const LOG_FORMAT = [
-  '%H', '%P', '%an', '%ae', '%at', '%cn', '%ct', '%D', '%s', '%b',
+  '%H', '%P', '%an', '%ae', '%at', '%cn', '%ct', '%D', '%B',
 ].join('%x1f');
 
-/* Records are separated by NUL and the ten fields inside one by 0x1F. Walked
+/* What git's %s and %b say, from the message %B gives, by git's own rules
+   (pretty.c): blank lines before the subject are skipped; the subject is the
+   first paragraph, each of its lines trimmed at the end and joined with a
+   space; the body is what follows the blank lines after it. Blank means
+   nothing but the four characters git counts as space — tab, newline, carriage
+   return and space. Walked by index, with nothing split: splitting each
+   message into lines made reading 100,000 commits a third slower than reading
+   them as two fields did. */
+const isGitSpace = (c) => c === 32 || c === 9 || c === 13;
+
+function splitMessage(msg) {
+  const len = msg.length;
+  const lineEnd = (from) => { const nl = msg.indexOf('\n', from); return nl < 0 ? len : nl; };
+  const blank = (from, to) => {
+    for (let k = from; k < to; k++) if (!isGitSpace(msg.charCodeAt(k))) return false;
+    return true;
+  };
+  let at = 0;
+  while (at < len) { const e = lineEnd(at); if (!blank(at, e)) break; at = e + 1; }
+  let subject = '';
+  while (at < len) {
+    const e = lineEnd(at);
+    if (blank(at, e)) { at = e + 1; break; }   // the line that ends the paragraph
+    let t = e;
+    while (t > at && isGitSpace(msg.charCodeAt(t - 1))) t--;
+    subject = subject ? `${subject} ${msg.slice(at, t)}` : msg.slice(at, t);
+    at = e + 1;
+  }
+  while (at < len) { const e = lineEnd(at); if (!blank(at, e)) break; at = e + 1; }
+  return { subject, body: at < len ? msg.slice(at) : '' };
+}
+
+/* Records are separated by NUL and the nine fields inside one by 0x1F. Walked
    by index rather than split: `split('\0')`, then `trim` on every chunk, then
    `split(UNIT)` on each, made a second copy of the whole log as fragments
-   before a single record object existed. Worse, the last split cut the body
-   wherever it happened to hold a 0x1F — git does not strip the byte from a
-   message — and kept only the piece before it. The body is the tenth field
-   and the last, so it is taken whole from the ninth separator to the end of
-   the record, whatever it contains. A record with fewer fields yields what it
-   has, as the split did. */
+   before a single record object existed. The message is the ninth field and
+   the last, so it is taken whole from the eighth separator to the end of the
+   record. A record with fewer fields yields what it has, as the split did. */
 
 /* The characters trim() removes. A record that is nothing but these is the gap
    between two records, not one — checked by hand because a regular expression
@@ -794,15 +829,16 @@ function parseLog(raw) {
     let probe = at;
     while (probe < end && isSpace(raw.charCodeAt(probe))) probe++;
     if (probe >= end) continue;
-    const f = new Array(10);
+    const f = new Array(9);
     let i = 0;
-    for (; i < 9; i++) {
+    for (; i < 8; i++) {
       const sep = raw.indexOf(UNIT, at);
       if (sep < 0 || sep >= end) break;
       f[i] = raw.slice(at, sep);
       at = sep + 1;
     }
-    f[i] = raw.slice(at, end);   // the body, whole — or the last field there was
+    f[i] = raw.slice(at, end);   // the message, whole — or the last field there was
+    const message = splitMessage(f[8] || '');
     out.push({
       hash: f[0],
       parents: f[1] ? f[1].split(' ').filter(Boolean) : [],
@@ -812,8 +848,8 @@ function parseLog(raw) {
       committer: f[5],
       commitDate: Number(f[6]) * 1000,
       refs: f[7] ? f[7].split(', ').filter(Boolean) : [],
-      subject: f[8] || '',
-      body: (f[9] || '').trim(),
+      subject: message.subject,
+      body: message.body.trim(),
     });
   }
   return out;
@@ -1752,9 +1788,14 @@ let win = null;
    __dirname is a real folder, which is exactly why this never showed in
    development. The packaged copy is placed beside the archive instead. */
 function windowIcon() {
-  return app.isPackaged
-    ? path.join(process.resourcesPath, 'icon.png')
-    : path.join(__dirname, 'build', 'icons', '256x256.png');
+  if (app.isPackaged) return path.join(process.resourcesPath, 'icon.png');
+  const source = path.join(__dirname, 'build', 'icons', '256x256.png');
+  /* The Flatpak runs Electron on the plain folder of files it copies, which is
+     not packaged and carries no build/ — so the window asked for an icon that
+     was not there. The manifest installs the same picture as the desktop icon,
+     and that is the one to use there. */
+  const flatpak = '/app/share/icons/hicolor/256x256/apps/io.github.heri_anggara.GitBraid.png';
+  return !fs.existsSync(source) && fs.existsSync(flatpak) ? flatpak : source;
 }
 
 function createWindow() {
@@ -1980,8 +2021,18 @@ handle('git:setIdentity', async (repo, { name, email, local }) => {
   if (local && !repo) throw new Error('No repository is open to set an identity on.');
   const scope = local ? '--local' : '--global';
   const dir = local ? repo : app.getPath('home');
-  if (name) await git(dir, ['config', scope, 'user.name', name]);
-  if (email) await git(dir, ['config', scope, 'user.email', email]);
+  /* A field left empty on the repository's card means "use the global one",
+     as its placeholder says — which is the local key removed, not left as it
+     was. It used to be skipped, so clearing an override changed nothing and
+     still said "Saved". The global pair is never unset from here: the window
+     refuses to save it unless both are filled in. */
+  for (const [key, value] of [['user.name', name], ['user.email', email]]) {
+    if (value) await git(dir, ['config', scope, key, value]);
+    else if (local) {
+      try { await git(dir, ['config', '--local', '--unset', key]); }
+      catch { /* was not set here, which is what was asked for */ }
+    }
+  }
   if (!local) globalIdentity = null;   // read afresh next time it is asked for
   return true;
 });
@@ -2566,14 +2617,23 @@ handle('repo:remoteHasBranch', (repo, remote, branch) => new Promise((resolve, r
   if (!remote || !branch) return resolve(null);
   const args = ['ls-remote', '--heads', '--exit-code', remote, `refs/heads/${branch}`];
   const started = Date.now();
+  /* No askpass for this one. An HTTPS remote that wanted a password put a
+     dialog in the queue behind the one this probe runs for; it opened once
+     that closed, for a git process the timeout had already ended, and asked
+     for a password nobody could use. A credential helper still answers, and
+     anything else is "could not ask" — null — which leaves the option shown. */
+  const env = {
+    ...gitEnv(),
+    GIT_SSH_COMMAND: `${process.env.GIT_SSH_COMMAND || 'ssh'} -oBatchMode=yes`,
+  };
+  delete env.GIT_ASKPASS;
+  delete env.SSH_ASKPASS;
+  delete env.SSH_ASKPASS_REQUIRE;
   execFile('git', args, {
     cwd: repo,
     encoding: 'utf8',
     timeout: 8000,
-    env: {
-      ...gitEnv(),
-      GIT_SSH_COMMAND: `${process.env.GIT_SSH_COMMAND || 'ssh'} -oBatchMode=yes`,
-    },
+    env,
   }, (err, stdout) => {
     const code = err ? (err.code ?? 1) : 0;
     recordGit(repo, args, Date.now() - started, null, code);
@@ -3160,42 +3220,53 @@ handle('repo:push', async (repo, { branch, remote = 'origin', setUpstream, force
  * is a fact about the repository, not about this window: close GitBraid during
  * a conflicted merge and the merge is still there tomorrow. Read straight from
  * .git rather than by running git — this is checked on every refresh. */
-function readGitFile(repo, ...parts) {
+function readGitFile(gitDir, ...parts) {
   try {
-    return fs.readFileSync(path.join(repo, '.git', ...parts), 'utf8').trim();
+    return fs.readFileSync(path.join(gitDir, ...parts), 'utf8').trim();
   } catch {
     return '';
   }
 }
 
-const gitPathExists = (repo, ...parts) => fs.existsSync(path.join(repo, '.git', ...parts));
+const gitPathExists = (gitDir, ...parts) => fs.existsSync(path.join(gitDir, ...parts));
 
-handle('repo:state', async (repo) => {
-  if (gitPathExists(repo, 'MERGE_HEAD')) {
+/* Read from the repository's own git directory, which is not always `.git`
+   beside the work tree: in a linked worktree `.git` is a file naming a folder
+   under the main repository's .git/worktrees, and that folder is where this
+   worktree's MERGE_HEAD and rebase state live. Looking in `<repo>/.git` there
+   found a file rather than a folder, so a conflicted merge in a worktree had
+   no banner, no Abort and no Continue. */
+function operationState(gitDir) {
+  if (gitPathExists(gitDir, 'MERGE_HEAD')) {
     // MERGE_MSG's first line names what is being merged, e.g. "Merge branch 'sisi'".
-    const msg = readGitFile(repo, 'MERGE_MSG').split('\n')[0];
+    const msg = readGitFile(gitDir, 'MERGE_MSG').split('\n')[0];
     const named = /Merge (?:remote-tracking )?branch '([^']+)'/.exec(msg);
     return { kind: 'merge', label: 'Merging', target: named ? named[1] : '', step: 0, total: 0 };
   }
 
   for (const dir of ['rebase-merge', 'rebase-apply']) {
-    if (!gitPathExists(repo, dir)) continue;
-    const step = Number(readGitFile(repo, dir, 'msgnum')) || 0;
-    const total = Number(readGitFile(repo, dir, 'end')) || 0;
+    if (!gitPathExists(gitDir, dir)) continue;
+    const step = Number(readGitFile(gitDir, dir, 'msgnum')) || 0;
+    const total = Number(readGitFile(gitDir, dir, 'end')) || 0;
     // head-name is "refs/heads/feature/x"; onto is a bare hash.
-    const head = readGitFile(repo, dir, 'head-name').replace(/^refs\/heads\//, '');
+    const head = readGitFile(gitDir, dir, 'head-name').replace(/^refs\/heads\//, '');
     return { kind: 'rebase', label: 'Rebasing', target: head, step, total };
   }
 
-  if (gitPathExists(repo, 'CHERRY_PICK_HEAD')) {
+  if (gitPathExists(gitDir, 'CHERRY_PICK_HEAD')) {
     return { kind: 'cherry-pick', label: 'Cherry-picking',
-      target: readGitFile(repo, 'CHERRY_PICK_HEAD').slice(0, 7), step: 0, total: 0 };
+      target: readGitFile(gitDir, 'CHERRY_PICK_HEAD').slice(0, 7), step: 0, total: 0 };
   }
-  if (gitPathExists(repo, 'REVERT_HEAD')) {
+  if (gitPathExists(gitDir, 'REVERT_HEAD')) {
     return { kind: 'revert', label: 'Reverting',
-      target: readGitFile(repo, 'REVERT_HEAD').slice(0, 7), step: 0, total: 0 };
+      target: readGitFile(gitDir, 'REVERT_HEAD').slice(0, 7), step: 0, total: 0 };
   }
   return null;
+}
+
+handle('repo:state', async (repo) => {
+  const gitDir = gitDirOf(repo);
+  return gitDir ? operationState(gitDir) : null;
 });
 
 const ABORTABLE = {
