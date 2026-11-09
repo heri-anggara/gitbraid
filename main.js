@@ -3070,11 +3070,17 @@ handle('repo:reset', async (repo, hash, mode) => {
   return git(repo, ['reset', `--${mode}`, hash]);
 });
 
-handle('repo:revert', async (repo, hash) =>
-  git(repo, ['revert', '--no-edit', hash])
+/* `mainline` names the parent a merge commit is measured against, which git
+   needs before it will revert or cherry-pick one; 0 for an ordinary commit. */
+const mainlineArgs = (mainline) =>
+  (Number.isInteger(mainline) && mainline > 0 ? ['-m', String(mainline)] : []);
+
+handle('repo:revert', async (repo, hash, mainline = 0) =>
+  git(repo, ['revert', '--no-edit', ...mainlineArgs(mainline), hash])
 );
 
-handle('repo:cherryPick', async (repo, hash) => git(repo, ['cherry-pick', hash]));
+handle('repo:cherryPick', async (repo, hash, mainline = 0) =>
+  git(repo, ['cherry-pick', ...mainlineArgs(mainline), hash]));
 
 handle('repo:tag', async (repo, name, hash, message) => {
   const tag = refName(name, 'tag');

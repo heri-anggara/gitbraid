@@ -733,8 +733,12 @@ console.log('\nfinishing an update');
     /addEventListener\('input', noteDraft\)/.test(rendererSrc));
   check('and once more on the way out, for the last few keystrokes',
     /beforeunload[\s\S]{0,80}saveDraft\(\)/.test(rendererSrc));
+  /* Cleared for the repository the commit was made in, captured before git
+     ran: the reader may be in another tab by the time the commit lands. */
+  const doCommitSrc = rendererSrc.slice(rendererSrc.indexOf('async function doCommit()'),
+    rendererSrc.indexOf('\n}\n', rendererSrc.indexOf('async function doCommit()')));
   check('committing clears it, so it cannot come back later',
-    /clearDraft\(repoPath\(\)\)/.test(rendererSrc));
+    /const repo = tab\.repo\.path;[\s\S]*clearDraft\(repo\)/.test(doCommitSrc));
 }
 
 console.log('\nthe diff pane on its own layer');
