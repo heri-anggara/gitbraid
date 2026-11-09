@@ -2311,6 +2311,12 @@ async function stashShape(repo) {
   return { hide, marks };
 }
 
+/* `scanned` is how many records git returned, before the stash plumbing above
+   was taken out of them. It is the only count that says whether there is more
+   history: git counts those hidden commits against --max-count, so a page of
+   400 from a repository with a stash came back as 398 or 399 rows, and the
+   window, comparing rows with the limit, decided it had reached the end and
+   took the Load more button away for good. */
 handle('repo:log', async (repo, { limit = 400, all = true, skip = 0 } = {}) => {
   const { hide, marks } = all ? await stashShape(repo) : { hide: new Set(), marks: new Set() };
   const args = ['log', '--date-order', '-z', `--pretty=format:${LOG_FORMAT}`,
@@ -2318,17 +2324,20 @@ handle('repo:log', async (repo, { limit = 400, all = true, skip = 0 } = {}) => {
   if (all) args.push('--all', ...marks);
   try {
     const commits = parseLog(await git(repo, args));
-    if (!marks.size) return commits;
-    return commits
-      .filter((c) => !hide.has(c.hash))
-      .map((c) => (marks.has(c.hash)
-        /* Its other parents are the two commits just removed, and an edge to a
-           commit that is not in the list leaves a lane hanging open forever. */
-        ? { ...c, parents: c.parents.slice(0, 1), stash: true }
-        : c));
+    if (!marks.size) return { commits, scanned: commits.length };
+    return {
+      scanned: commits.length,
+      commits: commits
+        .filter((c) => !hide.has(c.hash))
+        .map((c) => (marks.has(c.hash)
+          /* Its other parents are the two commits just removed, and an edge to a
+             commit that is not in the list leaves a lane hanging open forever. */
+          ? { ...c, parents: c.parents.slice(0, 1), stash: true }
+          : c)),
+    };
   } catch (e) {
     // Fresh repo with no commits yet.
-    if (/does not have any commits|unknown revision/i.test(e.message)) return [];
+    if (/does not have any commits|unknown revision/i.test(e.message)) return { commits: [], scanned: 0 };
     throw e;
   }
 });
