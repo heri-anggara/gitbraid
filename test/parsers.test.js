@@ -64,7 +64,8 @@ const parserSrc = mainSrc.slice(
   mainSrc.indexOf('/* ------------------------------------------------------------------ */\n/* recent repositories')
 );
 const P = {};
-vm.runInNewContext(parserSrc + '\nthis.parseStatus=parseStatus; this.parseLog=parseLog;', P);
+vm.runInNewContext(parserSrc
+  + '\nthis.parseStatus=parseStatus; this.parseLog=parseLog; this.LOG_FORMAT=LOG_FORMAT;', P);
 
 /* The release-notes renderer, lifted out of the renderer the same way the
    parsers are lifted out of main.js. It turns text fetched from a web page into
@@ -108,7 +109,8 @@ fs.unlinkSync(path.join(REPO, 'a file with spaces.txt'));
 
 /* ── log ───────────────────────────────────────────────────────── */
 console.log('\nlog parser');
-const LOG_FORMAT = ['%H','%P','%an','%ae','%at','%cn','%ct','%D','%s','%b'].join('%x1f');
+// The format main.js asks for, not a copy of it: the parser and it change together.
+const { LOG_FORMAT } = P;
 const commits = P.parseLog(
   git(['log', '--all', '--date-order', '-z', `--pretty=format:${LOG_FORMAT}`, '--max-count=100'])
 );
@@ -124,15 +126,15 @@ check('HEAD ref present', commits.some((c) => c.refs.some((r) => r.startsWith('H
 check('dates are sane', commits.every((c) => c.commitDate > 1e12 && c.commitDate <= Date.now() + 5000));
 
 /* Records built by hand, because what matters here is the byte the format
-   uses as its separator turning up inside a body. git does not strip it from
-   a message, and a parser that split the whole record on it put everything
-   after the tenth field where nobody read it. */
+   uses as its separator turning up inside a message. git does not strip it,
+   and a parser that split the whole record on it put everything after the
+   last field where nobody read it. The last field is the whole message. */
 {
   const U = '\x1f';
   const H = 'h'.repeat(40);
   const mk = (body, refs = '', parents = 'p1 p2') => [
     H, parents, 'Tester', 't@example.com', '1700000000',
-    'Committer', '1700000060', refs, 'the subject', body,
+    'Committer', '1700000060', refs, `the subject\n\n${body}`,
   ].join(U);
   const one = P.parseLog(mk('first line\nwith\x1fa separator\n\nand more\n'));
   check('a body holding the separator byte is kept whole',
@@ -160,6 +162,56 @@ check('dates are sane', commits.every((c) => c.commitDate > 1e12 && c.commitDate
   check('a record cut short still yields what it had',
     short.length === 1 && short[0].hash === H && short[0].author === 'Tester'
     && short[0].subject === '' && short[0].body === '');
+}
+
+/* Subject and body as git itself gives them, compared message by message. The
+   messages are written with commit-tree, which stores them byte for byte, so
+   the odd shapes are really in the repository: blank lines in front, a
+   subject over two lines, trailing spaces, CRLF, a vertical tab, the separator
+   byte in the subject, no newline at the end, and nothing at all. */
+{
+  const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'gitbraid-messages-'));
+  const g = (args, opts = {}) => execFileSync('git', args, {
+    cwd: DIR, encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' }, ...opts,
+  });
+  g(['init', '-q', '-b', 'main']);
+  g(['config', 'user.email', 't@t.io']);
+  g(['config', 'user.name', 'Tester']);
+  fs.writeFileSync(path.join(DIR, 'f'), 'x\n');
+  g(['add', 'f']);
+  g(['commit', '-qm', 'base']);
+  const tree = g(['rev-parse', 'HEAD^{tree}']).trim();
+  const messages = [
+    'subject\n\nbody line\n',
+    'subject only\n',
+    'no newline at the end',
+    'line one\nline two\n\nbody\n',
+    '\n\n  leading blanks\n\nbody\n',
+    'trailing spaces   \t\n\n\n\nbody after many blanks\n\n',
+    'crlf subject\r\n\r\nbody\r\n',
+    'sub\x1fject with the separator\n\nbo\x1fdy too\n',
+    '   \n\t\nafter whitespace-only lines\nnext\n \nbody\n',
+    'a\vb with a vertical tab\n\nbody\n',
+    '',
+  ];
+  let parent = g(['rev-parse', 'HEAD']).trim();
+  for (const m of messages) {
+    parent = g(['commit-tree', tree, '-p', parent], { input: m }).trim();
+  }
+  g(['update-ref', 'refs/heads/main', parent]);
+  const ours = P.parseLog(g(['log', '-z', `--pretty=format:${LOG_FORMAT}`, `-${messages.length}`]));
+  const hashes = g(['log', '--format=%H', `-${messages.length}`]).trim().split('\n');
+  const theirs = hashes.map((h) => ({
+    subject: g(['log', '-1', '--format=%s', h]).replace(/\n$/, ''),
+    body: g(['log', '-1', '--format=%b', h]).trim(),
+  }));
+  const wrong = ours.map((c, i) => [c.subject, c.body, theirs[i].subject, theirs[i].body])
+    .filter(([s1, b1, s2, b2]) => s1 !== s2 || b1 !== b2);
+  check('every subject and body is what git\'s own %s and %b give',
+    ours.length === messages.length && wrong.length === 0, wrong);
+  check('a subject holding the separator byte is whole, and its body is its own',
+    ours.some((c) => c.subject === 'sub\x1fject with the separator' && c.body === 'bo\x1fdy too'));
+  fs.rmSync(DIR, { recursive: true, force: true });
 }
 
 /* ── which branches hold each commit ───────────────────────────── */
@@ -733,8 +785,12 @@ console.log('\nfinishing an update');
     /addEventListener\('input', noteDraft\)/.test(rendererSrc));
   check('and once more on the way out, for the last few keystrokes',
     /beforeunload[\s\S]{0,80}saveDraft\(\)/.test(rendererSrc));
+  /* Cleared for the repository the commit was made in, captured before git
+     ran: the reader may be in another tab by the time the commit lands. */
+  const doCommitSrc = rendererSrc.slice(rendererSrc.indexOf('async function doCommit()'),
+    rendererSrc.indexOf('\n}\n', rendererSrc.indexOf('async function doCommit()')));
   check('committing clears it, so it cannot come back later',
-    /clearDraft\(repoPath\(\)\)/.test(rendererSrc));
+    /const repo = tab\.repo\.path;[\s\S]*clearDraft\(repo\)/.test(doCommitSrc));
 }
 
 console.log('\nthe diff pane on its own layer');
@@ -2411,6 +2467,374 @@ console.log('\nthe diff pane on every paint');
 /* renderNotes() reads version, state, date, title, summary, sections with a
    heading and items, and an optional known list. An entry missing one of
    those renders as "undefined" in the dialog, which nothing else would catch. */
+console.log('\nhunks as git writes them in full');
+{
+  /* Real git output in a repository of its own, because what these checks are
+     about is the parts of git's output the hand-written fixtures left out: the
+     function line after a hunk's range, the newline at the very end, the
+     /dev/null side of a created or deleted file, and a header that cannot be
+     split by reading it alone. */
+  const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'gitbraid-hunks-'));
+  const g = (args, opts = {}) => execFileSync('git', args, {
+    cwd: DIR, encoding: 'utf8', env: { ...process.env, LC_ALL: 'C' }, ...opts,
+  });
+  const apply = (patch, args) => {
+    try { g(['apply', '--whitespace=nowarn', '--unidiff-zero', ...args, '-'], { input: patch }); return null; }
+    catch (e) { return String(e.stderr || e.message).trim(); }
+  };
+  const lines = (n, f) => Array.from({ length: n }, (_, i) => f(i + 1)).join('\n') + '\n';
+  g(['init', '-q', '-b', 'main']);
+  g(['config', 'user.email', 't@t.io']);
+  g(['config', 'user.name', 'Tester']);
+  fs.writeFileSync(path.join(DIR, 'fn.js'), `const DEFAULT = -1;\n${lines(20, (i) => `  row ${i}`)}`);
+  fs.writeFileSync(path.join(DIR, 'gone.txt'), 'one\ntwo\n');
+  fs.mkdirSync(path.join(DIR, 'plan b'));
+  fs.writeFileSync(path.join(DIR, 'plan b', 'notes.txt'), 'satu\ndua\n');
+  fs.writeFileSync(path.join(DIR, 'moved.txt'), lines(20, (i) => `line ${i}`));
+  g(['add', '-A']);
+  g(['commit', '-qm', 'base']);
+
+  // The function line holds a -1, and the raw output ends with a newline.
+  fs.writeFileSync(path.join(DIR, 'fn.js'),
+    `const DEFAULT = -1;\n${lines(20, (i) => (i === 15 ? '  ROW 15' : `  row ${i}`))}`);
+  const rawFn = g(['diff', '--no-color', '--', 'fn.js']);
+  const fn = Diff.parse(rawFn)[0];
+  const h = fn.hunks[0];
+  check('the raw diff really does carry a function line with a signed number',
+    / @@ const DEFAULT = -1;$/m.test(rawFn), rawFn.split('\n').find((l) => l.startsWith('@@')));
+  const [, o0, oc, n0, nc] = /^@@ -(\d+),(\d+) \+(\d+),(\d+) @@/.exec(h.header).map(Number);
+  check('the new side is numbered from the "+" range, not from the -1 after it',
+    h.lines[0].new === n0 && h.lines[0].old === o0, [h.header, h.lines[0]]);
+  check('a hand-written header with -1 and +2 in its function line reads the same way',
+    Diff.parse('diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -17,2 +17,2 @@ x = -1 + 2;\n a\n b\n')[0]
+      .hunks[0].lines[1].new === 18);
+  check('a combined header with a number after its markers reads the "+" range too',
+    Diff.parse('diff --cc x\n--- a/x\n+++ b/x\n@@@ -5,2 -5,2 +5,2 @@@ y = n+2\n  a\n  b\n')[0]
+      .hunks[0].lines[0].new === 5);
+  const tally = (t) => h.lines.filter((l) => l.type === t || l.type === 'ctx').length;
+  check('the newline that ends git\'s output is not an extra row in the last hunk',
+    tally('del') === oc && tally('add') === nc && h.lines.at(-1).text !== '',
+    [oc, nc, tally('del'), tally('add'), h.lines.at(-1)]);
+  check('and the row counts agree with the hunk header',
+    Diff.rowCount([fn]) === Diff.rowCount(Diff.parse(rawFn.slice(0, -1))), Diff.rowCount([fn]));
+  g(['checkout', '--', 'fn.js']);
+
+  // A deleted file: staging its one hunk stages the deletion.
+  fs.rmSync(path.join(DIR, 'gone.txt'));
+  const del = Diff.parse(g(['diff', '--no-color', '--', 'gone.txt']))[0];
+  check('a deleted file is recognised as one', del.deleted && !del.created, del.header);
+  const delPatch = Diff.hunkPatch(del, del.hunks[0]);
+  check('its hunk patch keeps the mode line and the /dev/null side',
+    /^deleted file mode /m.test(delPatch) && /^\+\+\+ \/dev\/null$/m.test(delPatch), delPatch);
+  check('staging that hunk stages the deletion, not an empty file',
+    apply(delPatch, ['--cached']) === null && g(['ls-files', '--', 'gone.txt']) === ''
+      && /^D  gone\.txt$/m.test(g(['status', '--porcelain'])),
+    [g(['ls-files', '-s', '--', 'gone.txt']), g(['status', '--porcelain'])]);
+  g(['reset', '-q', '--', 'gone.txt']);
+  check('discarding it brings the file back whole',
+    apply(delPatch, ['--reverse']) === null
+      && fs.readFileSync(path.join(DIR, 'gone.txt'), 'utf8') === 'one\ntwo\n');
+
+  // A new file, staged: unstaging its one hunk hands it back as untracked.
+  fs.writeFileSync(path.join(DIR, 'fresh.txt'), 'a\nb\n');
+  g(['add', '--', 'fresh.txt']);
+  const add = Diff.parse(g(['diff', '--cached', '--no-color', '--', 'fresh.txt']))[0];
+  check('a new file is recognised as one', add.created && !add.deleted, add.header);
+  check('unstaging its hunk leaves it untracked, not an empty file staged',
+    apply(Diff.hunkPatch(add, add.hunks[0]), ['--cached', '--reverse']) === null
+      && /^\?\? fresh\.txt$/m.test(g(['status', '--porcelain']))
+      && g(['ls-files', '--', 'fresh.txt']) === '',
+    g(['status', '--porcelain']));
+  fs.rmSync(path.join(DIR, 'fresh.txt'));
+
+  // A path the diff --git line alone cannot split.
+  fs.writeFileSync(path.join(DIR, 'plan b', 'notes.txt'), 'satu\nDUA\n');
+  const spaced = Diff.parse(g(['-c', 'core.quotePath=false', 'diff', '--no-color']))[0];
+  check('a folder ending in " b" keeps the name whole on both sides',
+    spaced.oldPath === 'plan b/notes.txt' && spaced.newPath === 'plan b/notes.txt',
+    [spaced.oldPath, spaced.newPath]);
+  check('and its hunk stages',
+    apply(Diff.hunkPatch(spaced, spaced.hunks[0]), ['--cached', '--check']) === null,
+    apply(Diff.hunkPatch(spaced, spaced.hunks[0]), ['--cached', '--check']));
+  g(['checkout', '--', '.']);
+
+  // A staged rename: no per-hunk buttons, because one hunk of it cannot move.
+  g(['mv', 'moved.txt', 'renamed.txt']);
+  fs.writeFileSync(path.join(DIR, 'renamed.txt'),
+    lines(20, (i) => (i === 2 || i === 18 ? `LINE ${i}` : `line ${i}`)));
+  g(['add', '--', 'renamed.txt']);
+  const ren = Diff.parse(g(['diff', '--cached', '--no-color', '--find-renames',
+    '--', 'moved.txt', 'renamed.txt']))[0];
+  check('a rename is recognised, with both names',
+    ren.renamed && ren.oldPath === 'moved.txt' && ren.newPath === 'renamed.txt',
+    [ren.renamed, ren.oldPath, ren.newPath]);
+  const drawn = Diff.render([ren], [{ action: 'unstage', label: 'Unstage hunk' }]);
+  check('its hunks offer no buttons, and say why',
+    !drawn.includes('data-hunk-action') && drawn.includes('hunk-note'));
+  const plain = Diff.render([fn], [{ action: 'stage', label: 'Stage hunk' }]);
+  check('an ordinary file still gets them', plain.includes('data-hunk-action="stage"'));
+
+  fs.rmSync(DIR, { recursive: true, force: true });
+}
+
+console.log('\nrewording an older commit');
+{
+  /* The same scripts and the same rebase the application runs, lifted out of
+     main.js and handed to plain node instead of Electron's. The histories hold
+     a merge after the commit, because that is what the old sequence editor got
+     wrong twice over: it flattened the merge, and with a side branch listed
+     first it reworded the side branch's commit. */
+  const from = mainSrc.indexOf('let editorSeq = 0;');
+  const to = mainSrc.indexOf("const { execFile, spawn } = require('child_process');");
+  const RW = { path, os, fs, process, JSON };
+  vm.runInNewContext(`${mainSrc.slice(from, to)}
+    this.nodeEditor = nodeEditor; this.REWORD_SEQUENCE = REWORD_SEQUENCE;
+    this.REWORD_MESSAGE = REWORD_MESSAGE; this.rewordRebaseArgs = rewordRebaseArgs;`, RW);
+
+  const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'gitbraid-reword-'));
+  const g = (args, env = {}) => execFileSync('git', args, {
+    cwd: DIR, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, LC_ALL: 'C', ...env },
+  });
+  const make = (file, msg) => {
+    fs.writeFileSync(path.join(DIR, file), `${file}\n`);
+    g(['add', '--', file]);
+    g(['commit', '-qm', msg]);
+    return g(['rev-parse', 'HEAD']).trim();
+  };
+  const byMsg = (m) => g(['log', '--all', '--format=%H', `--grep=^${m}$`]).trim();
+  const parentsOf = (h) => g(['rev-list', '--parents', '-n', '1', h]).trim().split(' ').slice(1);
+  /* What repo:rewordCommit does once its checks have passed. */
+  const reword = (hash, message) => {
+    const out = path.join(DIR, '.git', 'reworded');
+    const msgFile = path.join(DIR, '.git', 'new-message');
+    fs.writeFileSync(msgFile, `${message}\n`);
+    const seq = RW.nodeEditor(RW.REWORD_SEQUENCE, hash, out);
+    const msg = RW.nodeEditor(RW.REWORD_MESSAGE, msgFile);
+    try {
+      g(RW.rewordRebaseArgs(hash, parentsOf(hash).length),
+        { GIT_SEQUENCE_EDITOR: seq.command, GIT_EDITOR: msg.command });
+      return fs.readFileSync(out, 'utf8').trim();
+    } catch {
+      try { g(['rebase', '--abort']); } catch { /* nothing to abort */ }
+      return null;
+    } finally {
+      for (const f of [out, msgFile, seq.file, msg.file]) fs.rmSync(f, { force: true });
+    }
+  };
+
+  g(['init', '-q', '-b', 'main']);
+  g(['config', 'user.email', 't@t.io']);
+  g(['config', 'user.name', 'Tester']);
+  make('one', 'one');
+  g(['checkout', '-qb', 'side']);
+  const two = make('two', 'two');
+  g(['checkout', '-q', 'main']);
+  make('three', 'three');
+  g(['merge', '-q', '--no-ff', 'side', '-m', 'merge side']);
+  make('four', 'four');
+  const shape = () => g(['log', '--format=%s|%p', '--topo-order']).trim().split('\n')
+    .map((l) => { const [subject, ps] = l.split('|'); return [subject, ps ? ps.split(' ').length : 0]; });
+  const before = shape();
+
+  const got = reword(byMsg('three'), 'three, reworded');
+  const after = shape();
+  check('rewording the commit before a merge changes that commit\'s message',
+    got && g(['log', '-1', '--format=%s', got]).trim() === 'three, reworded', [got, after]);
+  check('and keeps the merge a merge, with every commit still there',
+    after.length === before.length
+      && after.find(([m]) => m === 'merge side')?.[1] === 2
+      && after.some(([m]) => m === 'two') && !after.some(([m]) => m === 'three'),
+    after);
+  check('the side branch merged in is not rewritten: it never descended from that commit',
+    byMsg('two') === two, [byMsg('two'), two]);
+  check('the hash handed back is the reworded commit, not its parent',
+    got === byMsg('three, reworded') && parentsOf(got)[0] === byMsg('one'));
+
+  const mergeAt = byMsg('merge side');
+  const gotMerge = reword(mergeAt, 'merge side, reworded');
+  check('a merge commit can be reworded too, and stays a merge',
+    gotMerge && g(['log', '-1', '--format=%s', gotMerge]).trim() === 'merge side, reworded'
+      && parentsOf(gotMerge).length === 2,
+    [gotMerge, gotMerge && parentsOf(gotMerge)]);
+
+  const gotRoot = reword(byMsg('one'), 'one, reworded');
+  check('the root commit can be reworded',
+    gotRoot && g(['log', '-1', '--format=%s', gotRoot]).trim() === 'one, reworded'
+      && parentsOf(gotRoot).length === 0 && shape().length === before.length,
+    [gotRoot, shape()]);
+
+  /* A commit on a branch that was never merged: the range the rebase walks
+     does not hold it, and the old editor reworded the first pick it did find. */
+  g(['checkout', '-qb', 'stray', byMsg('one, reworded')]);
+  const stray = make('stray', 'stray');
+  g(['checkout', '-q', 'main']);
+  const head = g(['rev-parse', 'HEAD']).trim();
+  const log = g(['log', '--format=%s']);
+  check('a commit the todo does not hold makes the rebase stop, and nothing moves',
+    reword(stray, 'nope') === null
+      && g(['rev-parse', 'HEAD']).trim() === head && g(['log', '--format=%s']) === log
+      && !fs.existsSync(path.join(DIR, '.git', 'rebase-merge')),
+    g(['log', '--format=%s']));
+
+  fs.rmSync(DIR, { recursive: true, force: true });
+}
+
+console.log('\nignoring exactly the file that was picked');
+{
+  /* The rules the Ignore dialog writes, lifted from the renderer and checked
+     with git's own matcher. A rule has to match the picked path and nothing
+     else: written bare, a file at the top ignored every file of its name at
+     any depth, and a name holding a bracket matched some other file. */
+  const from = rendererSrc.indexOf('const ignoreEscape = ');
+  const to = rendererSrc.indexOf('async function ignoreFiles(');
+  const IG = {};
+  vm.runInNewContext(`${rendererSrc.slice(from, to)}
+    this.ignoreRule = ignoreRule; this.ignorePatterns = ignorePatterns;`, IG);
+  /* main.js trims what it is handed before writing it; the same expression. */
+  const trimAt = mainSrc.indexOf("    .map((p) => p.replace(/^\\s+/, '')");
+  const trimSrc = mainSrc.slice(mainSrc.indexOf('(p) =>', trimAt), mainSrc.indexOf(');\n', trimAt) + 1);
+  const trim = vm.runInNewContext(trimSrc.replace(/\)$/, ''));
+
+  const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'gitbraid-ignore-'));
+  execFileSync('git', ['init', '-q', DIR]);
+  const files = ['config.json', 'src/config.json', 'build/out.js', 'src/build/out.js',
+    'notes[1].txt', 'notes1.txt', '#todo', 'a/#todo', 'star*.md', 'starry.md', 'ends in space '];
+  for (const f of files) {
+    fs.mkdirSync(path.join(DIR, path.dirname(f)), { recursive: true });
+    fs.writeFileSync(path.join(DIR, f), 'x\n');
+  }
+  const ignoredBy = (rule) => {
+    fs.writeFileSync(path.join(DIR, '.gitignore'), `${trim(rule)}\n`);
+    return files.filter((f) => {
+      try { execFileSync('git', ['check-ignore', '-q', '--', f], { cwd: DIR }); return true; }
+      catch { return false; }
+    });
+  };
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  check('a file at the top is anchored there, not matched at every depth',
+    same(ignoredBy(IG.ignoreRule('config.json')), ['config.json']), ignoredBy(IG.ignoreRule('config.json')));
+  check('a file further down still means only itself',
+    same(ignoredBy(IG.ignoreRule('src/config.json')), ['src/config.json']));
+  const folder = IG.ignorePatterns('build/out.js').find((o) => o.label === 'Everything in this folder');
+  check('a folder at the top is anchored too',
+    same(ignoredBy(folder.value), ['build/out.js']), [folder.value, ignoredBy(folder.value)]);
+  check('a bracket in the name is that bracket',
+    same(ignoredBy(IG.ignoreRule('notes[1].txt')), ['notes[1].txt']), ignoredBy(IG.ignoreRule('notes[1].txt')));
+  check('a star in the name is that star',
+    same(ignoredBy(IG.ignoreRule('star*.md')), ['star*.md']), ignoredBy(IG.ignoreRule('star*.md')));
+  check('a name opening with # is a file, not a comment',
+    same(ignoredBy(IG.ignoreRule('#todo')), ['#todo'])
+      && same(ignoredBy(IG.ignoreRule('a/#todo')), ['a/#todo']),
+    [IG.ignoreRule('a/#todo'), ignoredBy(IG.ignoreRule('a/#todo'))]);
+  check('a name ending in a space keeps it, through the trim main.js applies',
+    same(ignoredBy(IG.ignoreRule('ends in space ')), ['ends in space ']),
+    [IG.ignoreRule('ends in space '), ignoredBy(IG.ignoreRule('ends in space '))]);
+  const ext = IG.ignorePatterns('src/config.json').find((o) => o.value.startsWith('*'));
+  check('"every .json file" still means every one of them',
+    same(ignoredBy(ext.value), ['config.json', 'src/config.json']), ignoredBy(ext.value));
+  fs.rmSync(DIR, { recursive: true, force: true });
+}
+
+console.log('\na rename is one change with two names');
+{
+  /* The renderer hands git both names of a renamed entry. Handed only the new
+     one, unstaging a staged rename left the old name's deletion staged and the
+     new file untracked — two rows nobody made. */
+  const from = rendererSrc.indexOf('function origOf(kind, path) {');
+  const to = rendererSrc.indexOf('async function stage(paths) {');
+  const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'gitbraid-rename-'));
+  const g = (args) => execFileSync('git', args, { cwd: DIR, encoding: 'utf8' });
+  g(['init', '-q', '-b', 'main']);
+  g(['config', 'user.email', 't@t.io']);
+  g(['config', 'user.name', 'Tester']);
+  fs.writeFileSync(path.join(DIR, 'old.txt'), 'some text\nthat moves\n');
+  g(['add', '-A']);
+  g(['commit', '-qm', 'base']);
+  g(['mv', 'old.txt', 'new.txt']);
+  const status = P.parseStatus(g(['status', '--porcelain=v2', '--branch', '-z']));
+  const RN = { state: { status }, commitFiles: [] };
+  vm.runInNewContext(`${rendererSrc.slice(from, to)}
+    this.origOf = origOf; this.withOrigins = withOrigins;`, RN);
+  check('the staged rename carries the name it came from',
+    RN.origOf('staged', 'new.txt') === 'old.txt', status.staged);
+  const paths = RN.withOrigins('staged', ['new.txt']);
+  check('both names go to git, once each', JSON.stringify(paths) === '["new.txt","old.txt"]', paths);
+  g(['restore', '--staged', '--', ...paths]);
+  const after = g(['status', '--porcelain']);
+  check('unstaging it leaves nothing staged: the rename is back in the working tree only',
+    /^ D old\.txt$/m.test(after) && /^\?\? new\.txt$/m.test(after) && !/^[RDA] /m.test(after), after);
+  check('a file that was not renamed brings no second name',
+    JSON.stringify(RN.withOrigins('staged', ['other.txt'])) === '["other.txt"]');
+  fs.rmSync(DIR, { recursive: true, force: true });
+}
+
+console.log('\nsmaller things the audit found');
+{
+  /* A merge in a linked worktree. Its `.git` is a file naming a folder under
+     the main repository, and that folder is where MERGE_HEAD is written; the
+     banner looked in `<worktree>/.git`, found a file, and saw nothing. */
+  const gdFrom = mainSrc.indexOf('function gitDirOf(repo) {');
+  const gdTo = mainSrc.indexOf('\n}\n', gdFrom) + 3;
+  const opFrom = mainSrc.indexOf('function readGitFile(gitDir, ...parts) {');
+  const opTo = mainSrc.indexOf("handle('repo:state'");
+  const OP = { fs, path };
+  vm.runInNewContext(`${mainSrc.slice(gdFrom, gdTo)}\n${mainSrc.slice(opFrom, opTo)}
+    this.gitDirOf = gitDirOf; this.operationState = operationState;`, OP);
+  const DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'gitbraid-worktree-'));
+  const MAINDIR = path.join(DIR, 'main');
+  const WT = path.join(DIR, 'wt');
+  const g = (cwd, args) => execFileSync('git', args, {
+    cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, LC_ALL: 'C' },
+  });
+  fs.mkdirSync(MAINDIR);
+  g(MAINDIR, ['init', '-q', '-b', 'main']);
+  g(MAINDIR, ['config', 'user.email', 't@t.io']);
+  g(MAINDIR, ['config', 'user.name', 'Tester']);
+  fs.writeFileSync(path.join(MAINDIR, 'x'), '1\n');
+  g(MAINDIR, ['add', 'x']);
+  g(MAINDIR, ['commit', '-qm', 'one']);
+  g(MAINDIR, ['checkout', '-qb', 'side']);
+  fs.writeFileSync(path.join(MAINDIR, 'x'), '2\n');
+  g(MAINDIR, ['commit', '-qam', 'two']);
+  g(MAINDIR, ['checkout', '-q', 'main']);
+  g(MAINDIR, ['worktree', 'add', '-q', '-b', 'wt', WT, 'main']);
+  fs.writeFileSync(path.join(WT, 'x'), '3\n');
+  g(WT, ['commit', '-qam', 'three']);
+  try { g(WT, ['merge', 'side']); } catch { /* a conflict, on purpose */ }
+  check('in a worktree, .git is a file and the merge state is elsewhere',
+    fs.statSync(path.join(WT, '.git')).isFile() && !fs.existsSync(path.join(WT, '.git', 'MERGE_HEAD')));
+  const op = OP.operationState(OP.gitDirOf(WT));
+  check('a merge stopped in a worktree is still seen, and named',
+    op && op.kind === 'merge' && op.target === 'side', op);
+  check('and the main checkout beside it is not mistaken for it',
+    OP.operationState(OP.gitDirOf(MAINDIR)) === null);
+  fs.rmSync(DIR, { recursive: true, force: true });
+
+  /* Dockerfile and Makefile are known by name, not by a name that starts with
+     them. */
+  const HL = { window: {} };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'src/highlight.js'), 'utf8'), HL);
+  const langOf = HL.window.Hl.langOf;
+  check('Dockerfile, Makefile and their dotted variants are shell',
+    ['Dockerfile', 'Makefile', 'Dockerfile.dev', 'Makefile.am', 'a/b/Makefile']
+      .every((f) => langOf(f) === 'sh'));
+  check('a file whose name only starts with one keeps its own language',
+    langOf('MakefileParser.py') === 'py' && langOf('Dockerfile.md') === 'md'
+      && langOf('dockerfiles.txt') === null,
+    ['MakefileParser.py', 'Dockerfile.md', 'dockerfiles.txt'].map(langOf));
+
+  /* A diffstat line that only lost lines is a bar too. */
+  const barSrc = rendererSrc.match(/const STAT_BAR = (\/.*\/);/)[1];
+  const BAR = vm.runInNewContext(barSrc);
+  check('a diffstat line of minuses only is coloured like one of plusses',
+    BAR.exec(' src/old.js | 3 ---')?.[3] === '---' && BAR.exec(' src/new.js | 3 +++')?.[2] === '+++'
+      && BAR.exec(' src/a.js | 12 ++++----')?.[3] === '----');
+  check('and a summary line is not mistaken for a bar',
+    !BAR.test(' 2 files changed, 3 insertions(+)') && !BAR.test(' bin/x | Bin 0 -> 12 bytes'));
+}
+
 console.log('\nthe release notes as data');
 {
   const rl = { window: {} };

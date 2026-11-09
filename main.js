@@ -29,14 +29,36 @@ function nodeEditor(body, ...args) {
   return { command: parts.join(' '), file };
 }
 
-/* argv[2] is the script's own extra argument, argv[3] the file git passes. */
+/* argv[2] is the full hash of the commit being reworded, argv[3] a file to
+   write its new hash to, argv[4] the todo list git passes.
+
+   The commit is found by its hash, not as the first `pick`. With merges in the
+   way the first pick is often some other commit — a side branch's, listed
+   before the line it was merged into — and the wrong message changed. A merge
+   is reworded by turning its `merge -C` into `merge -c`, which opens the
+   editor where -C reuses the message. Right after that line an `exec` writes
+   down the commit the reword produced: that is the only place its new hash is
+   known for certain. A todo without the commit exits non-zero, which makes git
+   stop before anything is rewritten. */
 const REWORD_SEQUENCE = `
 const fs = require('fs');
-const todo = process.argv[2];
+const [, , want, out, todo] = process.argv;
 const lines = fs.readFileSync(todo, 'utf8').split('\\n');
-for (let i = 0; i < lines.length; i++) {
-  if (lines[i].startsWith('pick ')) { lines[i] = 'reword ' + lines[i].slice(5); break; }
+const ours = (short) => short.length >= 4 && want.startsWith(short);
+let at = -1;
+for (let i = 0; i < lines.length && at < 0; i++) {
+  const pick = /^(?:pick|p) ([0-9a-f]+)(?:\\s|$)/.exec(lines[i]);
+  const merge = /^(?:merge|m) -C ([0-9a-f]+)(?:\\s|$)/.exec(lines[i]);
+  if (pick && ours(pick[1])) {
+    lines[i] = 'reword ' + lines[i].slice(lines[i].indexOf(' ') + 1);
+    at = i;
+  } else if (merge && ours(merge[1])) {
+    lines[i] = lines[i].replace(/^(?:merge|m) -C /, 'merge -c ');
+    at = i;
+  }
 }
+if (at < 0) process.exit(1);
+lines.splice(at + 1, 0, 'exec git rev-parse HEAD > ' + JSON.stringify(out));
 fs.writeFileSync(todo, lines.join('\\n'));
 `;
 
@@ -44,6 +66,17 @@ const REWORD_MESSAGE = `
 const fs = require('fs');
 fs.copyFileSync(process.argv[2], process.argv[3]);
 `;
+
+/* --rebase-merges, because without it the rebase lays every commit after the
+   reworded one in a single line: measured, four commits holding one merge came
+   back as four commits and no merge at all. A root commit has no parent to
+   start from, so the whole history is the range. */
+function rewordRebaseArgs(hash, parentCount) {
+  return parentCount
+    ? ['rebase', '-i', '--rebase-merges', `${hash}^`]
+    : ['rebase', '-i', '--rebase-merges', '--root'];
+}
+
 const { execFile, spawn } = require('child_process');
 const net = require('net');
 
@@ -725,19 +758,54 @@ function parseStatus(raw) {
   return res;
 }
 
+/* The whole message is the last field, and the subject and body are worked
+   out from it here rather than asked for as %s and %b. Those were two fields,
+   and either can hold the 0x1F the format separates fields with — git does not
+   strip the byte from a message — so a subject holding one ended at it, and
+   the rest of the subject was read as the start of the body. As one last field
+   the message is taken whole, whatever it holds. */
 const LOG_FORMAT = [
-  '%H', '%P', '%an', '%ae', '%at', '%cn', '%ct', '%D', '%s', '%b',
+  '%H', '%P', '%an', '%ae', '%at', '%cn', '%ct', '%D', '%B',
 ].join('%x1f');
 
-/* Records are separated by NUL and the ten fields inside one by 0x1F. Walked
+/* What git's %s and %b say, from the message %B gives, by git's own rules
+   (pretty.c): blank lines before the subject are skipped; the subject is the
+   first paragraph, each of its lines trimmed at the end and joined with a
+   space; the body is what follows the blank lines after it. Blank means
+   nothing but the four characters git counts as space — tab, newline, carriage
+   return and space. Walked by index, with nothing split: splitting each
+   message into lines made reading 100,000 commits a third slower than reading
+   them as two fields did. */
+const isGitSpace = (c) => c === 32 || c === 9 || c === 13;
+
+function splitMessage(msg) {
+  const len = msg.length;
+  const lineEnd = (from) => { const nl = msg.indexOf('\n', from); return nl < 0 ? len : nl; };
+  const blank = (from, to) => {
+    for (let k = from; k < to; k++) if (!isGitSpace(msg.charCodeAt(k))) return false;
+    return true;
+  };
+  let at = 0;
+  while (at < len) { const e = lineEnd(at); if (!blank(at, e)) break; at = e + 1; }
+  let subject = '';
+  while (at < len) {
+    const e = lineEnd(at);
+    if (blank(at, e)) { at = e + 1; break; }   // the line that ends the paragraph
+    let t = e;
+    while (t > at && isGitSpace(msg.charCodeAt(t - 1))) t--;
+    subject = subject ? `${subject} ${msg.slice(at, t)}` : msg.slice(at, t);
+    at = e + 1;
+  }
+  while (at < len) { const e = lineEnd(at); if (!blank(at, e)) break; at = e + 1; }
+  return { subject, body: at < len ? msg.slice(at) : '' };
+}
+
+/* Records are separated by NUL and the nine fields inside one by 0x1F. Walked
    by index rather than split: `split('\0')`, then `trim` on every chunk, then
    `split(UNIT)` on each, made a second copy of the whole log as fragments
-   before a single record object existed. Worse, the last split cut the body
-   wherever it happened to hold a 0x1F — git does not strip the byte from a
-   message — and kept only the piece before it. The body is the tenth field
-   and the last, so it is taken whole from the ninth separator to the end of
-   the record, whatever it contains. A record with fewer fields yields what it
-   has, as the split did. */
+   before a single record object existed. The message is the ninth field and
+   the last, so it is taken whole from the eighth separator to the end of the
+   record. A record with fewer fields yields what it has, as the split did. */
 
 /* The characters trim() removes. A record that is nothing but these is the gap
    between two records, not one — checked by hand because a regular expression
@@ -761,15 +829,16 @@ function parseLog(raw) {
     let probe = at;
     while (probe < end && isSpace(raw.charCodeAt(probe))) probe++;
     if (probe >= end) continue;
-    const f = new Array(10);
+    const f = new Array(9);
     let i = 0;
-    for (; i < 9; i++) {
+    for (; i < 8; i++) {
       const sep = raw.indexOf(UNIT, at);
       if (sep < 0 || sep >= end) break;
       f[i] = raw.slice(at, sep);
       at = sep + 1;
     }
-    f[i] = raw.slice(at, end);   // the body, whole — or the last field there was
+    f[i] = raw.slice(at, end);   // the message, whole — or the last field there was
+    const message = splitMessage(f[8] || '');
     out.push({
       hash: f[0],
       parents: f[1] ? f[1].split(' ').filter(Boolean) : [],
@@ -779,8 +848,8 @@ function parseLog(raw) {
       committer: f[5],
       commitDate: Number(f[6]) * 1000,
       refs: f[7] ? f[7].split(', ').filter(Boolean) : [],
-      subject: f[8] || '',
-      body: (f[9] || '').trim(),
+      subject: message.subject,
+      body: message.body.trim(),
     });
   }
   return out;
@@ -1719,9 +1788,14 @@ let win = null;
    __dirname is a real folder, which is exactly why this never showed in
    development. The packaged copy is placed beside the archive instead. */
 function windowIcon() {
-  return app.isPackaged
-    ? path.join(process.resourcesPath, 'icon.png')
-    : path.join(__dirname, 'build', 'icons', '256x256.png');
+  if (app.isPackaged) return path.join(process.resourcesPath, 'icon.png');
+  const source = path.join(__dirname, 'build', 'icons', '256x256.png');
+  /* The Flatpak runs Electron on the plain folder of files it copies, which is
+     not packaged and carries no build/ — so the window asked for an icon that
+     was not there. The manifest installs the same picture as the desktop icon,
+     and that is the one to use there. */
+  const flatpak = '/app/share/icons/hicolor/256x256/apps/io.github.heri_anggara.GitBraid.png';
+  return !fs.existsSync(source) && fs.existsSync(flatpak) ? flatpak : source;
 }
 
 function createWindow() {
@@ -1947,8 +2021,18 @@ handle('git:setIdentity', async (repo, { name, email, local }) => {
   if (local && !repo) throw new Error('No repository is open to set an identity on.');
   const scope = local ? '--local' : '--global';
   const dir = local ? repo : app.getPath('home');
-  if (name) await git(dir, ['config', scope, 'user.name', name]);
-  if (email) await git(dir, ['config', scope, 'user.email', email]);
+  /* A field left empty on the repository's card means "use the global one",
+     as its placeholder says — which is the local key removed, not left as it
+     was. It used to be skipped, so clearing an override changed nothing and
+     still said "Saved". The global pair is never unset from here: the window
+     refuses to save it unless both are filled in. */
+  for (const [key, value] of [['user.name', name], ['user.email', email]]) {
+    if (value) await git(dir, ['config', scope, key, value]);
+    else if (local) {
+      try { await git(dir, ['config', '--local', '--unset', key]); }
+      catch { /* was not set here, which is what was asked for */ }
+    }
+  }
   if (!local) globalIdentity = null;   // read afresh next time it is asked for
   return true;
 });
@@ -2278,6 +2362,12 @@ async function stashShape(repo) {
   return { hide, marks };
 }
 
+/* `scanned` is how many records git returned, before the stash plumbing above
+   was taken out of them. It is the only count that says whether there is more
+   history: git counts those hidden commits against --max-count, so a page of
+   400 from a repository with a stash came back as 398 or 399 rows, and the
+   window, comparing rows with the limit, decided it had reached the end and
+   took the Load more button away for good. */
 handle('repo:log', async (repo, { limit = 400, all = true, skip = 0 } = {}) => {
   const { hide, marks } = all ? await stashShape(repo) : { hide: new Set(), marks: new Set() };
   const args = ['log', '--date-order', '-z', `--pretty=format:${LOG_FORMAT}`,
@@ -2285,17 +2375,20 @@ handle('repo:log', async (repo, { limit = 400, all = true, skip = 0 } = {}) => {
   if (all) args.push('--all', ...marks);
   try {
     const commits = parseLog(await git(repo, args));
-    if (!marks.size) return commits;
-    return commits
-      .filter((c) => !hide.has(c.hash))
-      .map((c) => (marks.has(c.hash)
-        /* Its other parents are the two commits just removed, and an edge to a
-           commit that is not in the list leaves a lane hanging open forever. */
-        ? { ...c, parents: c.parents.slice(0, 1), stash: true }
-        : c));
+    if (!marks.size) return { commits, scanned: commits.length };
+    return {
+      scanned: commits.length,
+      commits: commits
+        .filter((c) => !hide.has(c.hash))
+        .map((c) => (marks.has(c.hash)
+          /* Its other parents are the two commits just removed, and an edge to a
+             commit that is not in the list leaves a lane hanging open forever. */
+          ? { ...c, parents: c.parents.slice(0, 1), stash: true }
+          : c)),
+    };
   } catch (e) {
     // Fresh repo with no commits yet.
-    if (/does not have any commits|unknown revision/i.test(e.message)) return [];
+    if (/does not have any commits|unknown revision/i.test(e.message)) return { commits: [], scanned: 0 };
     throw e;
   }
 });
@@ -2347,9 +2440,12 @@ handle('repo:fileLog', async (repo, file, { limit = 200 } = {}) => {
    not written twice, and a file that does not end in a newline gets one first —
    otherwise the new pattern would join itself to the last one. */
 handle('repo:ignore', async (repo, patterns) => {
+  /* Trimmed, except for a space escaped with a backslash: that is how a name
+     ending in a space is written, and trimming it away left a backslash at
+     the end of the line that matched nothing. */
   const list = (Array.isArray(patterns) ? patterns : [patterns])
     .filter((p) => typeof p === 'string' && p.trim())
-    .map((p) => p.trim());
+    .map((p) => p.replace(/^\s+/, '').replace(/(?<!\\)\s+$/, ''));
   if (!list.length) throw new Error('Nothing was named to ignore.');
 
   const file = path.join(repo, '.gitignore');
@@ -2521,14 +2617,23 @@ handle('repo:remoteHasBranch', (repo, remote, branch) => new Promise((resolve, r
   if (!remote || !branch) return resolve(null);
   const args = ['ls-remote', '--heads', '--exit-code', remote, `refs/heads/${branch}`];
   const started = Date.now();
+  /* No askpass for this one. An HTTPS remote that wanted a password put a
+     dialog in the queue behind the one this probe runs for; it opened once
+     that closed, for a git process the timeout had already ended, and asked
+     for a password nobody could use. A credential helper still answers, and
+     anything else is "could not ask" — null — which leaves the option shown. */
+  const env = {
+    ...gitEnv(),
+    GIT_SSH_COMMAND: `${process.env.GIT_SSH_COMMAND || 'ssh'} -oBatchMode=yes`,
+  };
+  delete env.GIT_ASKPASS;
+  delete env.SSH_ASKPASS;
+  delete env.SSH_ASKPASS_REQUIRE;
   execFile('git', args, {
     cwd: repo,
     encoding: 'utf8',
     timeout: 8000,
-    env: {
-      ...gitEnv(),
-      GIT_SSH_COMMAND: `${process.env.GIT_SSH_COMMAND || 'ssh'} -oBatchMode=yes`,
-    },
+    env,
   }, (err, stdout) => {
     const code = err ? (err.code ?? 1) : 0;
     recordGit(repo, args, Date.now() - started, null, code);
@@ -2585,7 +2690,13 @@ const contextArg = (context) =>
    always worked while staging one of its hunks did not. */
 const diffArgs = (...rest) => ['-c', 'core.quotePath=false', ...rest];
 
-handle('repo:diffFile', async (repo, { file, staged, untracked, ignoreWhitespace, context }) => {
+/* A renamed file is one change with two names, and git can only see it as one
+   when both are in the pathspec. Handed only the new name, it showed a staged
+   rename as a new file and a renamed file in a commit as all additions. */
+const pathsOf = (file, orig) =>
+  (typeof orig === 'string' && orig && orig !== file ? [orig, file] : [file]);
+
+handle('repo:diffFile', async (repo, { file, orig, staged, untracked, ignoreWhitespace, context }) => {
   if (untracked) {
     // Show the whole new file as additions. The flags belong here too: this
     // branch used to return early and quietly drop them.
@@ -2602,7 +2713,7 @@ handle('repo:diffFile', async (repo, { file, staged, untracked, ignoreWhitespace
   const args = diffArgs('diff', '--no-color', '--find-renames');
   if (staged) args.push('--cached');
   if (ignoreWhitespace) args.push('-w');
-  args.push(...contextArg(context), '--', file);
+  args.push(...contextArg(context), '--', ...pathsOf(file, orig));
   return git(repo, args);
 });
 
@@ -2629,13 +2740,18 @@ function knownParents(repo, hash, parents) {
   return stashParents.get(repo)?.get(hash) || (Array.isArray(parents) ? parents : null);
 }
 
-/** Whether a commit has more than one parent. Asked of git only when the caller
-    did not say: the window asks this three times for one merge commit. */
-async function isMerge(repo, hash, parents) {
+/** A commit's parents, asked of git only when the caller did not say. */
+async function parentsOf(repo, hash, parents) {
   const known = knownParents(repo, hash, parents);
-  if (known) return known.length > 1;
-  const out = (await git(repo, ['rev-list', '--parents', '-n', '1', hash])).trim().split(' ');
-  return out.length > 2;   // the commit's own hash, then its parents
+  if (known) return known;
+  // The commit's own hash, then its parents.
+  return (await git(repo, ['rev-list', '--parents', '-n', '1', hash])).trim().split(' ').slice(1);
+}
+
+/** Whether a commit has more than one parent. The window asks this three times
+    for one merge commit, which is why the parents it already holds go along. */
+async function isMerge(repo, hash, parents) {
+  return (await parentsOf(repo, hash, parents)).length > 1;
 }
 
 /* The tree with nothing in it, for showing a file the branch has never seen as
@@ -2654,7 +2770,7 @@ async function emptyTree(repo) {
 }
 
 /** One file's changes inside one commit, rather than the whole commit. */
-handle('repo:diffCommitFile', async (repo, { hash, file, ignoreWhitespace, context, side = 'in', parents }) => {
+handle('repo:diffCommitFile', async (repo, { hash, file, orig, ignoreWhitespace, context, side = 'in', parents }) => {
   const merge = await isMerge(repo, hash, parents);
   const args = diffArgs('diff', '--no-color', '--find-renames');
   if (ignoreWhitespace) args.push('-w');
@@ -2664,7 +2780,7 @@ handle('repo:diffCommitFile', async (repo, { hash, file, ignoreWhitespace, conte
     // `git show --cc` is the only form that lays both parents against the result.
     const show = diffArgs('show', '--no-color', '--format=', '--cc');
     if (ignoreWhitespace) show.push('-w');
-    show.push(...contextArg(context), hash, '--', file);
+    show.push(...contextArg(context), hash, '--', ...pathsOf(file, orig));
     return git(repo, show);
   }
   if (merge) {
@@ -2679,19 +2795,38 @@ handle('repo:diffCommitFile', async (repo, { hash, file, ignoreWhitespace, conte
         return git(repo, args);
       }
     }
-    args.push(`${hash}${MERGE_SIDES[side] || '^1'}`, hash, '--', file);
+    args.push(`${hash}${MERGE_SIDES[side] || '^1'}`, hash, '--', ...pathsOf(file, orig));
     return git(repo, args);
   }
   const show = diffArgs('show', '--no-color', '--find-renames', '--format=');
   if (ignoreWhitespace) show.push('-w');
-  show.push(...contextArg(context), hash, '--', file);
+  show.push(...contextArg(context), hash, '--', ...pathsOf(file, orig));
   return git(repo, show);
 });
 
-/** How many commits sit between this one and HEAD — the ones a reword would
-    have to rewrite. Zero means it is HEAD itself. */
-handle('repo:descendantCount', async (repo, hash) =>
-  Number((await git(repo, ['rev-list', '--count', `${hash}..HEAD`])).trim()) || 0);
+/** Whether a commit is one the checked-out branch is built on. Asked as "is
+    the merge base of the two the commit itself", which needs no exit code to
+    be read: git() turns every non-zero exit into a failure, and `merge-base
+    --is-ancestor` answers no by exiting 1. */
+async function onCurrentBranch(repo, hash) {
+  try {
+    const full = (await git(repo, ['rev-parse', '--verify', `${hash}^{commit}`])).trim();
+    return (await git(repo, ['merge-base', full, 'HEAD'])).trim() === full;
+  } catch {
+    return false;   // no common history at all, or nothing checked out yet
+  }
+}
+
+/** The commits a reword would have to rewrite, and whether it can be done from
+    here at all. Counted along the ancestry path: a side branch merged in later
+    sits in `hash..HEAD` too, but it does not descend from this commit and is
+    left exactly as it is. Zero means it is HEAD itself. */
+handle('repo:descendantCount', async (repo, hash) => {
+  if (!(await onCurrentBranch(repo, hash))) return { count: 0, onBranch: false };
+  const count = Number((await git(repo,
+    ['rev-list', '--count', '--ancestry-path', `${hash}..HEAD`])).trim()) || 0;
+  return { count, onBranch: true };
+});
 
 /**
  * Reword a commit. HEAD is simply amended, which touches nothing else and
@@ -2706,34 +2841,55 @@ handle('repo:rewordCommit', async (repo, { hash, message }) => {
     return { hash: (await git(repo, ['rev-parse', 'HEAD'])).trim(), rebased: 0 };
   }
 
+  /* A commit on another branch is not in the range the rebase walks. Asked to
+     reword one, the old sequence editor reworded the first commit it did find,
+     on the branch that was checked out, and reported success. */
+  if (!(await onCurrentBranch(repo, hash))) {
+    throw new Error('That commit is not on the branch you have checked out, so it '
+      + 'cannot be reworded from here. Check out a branch that contains it first.');
+  }
   const dirty = (await git(repo, ['status', '--porcelain'])).trim();
   if (dirty) {
     throw new Error(
       'Rewording an older commit rewrites the ones after it, which needs a clean ' +
       'working tree. Commit or stash your changes first.');
   }
-  const count = Number((await git(repo, ['rev-list', '--count', `${hash}..HEAD`])).trim()) || 0;
+  const parents = (await git(repo, ['rev-list', '--parents', '-n', '1', hash]))
+    .trim().split(' ').length - 1;
 
-  const msgFile = path.join(os.tmpdir(), `gitbraid-reword-${process.pid}-${count}.txt`);
+  const stamp = `${process.pid}-${++editorSeq}`;
+  const msgFile = path.join(os.tmpdir(), `gitbraid-reword-${stamp}.txt`);
+  const outFile = path.join(os.tmpdir(), `gitbraid-reword-${stamp}.head`);
   fs.writeFileSync(msgFile, message.endsWith('\n') ? message : message + '\n');
-  // Turn the first `pick` into `reword`, then hand git the new message.
-  const seq = nodeEditor(REWORD_SEQUENCE);
+  // Mark this commit for rewording, then hand git the new message.
+  const seq = nodeEditor(REWORD_SEQUENCE, hash, outFile);
   const msg = nodeEditor(REWORD_MESSAGE, msgFile);
+  let reworded = '';
   try {
-    await git(repo, ['rebase', '-i', `${hash}^`], {
+    await git(repo, rewordRebaseArgs(hash, parents), {
       ELECTRON_RUN_AS_NODE: '1',
       GIT_SEQUENCE_EDITOR: seq.command,
       GIT_EDITOR: msg.command,
     });
+    try { reworded = fs.readFileSync(outFile, 'utf8').trim(); } catch { /* see below */ }
   } catch (err) {
     try { await git(repo, ['rebase', '--abort']); } catch { /* nothing to abort */ }
     throw new Error(`Reword failed, nothing was changed: ${(err.message || '').split('\n')[0]}`);
   } finally {
-    for (const f of [msgFile, seq.file, msg.file]) {
+    for (const f of [msgFile, outFile, seq.file, msg.file]) {
       try { fs.unlinkSync(f); } catch { /* already gone */ }
     }
   }
-  return { hash: (await git(repo, ['rev-parse', `${hash}^`])).trim(), rebased: count };
+  /* What changed is everything the new HEAD has that the old one did not: the
+     reworded commit and every commit rewritten on top of it. The hash handed
+     back used to be `${hash}^` — the reworded commit's parent, which the
+     rebase never touched — so the panel jumped to the commit before the one
+     just edited. */
+  const fresh = Number((await git(repo, ['rev-list', '--count', `${head}..HEAD`])).trim()) || 0;
+  return {
+    hash: reworded || (await git(repo, ['rev-parse', 'HEAD'])).trim(),
+    rebased: Math.max(0, fresh - 1),
+  };
 });
 
 /* A merge has two parents, so "what changed" has no single answer and git
@@ -2983,11 +3139,17 @@ handle('repo:reset', async (repo, hash, mode) => {
   return git(repo, ['reset', `--${mode}`, hash]);
 });
 
-handle('repo:revert', async (repo, hash) =>
-  git(repo, ['revert', '--no-edit', hash])
+/* `mainline` names the parent a merge commit is measured against, which git
+   needs before it will revert or cherry-pick one; 0 for an ordinary commit. */
+const mainlineArgs = (mainline) =>
+  (Number.isInteger(mainline) && mainline > 0 ? ['-m', String(mainline)] : []);
+
+handle('repo:revert', async (repo, hash, mainline = 0) =>
+  git(repo, ['revert', '--no-edit', ...mainlineArgs(mainline), hash])
 );
 
-handle('repo:cherryPick', async (repo, hash) => git(repo, ['cherry-pick', hash]));
+handle('repo:cherryPick', async (repo, hash, mainline = 0) =>
+  git(repo, ['cherry-pick', ...mainlineArgs(mainline), hash]));
 
 handle('repo:tag', async (repo, name, hash, message) => {
   const tag = refName(name, 'tag');
@@ -3058,42 +3220,53 @@ handle('repo:push', async (repo, { branch, remote = 'origin', setUpstream, force
  * is a fact about the repository, not about this window: close GitBraid during
  * a conflicted merge and the merge is still there tomorrow. Read straight from
  * .git rather than by running git — this is checked on every refresh. */
-function readGitFile(repo, ...parts) {
+function readGitFile(gitDir, ...parts) {
   try {
-    return fs.readFileSync(path.join(repo, '.git', ...parts), 'utf8').trim();
+    return fs.readFileSync(path.join(gitDir, ...parts), 'utf8').trim();
   } catch {
     return '';
   }
 }
 
-const gitPathExists = (repo, ...parts) => fs.existsSync(path.join(repo, '.git', ...parts));
+const gitPathExists = (gitDir, ...parts) => fs.existsSync(path.join(gitDir, ...parts));
 
-handle('repo:state', async (repo) => {
-  if (gitPathExists(repo, 'MERGE_HEAD')) {
+/* Read from the repository's own git directory, which is not always `.git`
+   beside the work tree: in a linked worktree `.git` is a file naming a folder
+   under the main repository's .git/worktrees, and that folder is where this
+   worktree's MERGE_HEAD and rebase state live. Looking in `<repo>/.git` there
+   found a file rather than a folder, so a conflicted merge in a worktree had
+   no banner, no Abort and no Continue. */
+function operationState(gitDir) {
+  if (gitPathExists(gitDir, 'MERGE_HEAD')) {
     // MERGE_MSG's first line names what is being merged, e.g. "Merge branch 'sisi'".
-    const msg = readGitFile(repo, 'MERGE_MSG').split('\n')[0];
+    const msg = readGitFile(gitDir, 'MERGE_MSG').split('\n')[0];
     const named = /Merge (?:remote-tracking )?branch '([^']+)'/.exec(msg);
     return { kind: 'merge', label: 'Merging', target: named ? named[1] : '', step: 0, total: 0 };
   }
 
   for (const dir of ['rebase-merge', 'rebase-apply']) {
-    if (!gitPathExists(repo, dir)) continue;
-    const step = Number(readGitFile(repo, dir, 'msgnum')) || 0;
-    const total = Number(readGitFile(repo, dir, 'end')) || 0;
+    if (!gitPathExists(gitDir, dir)) continue;
+    const step = Number(readGitFile(gitDir, dir, 'msgnum')) || 0;
+    const total = Number(readGitFile(gitDir, dir, 'end')) || 0;
     // head-name is "refs/heads/feature/x"; onto is a bare hash.
-    const head = readGitFile(repo, dir, 'head-name').replace(/^refs\/heads\//, '');
+    const head = readGitFile(gitDir, dir, 'head-name').replace(/^refs\/heads\//, '');
     return { kind: 'rebase', label: 'Rebasing', target: head, step, total };
   }
 
-  if (gitPathExists(repo, 'CHERRY_PICK_HEAD')) {
+  if (gitPathExists(gitDir, 'CHERRY_PICK_HEAD')) {
     return { kind: 'cherry-pick', label: 'Cherry-picking',
-      target: readGitFile(repo, 'CHERRY_PICK_HEAD').slice(0, 7), step: 0, total: 0 };
+      target: readGitFile(gitDir, 'CHERRY_PICK_HEAD').slice(0, 7), step: 0, total: 0 };
   }
-  if (gitPathExists(repo, 'REVERT_HEAD')) {
+  if (gitPathExists(gitDir, 'REVERT_HEAD')) {
     return { kind: 'revert', label: 'Reverting',
-      target: readGitFile(repo, 'REVERT_HEAD').slice(0, 7), step: 0, total: 0 };
+      target: readGitFile(gitDir, 'REVERT_HEAD').slice(0, 7), step: 0, total: 0 };
   }
   return null;
+}
+
+handle('repo:state', async (repo) => {
+  const gitDir = gitDirOf(repo);
+  return gitDir ? operationState(gitDir) : null;
 });
 
 const ABORTABLE = {
@@ -3175,9 +3348,24 @@ handle('repo:savePatch', async (repo, files, opts) => {
   const list = (Array.isArray(files) ? files : [files])
     .filter((f) => typeof f === 'string' && f.trim());
   if (!list.length) throw new Error('Nothing was named to save.');
-  const { staged = false, skipped = 0, name = 'changes' } = opts || {};
+  const { staged = false, skipped = 0, name = 'changes', commit = null } = opts || {};
+  /* From a commit, the patch is what that commit changed: against its parent,
+     against the side of a merge the panel is showing, or against the empty
+     tree for a root commit. Before, every patch was `git diff` of the working
+     tree, whichever list it was asked for from. A combined diff is refused:
+     it is written against two parents at once and nothing can apply it. */
+  let range = staged ? ['--cached'] : [];
+  if (commit && commit.hash) {
+    const ps = await parentsOf(repo, commit.hash, commit.parents);
+    if (ps.length > 1 && !MERGE_SIDES[commit.side]) {
+      throw new Error('A combined diff cannot be saved as a patch. Pick one side of the merge.');
+    }
+    const base = ps.length > 1 ? `${commit.hash}${MERGE_SIDES[commit.side]}`
+      : ps.length ? `${commit.hash}^` : await emptyTree(repo);
+    range = [base, commit.hash];
+  }
   const patch = await git(repo,
-    diffArgs('diff', '--no-color', ...(staged ? ['--cached'] : []), '--', ...list));
+    diffArgs('diff', '--no-color', '--find-renames', ...range, '--', ...list));
   if (!patch.trim()) return { empty: true, skipped };
 
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];

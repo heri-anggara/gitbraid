@@ -15,7 +15,7 @@ staging per-hunk, diff viewer, dan operasi branch/remote/stash lewat menu kontek
 
 ## Jalankan
 
-Butuh Node.js 18+ dan `git` yang sudah ada di `PATH`.
+Butuh Node.js 20+ dan `git` yang sudah ada di `PATH`.
 
 ```bash
 cd gitbraid
@@ -120,38 +120,39 @@ sudah diperiksa dengan `dpkg -c`. Jadi metainfo ikut di dalam aplikasi lewat
 `/usr/share/metainfo/` dan menyegarkan cache; `after-remove.sh` menghapusnya
 lagi saat paket dicopot.
 
+Berkas metainfo itu ditulis untuk Flatpak: `<launchable>`-nya menunjuk
+`io.github.heri_anggara.GitBraid.desktop`, nama yang dipakai Flatpak. Deb
+memasang desktop file-nya sebagai `gitbraid.desktop`, jadi `after-install.sh`
+mengganti baris launchable itu sambil menyalin. Tanpa itu toko perangkat lunak
+mendapat listing yang menunjuk desktop file yang tidak ada.
+
 Memasang hasil build:
 
 ```bash
-sudo dpkg -i dist/gitbraid_0.1.0_amd64.deb
+sudo apt install ./dist/gitbraid_<versi>_amd64.deb
 ```
 
 ## Merilis ke pengguna lain
 
-Berkas untuk toko aplikasi ada di [`build/linux/`](build/linux/), masih berupa
-templat karena dua nilai harus datang dari Anda: **username GitHub** dan
-**email kontak**. Isi sekali dengan:
-
-```bash
-./build/linux/fill.sh <username-github> <email> [url-donasi]
-```
-
-Skrip itu menghasilkan `io.github.<user>.GitBraid.metainfo.xml` dan
-`.desktop`, menghapus templatnya, lalu menyebutkan App ID yang harus disalin ke
-`build.appId` di `package.json`. Tanda hubung pada username diganti garis bawah
-di App ID saja — AppStream melarangnya, URL tetap memakai username asli.
+Berkas untuk toko aplikasi ada di [`build/linux/`](../build/linux/), sudah
+terisi untuk App ID `io.github.heri_anggara.GitBraid`. Dulu keduanya templat
+yang diisi sekali dengan skrip `fill.sh`; skrip itu menghapus templatnya
+sesudah mengisi, jadi ia tidak bisa dijalankan lagi dan sudah dibuang. Nilai
+yang sama ada di `build.appId` di `package.json`. Tanda hubung pada username
+diganti garis bawah di App ID saja — AppStream melarangnya, URL tetap memakai
+username asli.
 
 Keduanya sudah divalidasi di sini dengan `appstreamcli validate` dan
 `desktop-file-validate`, dengan dan tanpa tautan donasi. Satu catatan pedantic
 tersisa (`cid-contains-uppercase-letter` untuk `GitBraid`) dan itu memang
 konvensi yang dianjurkan Flathub, bukan kesalahan.
 
-**Yang masih kurang sebelum mendaftar:** tangkapan layar di `screenshots/`.
-Nama berkas yang ditunggu `metainfo.xml` ada di
-[`screenshots/README.md`](screenshots/README.md). Flathub menolak listing tanpa
-tangkapan layar.
+Tangkapan layarnya ada di `screenshots/`, dan nama berkas yang ditunggu
+`metainfo.xml` beserta cara mengambilnya lagi ada di
+[`screenshots/README.md`](../screenshots/README.md). Flathub menolak listing
+tanpa tangkapan layar.
 
-Satu peringatan yang perlu dibaca sebelum mengambilnya: halaman toko itu publik
+Satu peringatan yang perlu dibaca sebelum mengambilnya lagi: halaman toko itu publik
 dan permanen. Tangkapan layar dari repo kerja akan ikut memuat nama repositori,
 pesan commit, nama cabang, dan isi berkas yang terbuka di layar. Pakai
 repositori yang memang boleh dilihat siapa saja.
@@ -182,23 +183,31 @@ git config --local user.email "email-yang-Anda-pilih"
 npm test
 ```
 
-490 test yang mengecek parser status, parser log, algoritma lane pada graph,
-titik akhir setiap garis, parser diff, dan — yang paling penting — apakah patch
-per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
+535 test yang mengecek parser status, parser log, algoritma lane pada graph,
+titik akhir setiap garis, parser diff, reword di atas riwayat yang memuat merge,
+aturan `.gitignore` yang dicocokkan dengan `git check-ignore`, dan — yang paling
+penting — apakah patch per-hunk hasil rekonstruksi benar-benar diterima oleh
+`git apply`, termasuk untuk berkas yang dibuat dan dihapus.
 
 ---
 
 ## Yang sudah jalan
 
 **Menu bar**
-- **File** — Open / Clone / Init Repo, `Open Recent` (terisi otomatis, plus
-  Clear Recent), Open in File Manager, Open External Terminal, Close
-  Repository, Quit
-- **Edit** — Undo, Redo, Cut, Copy, Paste, Select All
+- **File** — New Tab, Close Tab, Next Tab, Previous Tab, Search Tabs…, Open /
+  Clone / Init Repo, Repository Management… (`Ctrl+Shift+O`), `Open Recent`
+  (terisi otomatis, plus Clear Recent), Open in File Manager, Open External
+  Terminal, Quit
+- **Edit** — Undo, Redo, Cut, Copy, Paste, Select All, Find Commit… (`Ctrl+F`)
 - **View** — Relaunch, Toggle Full Screen, zoom in/out/reset, `Show Left Panel`
-  (`Ctrl+J`) dan `Show Commit Details Panel` (`Ctrl+K`) berupa checkbox, Refresh,
-  Toggle Developer Tools
-- **Help** — Keyboard Shortcuts (`Ctrl+/`), View Release Notes, About GitBraid
+  (`Ctrl+J`) dan `Show Commit Details Panel` (`Ctrl+K`) berupa checkbox,
+  Terminal, Preferences, Activity Log, Refresh, Toggle Developer Tools
+- **Help** — Keyboard Shortcuts (`Ctrl+/`), Check for Updates…, View Release
+  Notes, About GitBraid
+- Selama sebuah dialog terbuka, menu hanya menjalankan zoom dan lipat panel.
+  Akselerator menu sampai ke jendela apa pun fokusnya, sedangkan lapisan dialog
+  hanya menahan tetikus: `Ctrl+Tab` di bawah konfirmasi "Drop stash" dulu
+  memindahkan tab, dan Enter lalu men-drop stash repositori yang kini di depan
 - Item yang butuh repo otomatis abu-abu selama belum ada repo terbuka, dan
   checkbox panel selalu mengikuti keadaan jendela
 
@@ -1291,7 +1300,7 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   (di balik layar: `-U100000`)
 - **Syntax highlighting** untuk TS/JS/JSX/TSX, JSON, CSS, Sass/SCSS, HTML, Pug,
   Markdown, SQL, shell, Python, Ruby, PHP, Blade, YAML, TOML, Go, Rust — tujuh
-  belas bahasa, ditulis sendiri di [`src/highlight.js`](src/highlight.js),
+  belas bahasa, ditulis sendiri di [`src/highlight.js`](../src/highlight.js),
   jadi GitBraid tetap tanpa dependensi runtime. Sifatnya per-baris, karena diff
   memang menampilkan potongan; berkas yang tak dikenal tampil tanpa warna dan
   tombolnya nonaktif
@@ -1432,7 +1441,7 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
 - Versinya dibaca dari `package.json` sendiri, bukan `app.getVersion()` — panggilan
   itu jatuh ke versi Electron kalau aplikasi tidak dijalankan sebagai paket
 - **View Release Notes** membuka halaman penuh yang dibangun dari
-  [`src/releases.js`](src/releases.js): satu entri per versi, dikelompokkan per
+  [`src/releases.js`](../src/releases.js): satu entri per versi, dikelompokkan per
   area, plus bagian **Known limitations** yang jujur menyebut apa yang belum ada
 - Entri bertanda `in development` adalah build yang sedang Anda pegang. Saat
   versinya di-tag, beri tanggal dan hapus penandanya, lalu mulai entri baru di atas
@@ -1508,7 +1517,7 @@ per-hunk hasil rekonstruksi benar-benar diterima oleh `git apply`.
   menjadi ±90 ms; tab repo kecil ±20 ms
 
 **Logo**
-- Sumbernya satu file, [`build/icon.svg`](build/icon.svg): empat keping bergradasi
+- Sumbernya satu file, [`build/icon.svg`](../build/icon.svg): empat keping bergradasi
   tersusun jadi belah ketupat, dengan alur graph **dipotong dari kepingnya**
 - Simpul alurnya duduk tepat di pusat tiap keping — setelah kelompok keping
   diputar 45°, keempat pusat itu jatuh di (60·28,9), (91,1·60), (28,9·60),
@@ -1926,6 +1935,60 @@ menulis dua kunci ini; kunci lain ditolak.
   `XDG_CONFIG_HOME` diarahkan ke folder sementara supaya recents dan tab
   sesi asli tidak tersentuh
 
+**Audit kebenaran: hasil yang salah, bukan yang lambat**
+- Audit kedua sesudah 0.11.0, kali ini mencari perilaku yang keliru. Setiap
+  temuan dibuktikan dulu dengan git sungguhan di repo percobaan, lalu dikunci
+  dengan uji yang gagal pada kode lama; hitungan uji 490 menjadi 535. Perilaku
+  renderer yang tidak terjangkau uji unit dijalankan di Electron sungguhan:
+  23 skenario, tanpa satu pun error di konsol jendela
+- **Reword commit lama** memakai `rebase -i <hash>^` dengan editor urutan yang
+  mengubah `pick` pertama. Tanpa `--rebase-merges` setiap merge sesudahnya
+  diratakan, dan `pick` pertama belum tentu commit yang dipilih: commit di
+  cabang lain tidak ada di rentang itu, jadi yang diubah commit pertama di
+  cabang aktif. Kini commit dicari berdasarkan hash, merge di-reword lewat
+  `merge -c`, commit akar lewat `--root`, sebuah `exec` sesudah barisnya
+  mencatat hash barunya, dan commit di luar cabang aktif ditolak sebelum apa
+  pun berjalan
+- **Patch per-hunk** menulis ulang sisi `/dev/null` berkas yang dibuat atau
+  dihapus menjadi `a/x` dan `b/x`. Stage hunk berkas terhapus meninggalkan blob
+  kosong di index; unstage hunk berkas baru meninggalkan berkas kosong
+  ter-stage. Nomor baris hunk diambil dari angka bertanda terakhir di baris `@@`,
+  termasuk baris fungsi sesudahnya (`const DEFAULT = -1;`); newline penutup
+  keluaran git menjadi baris konteks kosong; folder bernama `plan b` membelah
+  nama berkas di tempat yang salah. Berkas rename tidak diberi tombol hunk:
+  satu hunk rename yang di-apply mengembalikan seluruh berkas ke nama lamanya
+- **Rename** dilaporkan git sebagai satu entri berisi dua nama, dan renderer
+  tidak pernah memakai `orig`. Unstage rename lewat nama baru memecahnya
+  menjadi penghapusan ter-stage plus berkas untracked. Stage, unstage, diff,
+  dan patch kini membawa kedua nama
+- **Discard all** memasukkan berkas konflik ke daftar restore; git menolak
+  seluruh daftar karena satu path unmerged, berkas untracked tetap dihapus, dan
+  status bar mengaku semua sudah dibuang. Konflik kini dikecualikan dan
+  disebutkan, dan pesan sukses hanya muncul bila git benar-benar berhasil
+- **Load more** hilang di repo yang punya stash: git menghitung commit index
+  stash terhadap `--max-count`, main membuangnya, dan renderer membandingkan
+  sisanya dengan limit. `repo:log` kini menjawab `{ commits, scanned }`
+- **Tab dan dialog**: akselerator menu tetap sampai saat dialog terbuka, jadi
+  `Ctrl+Tab` di bawah konfirmasi memindahkan aksi destruktif ke repositori lain.
+  Viewer berkas tetap menampilkan berkas tab sebelumnya. Diff, panel commit,
+  commit, dan file history menulis jawaban yang terlambat ke tab atau pilihan
+  yang sudah berganti
+- **Pesan commit** kini diminta utuh sebagai `%B` dan dipecah dengan aturan
+  `pretty.c`; subjek yang memuat 0x1F dulu berhenti di byte itu. Dibandingkan
+  dengan `%s` dan `%b` git atas sebelas pesan yang ditulis lewat `commit-tree`,
+  dan dipindai per indeks: 100.000 commit dibaca dalam 300 ms, lama 314 ms
+- **Lainnya**: merge yang berhenti di linked worktree tidak terdeteksi karena
+  `.git` di sana berkas; dialog kata sandi mengirim objek repo alih-alih
+  path-nya ke `askpass:storage`; probe `ls-remote` membuka dialog kata sandi
+  untuk proses yang sudah mati; mengosongkan identitas lokal tidak menghapus
+  apa pun; cherry-pick dan revert yang berkonflik tidak me-refresh, dan merge
+  commit ditolak git tanpa `-m 1`; pola `.gitignore` tanpa jangkar mengabaikan
+  berkas senama di setiap kedalaman; stage hunk dari diff `-w` selalu ditolak;
+  "Save as patch" dari daftar commit membuat diff working tree; lima selektor
+  CSS tertimpa salinan lamanya; spinner berhenti total dengan reduced motion;
+  CSP mengizinkan dua sumber gambar yang tidak dipakai; launchable metainfo
+  deb menunjuk desktop file Flatpak
+
 ## Batasan yang perlu diketahui
 
 Ini prototipe yang berfungsi, bukan pengganti GitKraken. Yang belum ada:
@@ -1937,18 +2000,19 @@ Ini prototipe yang berfungsi, bukan pengganti GitKraken. Yang belum ada:
 - **Submodule dan Git LFS.**
 - **Terminal sungguhan.** Panel terminal menangkap keluaran perintah, bukan
   menyediakan TTY, jadi program layar penuh tidak bisa dipakai di dalamnya.
-- **Menyaring selain dengan nama.** Setiap daftar sudah punya kotak
-  pencariannya sendiri, tapi semuanya mencocokkan nama — tidak ada penyaring
-  berdasarkan penulis, tanggal, atau berkas yang disentuh.
+- **Menyaring selain dengan teks.** Setiap daftar punya kotak pencariannya
+  sendiri: pencarian commit membaca pesan, penulis, email, dan awal SHA,
+  sedangkan daftar lain mencocokkan nama. Belum ada penyaring berdasarkan
+  tanggal atau berkas yang disentuh.
 
-**Soal autentikasi:** `GIT_TERMINAL_PROMPT=0` sengaja diset supaya aplikasi tidak
-menggantung menunggu prompt password yang tidak kelihatan. Konsekuensinya, push
-dan pull ke remote HTTPS akan langsung gagal kalau kredensialnya belum tersimpan.
-Pakai SSH key, atau siapkan credential helper dulu:
-
-```bash
-git config --global credential.helper store
-```
+**Soal autentikasi:** `GIT_TERMINAL_PROMPT=0` tetap diset supaya git tidak
+pernah menggantung menunggu prompt yang tidak kelihatan. Sejak 0.10.0 git
+bertanya lewat program askpass GitBraid, dan pertanyaannya muncul sebagai
+dialog: username dan token untuk HTTPS, atau passphrase kunci SSH. Kalau
+"remember" dicentang, kredensialnya diserahkan ke credential helper git, atau
+disimpan di memori sampai GitBraid ditutup kalau helper tidak ada. Hanya
+Linux untuk saat ini; di Windows remote yang minta kata sandi tetap gagal
+seperti dulu.
 
 ---
 
@@ -1957,6 +2021,9 @@ git config --global credential.helper store
 ```
 main.js              Proses utama Electron. Semua perintah git dan parser-nya.
 preload.js           contextBridge dengan whitelist channel IPC.
+src/index.html       Kerangka jendela, dengan Content Security Policy-nya.
+src/askpass.js       Program yang dijalankan git dan ssh saat butuh rahasia;
+                     jawabannya datang dari dialog lewat socket unix.
 src/graph.js         Algoritma penempatan lane + renderer SVG.
 src/diff.js          Parser unified diff + rekonstruksi patch per-hunk.
 src/renderer.js      State, rendering, dan seluruh aksi UI.
@@ -2006,7 +2073,7 @@ dipakai.
 pun mati secara bawaan. CSP mengizinkan `img-src` ke `www.gravatar.com` dan
 `avatars.githubusercontent.com`, tidak ke tempat lain. Yang dikirim adalah
 SHA-256 alamat email, atau nomor akun GitHub — sekali per alamat lalu di-cache.
-Kalau Anda tidak mau itu, hapus ketiga host tersebut dari tag CSP di
+Kalau Anda tidak mau itu, hapus kedua host tersebut dari tag CSP di
 `src/index.html`: foto gagal dimuat tanpa error dan yang tersisa adalah cakram
 inisial.
 

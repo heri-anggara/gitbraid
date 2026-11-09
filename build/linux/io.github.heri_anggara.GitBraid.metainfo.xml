@@ -3,9 +3,10 @@
      read to build the store listing. Rename the file to match <id> exactly. -->
 <component type="desktop-application">
   <id>io.github.heri_anggara.GitBraid</id>
-  <!-- The name of the desktop file as it is actually installed. The .deb and
-       AppImage ship gitbraid.desktop; a Flatpak renames it to match <id>, and
-       this line has to be changed with it. -->
+  <!-- The name of the desktop file as it is actually installed. Written for
+       the Flatpak, which installs it under <id>. The .deb installs
+       gitbraid.desktop, and build/linux/after-install.sh renames this line to
+       match as it copies the file into /usr/share/metainfo. -->
   <launchable type="desktop-id">io.github.heri_anggara.GitBraid.desktop</launchable>
 
   <name>GitBraid</name>

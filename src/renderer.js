@@ -622,7 +622,10 @@ async function askpassDialog(q) {
   /* What "remember" would mean here, asked rather than assumed: with no
      credential helper configured git has nowhere to write one, and a checkbox
      that promised otherwise would be a lie. */
-  const storage = q.canRemember ? await call('askpass:storage', state.repo) : null;
+  /* The path, not the object holding it: handed the object, main tried to run
+     git with it as the working directory and failed every time, so the box
+     always offered "until GitBraid quits" even with a helper configured. */
+  const storage = q.canRemember ? await call('askpass:storage', state.repo?.path || null) : null;
 
   const res = await modal({
     title: ASK_TITLE[q.field] || 'The remote is asking',
@@ -1005,6 +1008,10 @@ async function activateTab(id) {
 
   activeId = id;
   state = tab;
+  /* The viewer showed whatever the last tab had open, over this tab's history,
+     until Escape was pressed. It is cleared here and drawn again below from
+     this tab's own file, if it has one. */
+  hideViewer();
   renderShell();
   syncTermCwd();
 
@@ -1027,6 +1034,7 @@ async function activateTab(id) {
     renderHistory();
     $('history-scroll').scrollTop = state.scrollTop;
     await renderDetail();
+    if (state === tab && state.compareRef) showCompare();
     saveTabs();
     // Catches up behind the reader; refresh() drops its result if they have
     // moved to another tab by the time it lands.
@@ -1061,6 +1069,8 @@ function stepTab(delta) {
 
 /** No tabs left at all: the start page, without a tab strip above it. */
 async function showWelcome() {
+  hideViewer();
+  syncTermCwd();
   activeId = null;
   state = newTab(null);
   /* These live outside the tab, so the last repository's rows and file list
@@ -1101,7 +1111,7 @@ async function refresh({ keepSelection = true } = {}) {
   // whatever happens to be in front when git finishes.
   const tab = state;
   const repo = tab.repo.path;
-  const [status, commits, refs, stashes, flow, op] = await Promise.all([
+  const [status, log, refs, stashes, flow, op] = await Promise.all([
     call('repo:status', repo),
     call('repo:log', repo, { limit: tab.limit, all: true }),
     call('repo:refs', repo),
@@ -1111,7 +1121,11 @@ async function refresh({ keepSelection = true } = {}) {
   ]);
   if (status) tab.status = status;
   tab.op = op || null;            // a merge or rebase git stopped part-way
-  if (commits) { tab.commits = indexForFind(commits); tab.atEnd = false; tab.rawLoaded = tab.limit; }
+  if (log) {
+    tab.commits = indexForFind(log.commits);
+    tab.atEnd = log.scanned < tab.limit;   // git's own count; see repo:log
+    tab.rawLoaded = tab.limit;
+  }
   if (refs) tab.refs = refs;
   if (stashes) tab.stashes = stashes;
   if (flow) tab.flow = flow;
@@ -1123,7 +1137,9 @@ async function refresh({ keepSelection = true } = {}) {
   state.containedBy = computeContainment(state.commits, state.refs.branches);
   // Resolve avatar URLs up front; renderHistory reads the cache synchronously.
   await ensureAvatars(state.commits);
+  if (tab !== state) return;      // the photos took long enough for a switch
   settleSelection(keepSelection);
+  refreshFind();
 
   renderToolbar();
   renderSidebar();
@@ -1143,6 +1159,17 @@ function settleSelection(keepSelection) {
   }
   if (state.selection?.kind === 'wip' && !dirty && state.commits[0]) {
     state.selection = { kind: 'commit', hash: state.commits[0].hash };
+  }
+  /* A commit rewritten away from outside — a rebase or a reset in a terminal —
+     left its hash selected and its details on screen with nothing in the list
+     behind them. File history is the exception: it selects commits the log
+     does not hold, on purpose, and puts the selection back when it closes. */
+  const sel = state.selection;
+  if (sel?.kind === 'commit' && $('fhist').hidden
+      && !state.commits.some((c) => c.hash === sel.hash)) {
+    state.selection = dirty ? { kind: 'wip' }
+      : state.commits[0] ? { kind: 'commit', hash: state.commits[0].hash } : null;
+    if (state.file?.kind === 'commit') state.file = null;
   }
 }
 
@@ -1340,9 +1367,6 @@ function renderTree(node, kind, leafHtml, prefix = '', depth = 0) {
     })
     .join('');
 }
-
-const treeOrEmpty = (items, kind, leafHtml, empty) =>
-  items.length ? renderTree(buildTree(items), kind, leafHtml) : `<li class="empty-row">${empty}</li>`;
 
 /* What the sidebar's filter box holds. Kept out of the tab state on purpose: it
    is a way of looking, not something about the repository. */
@@ -1834,6 +1858,21 @@ function runFind(query) {
   if (f.hits.length) gotoMatch(0);
 }
 
+/* The hits again after the commits changed underneath a search — a refresh,
+   a fetch, another page. New commits that matched were drawn faded and were
+   not in the count until the query was typed again. The current hit stays
+   current; nothing jumps. */
+function refreshFind() {
+  const f = state.find;
+  const q = f.query.trim().toLowerCase();
+  if (!q) return;
+  const at = f.hits[f.index];
+  f.hits = state.commits.filter((c) => commitMatches(c, q)).map((c) => c.hash);
+  f.hitSet = new Set(f.hits);
+  f.index = Math.max(0, f.hits.indexOf(at));
+  renderFindCount();
+}
+
 function renderFindCount() {
   const f = state.find;
   $('find-count').textContent = !f.query.trim()
@@ -1966,8 +2005,10 @@ function renderHistory() {
 
   document.documentElement.style.setProperty('--graph-w', state.layout.width + 'px');
   renderRows();
-  // Fewer than asked for, whether by a full read or by the last page: the end.
-  $('btn-more').hidden = state.atEnd || state.commits.length < state.limit;
+  /* Fewer than asked for, by git's count, whether by a full read or by the
+     last page: the end. The rows on screen are not that count — a stash's
+     hidden parts are counted by git and drawn by nobody. */
+  $('btn-more').hidden = state.atEnd;
 }
 
 /* Builds the markup for the visible band only. A ten-thousand-commit history
@@ -2210,7 +2251,7 @@ function fileRow(f, kind, depth = 0, mode = 'path') {
     `<span class="f-status s-${esc(f.status)}" title="${esc(STATUS_WORD[f.status] || f.status)}">` +
     `${esc(f.status)}</span>` +
     `<span class="f-path${mode === 'list' ? ' f-split' : ''}" ` +
-    `title="${esc(f.path)}">${name}</span>${actions}</li>`
+    `title="${esc(f.orig ? `${f.orig} → ${f.path}` : f.path)}">${name}</span>${actions}</li>`
   );
 }
 
@@ -2368,6 +2409,7 @@ function viewAsMenu(button) {
 const STATUS_LABEL = { M: 'modified', A: 'added', D: 'deleted', R: 'renamed', C: 'copied' };
 
 let commitFiles = [];
+let commitFilesFor = '';   // which commit and side commitFiles was read for
 
 function renderCommitFiles() {
   const files = fileView.byName
@@ -2391,6 +2433,9 @@ function renderCommitFiles() {
 
   $('c-sort').classList.toggle('on', fileView.byName);
   paintViewAs('c-viewas');
+  // Redrawn rows carry no selection of their own; changing the view mode
+  // dropped the highlight and kept the selection.
+  paintPicked();
 }
 
 async function renderCommitPanel(hash) {
@@ -2441,24 +2486,41 @@ async function renderCommitPanel(hash) {
       `<span class="cp-sha">${esc(h.slice(0, 7))}</span></button>`;
   }).join('');
 
-  // Leaving reword mode open across commits would edit the wrong message.
-  exitReword();
+  /* Leaving reword mode open across commits would edit the wrong message. On
+     the same commit it stays: this runs on every refresh, and the window
+     refreshes whenever it regains focus, so switching away to look something
+     up threw away whatever had been typed. */
+  if (rewordFor !== hash) exitReword();
 
   /* For a merge the three sides answer three different questions, and the
      counts belong on the buttons: a side that turns out to be empty should say
      so before you click it, not after. */
   const side = isMergeCommit ? (state.mergeSide || 'in') : 'in';
+  /* Each await below can be overtaken. A big merge clicked before a small
+     commit answered last, and drew its files, counts and side buttons under
+     the small commit's header — or under another tab's. */
+  const tab = state;
+  const current = () => tab === state && state.selection?.kind === 'commit'
+    && state.selection.hash === hash && (!isMergeCommit || (state.mergeSide || 'in') === side);
   // The parents go along: main otherwise spawns git rev-list to learn whether
   // this is a merge, on every click, when the log already said.
   const sides = isMergeCommit
     ? await Promise.all(MERGE_SIDES.map((m) =>
-        call('repo:commitFiles', state.repo.path, hash, m.key, { parents }).then((r) => r || [])))
+        call('repo:commitFiles', tab.repo.path, hash, m.key, { parents }).then((r) => r || [])))
     : null;
+  if (!current()) return;
   renderMergeBar(isMergeCommit ? sides : null, side, parents);
 
   const files = sides
     ? sides[MERGE_SIDES.findIndex((m) => m.key === side)]
-    : (await call('repo:commitFiles', state.repo.path, hash, 'in', { parents })) || [];
+    : (await call('repo:commitFiles', tab.repo.path, hash, 'in', { parents })) || [];
+  if (!current()) return;
+  /* A selection made in one commit's list means nothing in another's: a path
+     both happen to share stayed picked, unpainted, and the menu offered to act
+     on it. */
+  const listKey = `${hash}:${side}`;
+  if (commitFilesFor !== listKey && picked.kind === 'commit') clearPicked();
+  commitFilesFor = listKey;
   commitFiles = files;
   renderCommitFiles();
 
@@ -2481,7 +2543,10 @@ async function renderCommitPanel(hash) {
 
 /* ── reword in place ── */
 
+let rewordFor = null;   // the commit whose message is open for editing
+
 function exitReword() {
+  rewordFor = null;
   $('c-msg-read').hidden = false;
   $('c-msg-edit').hidden = true;
 }
@@ -2490,30 +2555,45 @@ async function enterReword() {
   const hash = state.selection?.hash;
   const c = state.commits.find((x) => x.hash === hash);
   if (!c) return;
+  rewordFor = hash;
   $('c-edit-subject').value = c.subject;
   $('c-edit-body').value = c.body || '';
   $('c-msg-read').hidden = true;
   $('c-msg-edit').hidden = false;
+  $('c-edit-save').disabled = false;
+  $('c-reword-note').textContent = '';
   $('c-edit-subject').focus();
 
-  const n = await call('repo:descendantCount', repoPath(), hash);
-  $('c-reword-note').textContent = !n
-    ? 'This is the newest commit, so only it changes.'
-    : `Rewording this will rebase the ${n} commit${n === 1 ? '' : 's'} after it, ` +
-      'giving them new hashes.';
+  const info = await call('repo:descendantCount', repoPath(), hash);
+  if (info === null || rewordFor !== hash) return;
+  /* Only a commit the checked-out branch is built on can be rewritten from
+     here; a rebase of this branch never reaches one on another. Saying so
+     before anything is typed beats refusing after. */
+  $('c-edit-save').disabled = !info.onBranch;
+  const n = info.count;
+  $('c-reword-note').textContent = !info.onBranch
+    ? 'This commit is not on the branch you have checked out. Check out a branch '
+      + 'that contains it to reword it.'
+    : !n
+      ? 'This is the newest commit, so only it changes.'
+      : `Rewording this will rebase the ${n} commit${n === 1 ? '' : 's'} after it, ` +
+        'giving them new hashes.';
 }
 
 async function saveReword() {
   const hash = state.selection?.hash;
+  if ($('c-edit-save').disabled || rewordFor !== hash) return;
   const subject = $('c-edit-subject').value.trim();
   if (!subject) { setStatus('A commit needs a summary line', 'error'); return; }
   const body = $('c-edit-body').value.trim();
   const message = body ? `${subject}\n\n${body}` : subject;
 
   setStatus('Rewording…');
-  const res = await call('repo:rewordCommit', repoPath(), { hash, message });
+  const tab = state;
+  const res = await call('repo:rewordCommit', tab.repo.path, { hash, message });
   if (res === null) return;          // reason already in the status bar
-  state.selection = { kind: 'commit', hash: res.hash };
+  tab.selection = { kind: 'commit', hash: res.hash };
+  if (tab !== state) return;         // the next visit to that tab reads it afresh
   exitReword();
   await refresh();
   setStatus(res.rebased
@@ -3213,9 +3293,9 @@ const STATUS_WORD = {
   C: 'Copied', U: 'Conflicted', '?': 'Untracked',
 };
 
-function closeFile() {
-  state.file = null;
-  state.compareRef = null;
+/* The viewer off the screen and out of the document, with nothing else
+   touched: what the tab has open is the caller's to decide. */
+function hideViewer() {
   $('app').classList.remove('viewing-file');
   $('fileview').hidden = true;
   /* Hiding the viewer left everything in place: a diff of an 8,000-line file
@@ -3229,6 +3309,12 @@ function closeFile() {
   nav.blocks = [];
   nav.marks = [];
   nav.at = -1;
+}
+
+function closeFile() {
+  state.file = null;
+  state.compareRef = null;
+  hideViewer();
   renderDetail();
 }
 
@@ -3239,12 +3325,13 @@ async function showFileDiff() {
   // A file on screen ends the comparison; left set, the next toggle of wrap
   // or whitespace put the branch comparison back in place of the file.
   state.compareRef = null;
+  const tab = state;
 
   const raw = f.kind === 'conflict'
     ? await call('repo:conflictFile', repoPath(), f.path)
     : f.kind === 'commit'
     ? await call('repo:diffCommitFile', repoPath(), {
-        hash: state.selection?.hash, file: f.path,
+        hash: state.selection?.hash, file: f.path, orig: f.orig || '',
         ignoreWhitespace: viewer.ignoreWhitespace,
         context: viewer.allLines ? 100000 : 3,
         side: state.mergeSide || 'in',
@@ -3253,11 +3340,17 @@ async function showFileDiff() {
         parents: state.commits.find((c) => c.hash === state.selection?.hash)?.parents,
       })
     : await call('repo:diffFile', repoPath(), {
-        file: f.path, staged: f.kind === 'staged', untracked: f.untracked,
+        file: f.path, orig: f.orig || '', staged: f.kind === 'staged', untracked: f.untracked,
         ignoreWhitespace: viewer.ignoreWhitespace,
         context: viewer.allLines ? 100000 : 3,
       });
   if (raw === null) return;
+  /* The answer belongs to the file that asked. A slower diff landing after the
+     reader had clicked another file painted the first one over the second —
+     its hunks under the second one's buttons — and one landing after a tab
+     switch painted into the other repository's pane. Escape pressed while git
+     ran left the pane closed only until this reopened it. */
+  if (tab !== state || state.file !== f) return;
 
   state.diffFiles = window.Diff.parse(raw || '');
   state.diffContext = f.kind;
@@ -3288,11 +3381,19 @@ async function showFileDiff() {
   /* No hunk buttons on a conflicted file: staging half of it is not how a
      conflict is settled, and offering it invites a mess. The three resolution
      buttons in the panel are the way through. */
+  /* With whitespace hidden a hunk's context is the working tree's copy of
+     lines whose whitespace the index does not share, and git refuses to place
+     it: measured, Stage hunk answered "patch does not apply" whenever a line
+     next to the change differed only in spaces. The hunks are staged from the
+     whole diff, so the pane says how to get it back. */
   const actions = f.kind === 'commit' || f.kind === 'conflict' || f.untracked
     ? []
-    : f.kind === 'staged'
-      ? [{ action: 'unstage', label: 'Unstage hunk' }]
-      : [{ action: 'stage', label: 'Stage hunk' }, { action: 'discard', label: 'Discard hunk' }];
+    : viewer.ignoreWhitespace
+      ? [{ note: 'whitespace hidden — show it to stage hunks',
+           title: 'Hunks are staged from the full diff. Turn off "Ignore whitespace" first.' }]
+      : f.kind === 'staged'
+        ? [{ action: 'unstage', label: 'Unstage hunk' }]
+        : [{ action: 'stage', label: 'Stage hunk' }, { action: 'discard', label: 'Discard hunk' }];
 
   $('fv-stage-tools').hidden = f.kind === 'commit' || f.kind === 'conflict';
   $('fv-stage').hidden = f.kind === 'staged';
@@ -3359,16 +3460,41 @@ const repoPath = () => state.repo.path;
 /* Staging moves a file to the other list, so a selection naming it is about a
    row that is no longer there. It is dropped rather than left pointing at a
    list the file has left. */
+/* The name a renamed entry had, from the list it is drawn in, or ''. git
+   reports a rename as one entry carrying both names, and a command handed only
+   the new one acts on half of it: unstaging a staged rename by its new name
+   left the deletion of the old name staged and the new file untracked. */
+function origOf(kind, path) {
+  const list = kind === 'commit' ? commitFiles
+    : kind === 'staged' ? state.status?.staged
+    : kind === 'unstaged' ? state.status?.unstaged
+    : null;
+  return list?.find((f) => f.path === path)?.orig || '';
+}
+
+/** The paths, and for each renamed one the name it came from as well. */
+const withOrigins = (kind, paths) =>
+  [...new Set([...paths, ...paths.map((p) => origOf(kind, p)).filter(Boolean)])];
+
 async function stage(paths) {
-  await call('repo:stage', repoPath(), paths);
+  await call('repo:stage', repoPath(), withOrigins('unstaged', paths));
   clearPicked();
   await refreshStatus();
 }
 async function unstage(paths) {
-  await call('repo:unstage', repoPath(), paths);
+  await call('repo:unstage', repoPath(), withOrigins('staged', paths));
   clearPicked();
   await refreshStatus();
 }
+
+/* The viewer, put away without the redraw closeFile() asks for: the callers
+   here redraw the panel themselves straight after. */
+function dropOpenFile(paths) {
+  if (!state.file || !paths.includes(state.file.path) || state.file.kind === 'commit') return;
+  state.file = null;
+  hideViewer();
+}
+
 async function discard(path, untracked) {
   const ok = await confirmAction(
     'Discard changes',
@@ -3376,16 +3502,24 @@ async function discard(path, untracked) {
     'Discard'
   );
   if (!ok) return;
-  await call('repo:discard', repoPath(), [path], untracked);
-  state.file = null;
+  /* Only the file that was discarded leaves the viewer. This used to clear
+     whichever file was open, and to leave the discarded one on screen with
+     its hunk buttons live: Stage hunk on that stale diff put the change just
+     thrown away back into the index. */
+  const res = await call('repo:discard', repoPath(), [path], untracked);
+  if (res !== null) dropOpenFile([path]);
   await refreshStatus();
+  if (res !== null) setStatus(`Discarded ${path}`, 'ok');
 }
 
 /* git takes the whole list at once, so two calls cover any number of files:
    the tracked ones go back to the index, the untracked ones are deleted. */
+/* Whether both calls went through. Each failure is already in the status bar;
+   the caller only needs to know not to claim it worked. */
 async function discardLists(kept, gone) {
-  if (kept.length) await call('repo:discard', repoPath(), kept, false);
-  if (gone.length) await call('repo:discard', repoPath(), gone, true);
+  const a = kept.length ? await call('repo:discard', repoPath(), kept, false) : '';
+  const b = gone.length ? await call('repo:discard', repoPath(), gone, true) : '';
+  return a !== null && b !== null;
 }
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -3408,11 +3542,11 @@ async function discardMany(paths) {
     'Discard'
   );
   if (!ok) return;
-  await discardLists(kept, gone);
-  if (paths.includes(state.file?.path)) { state.file = null; closeFile(); }
+  const done = await discardLists(kept, gone);
+  dropOpenFile(paths);
   clearPicked();
   await refreshStatus();
-  setStatus(`Discarded ${plural(paths.length, 'file')}`, 'ok');
+  if (done) setStatus(`Discarded ${plural(paths.length, 'file')}`, 'ok');
 }
 
 async function resolveMany(paths, how) {
@@ -3449,13 +3583,26 @@ async function stashPaths(paths, untrackedCount) {
 
 /* A patch of what was picked, saved wherever the user says. */
 async function savePatch(paths, kind, untrackedCount) {
-  const usable = paths.filter((p) => !isUntracked(p));
+  /* From a commit's list the patch is that commit's change, on the side the
+     panel is showing. It used to be `git diff` of the working tree whatever
+     list it came from, so a file the commit changed and the tree did not gave
+     "no changes", and one edited since gave a patch of the wrong thing. */
+  const fromCommit = kind === 'commit';
+  const usable = fromCommit
+    ? paths.filter((p) => !commitFiles.some((f) => f.path === p && f.untracked))
+    : paths.filter((p) => !isUntracked(p));
   if (!usable.length) { setStatus('A patch is made from tracked changes', 'warn'); return; }
   const name = usable.length === 1
     ? usable[0].split('/').pop().replace(/\.[^.]*$/, '')
     : `${baseName(repoPath())}-${usable.length}-files`;
-  const out = await call('repo:savePatch', repoPath(), usable,
-    { staged: kind === 'staged', skipped: untrackedCount, name });
+  const hash = state.selection?.hash;
+  const commit = fromCommit ? {
+    hash,
+    side: state.mergeSide || 'in',
+    parents: state.commits.find((c) => c.hash === hash)?.parents,
+  } : null;
+  const out = await call('repo:savePatch', repoPath(), withOrigins(kind, usable),
+    { staged: kind === 'staged', skipped: untrackedCount, name, commit });
   if (out === null) return;              // cancelled, or the call failed and said so
   if (out.empty) { setStatus('Those files have no changes to put in a patch', 'warn'); return; }
   setStatus(
@@ -3489,17 +3636,25 @@ async function doCommit() {
   const body = $('commit-body').value.trim();
   const message = body ? `${subject}\n\n${body}` : subject;
   const amend = $('chk-amend').checked;
-  const res = await call('repo:commit', repoPath(), { message, amend });
+  /* A commit can take a while — a hook runs first — and the reader may be in
+     another tab by the time it is made. The message box, the draft and the
+     selection that get cleared are this tab's: clearing whatever was in front
+     wiped the other tab's half-written message and left this one's draft, so
+     the message just committed came back on return. */
+  const tab = state;
+  const repo = tab.repo.path;
+  const res = await call('repo:commit', repo, { message, amend });
   if (res === null) return;
+  tab.commitMsg = '';
+  tab.commitBody = '';
+  tab.amend = false;
+  tab.file = null;
+  tab.selection = null;
+  clearDraft(repo);
+  if (tab !== state) { setStatus(`Committed in ${tab.repo.name}`, 'ok'); return; }
   $('commit-msg').value = '';
   $('commit-body').value = '';
   $('chk-amend').checked = false;
-  state.commitMsg = '';
-  state.commitBody = '';
-  state.amend = false;
-  clearDraft(repoPath());
-  state.file = null;
-  state.selection = null;
   await refresh({ keepSelection: false });
   setStatus(amend ? 'Amended the last commit' : 'Committed', 'ok');
 }
@@ -3573,16 +3728,19 @@ async function revealRef(ref, kind) {
   const oid = list.find((r) => r.name === ref)?.oid;
   if (!oid) return;
 
-  const loaded = () => state.commits.some((c) => c.hash === oid);
+  const tab = state;
+  const loaded = () => tab.commits.some((c) => c.hash === oid);
   // 50 pages is far past any history a person scrolls; it only stops a runaway.
   for (let page = 0; !loaded() && page < 50; page += 1) {
-    if (state.commits.length < state.limit) {   // the whole history is here already
+    if (tab.atEnd) {   // the whole history is here already, by git's own count
       setStatus(`${ref} is not in this view`, 'error');
       return;
     }
-    state.limit += prefs.commitLimit;
-    setStatus(`Looking for ${ref} — ${state.limit} commits loaded…`);
+    tab.limit += prefs.commitLimit;
+    setStatus(`Looking for ${ref} — ${tab.limit} commits loaded…`);
     await refresh();
+    // Switched away mid-search: that tab keeps what it loaded and stops here.
+    if (tab !== state) return;
   }
   if (!loaded()) {
     setStatus(`${ref} is further back than GitBraid will load`, 'error');
@@ -3670,6 +3828,7 @@ async function mergeBranch(ref) {
   if (mode === null) return;
 
   let out = '';
+  const startedOn = activeId;
   const ok = await gitAction(null, `Merging ${ref}`,
     async () => (out = await call('repo:merge', repoPath(), ref, mode)),
     async () => {
@@ -3681,8 +3840,10 @@ async function mergeBranch(ref) {
           : `Merged ${ref} into ${info.head}`,
       nothingHappened(out) ? '' : 'ok');
     });
-  // A conflict stops the merge half-done; the history has to show that state.
-  if (!ok) await refresh({ keepSelection: false });
+  /* A conflict stops the merge half-done; the history has to show that state.
+     Only a real failure, and only in the tab it happened in: gitAction answers
+     undefined when it refused to start, and false when git failed. */
+  if (ok === false && activeId === startedOn) await refresh({ keepSelection: false });
 }
 
 /** git's way of saying it did nothing, on merge, pull and rebase alike. */
@@ -3691,6 +3852,7 @@ const nothingHappened = (out) =>
 
 async function rebaseOnto(ref) {
   let out = '';
+  const startedOn = activeId;
   const ok = await gitAction(null, `Rebasing onto ${ref}`,
     async () => (out = await call('repo:rebase', repoPath(), ref)),
     async () => {
@@ -3699,7 +3861,7 @@ async function rebaseOnto(ref) {
         ? `Already on top of ${ref} — nothing to rebase`
         : `Rebased onto ${ref}`, nothingHappened(out) ? '' : 'ok');
     });
-  if (!ok) await refresh({ keepSelection: false });
+  if (ok === false && activeId === startedOn) await refresh({ keepSelection: false });
 }
 
 async function applyStash(ref, drop) {
@@ -4584,6 +4746,7 @@ $('rm-groups').addEventListener('click', async (e) => {
   if (clear) {
     e.stopPropagation();
     recents = (await call('app:clearRecents')) || [];
+    renderRecents();   // the start page behind the manager lists them too
     await loadRepoManager();
     setStatus('Recent list cleared', 'ok');
     return;
@@ -5373,16 +5536,19 @@ async function loadIdentityPage() {
     const name = $(local ? 'pf-lname' : 'pf-gname').value.trim();
     const email = $(local ? 'pf-lemail' : 'pf-gemail').value.trim();
     if (!local && (!name || !email)) {
-      setStatus('A global identity needs both a name and an email', 'err');
+      setStatus('A global identity needs both a name and an email', 'error');
       return;
     }
-    const ok = await call('git:setIdentity', repoPath(), { name, email, local });
+    /* No repository is a normal state for this page — it says so above — and
+       the global card has to save in it. repoPath() threw there. */
+    const ok = await call('git:setIdentity', state.repo?.path || null, { name, email, local });
     if (ok === null) return;
     const said = $(local ? 'pf-lsaid' : 'pf-gsaid');
     said.textContent = 'Saved';
     setTimeout(() => { said.textContent = ''; }, 2200);
     loadIdentityPage();
-    if (typeof renderIdentityChip === 'function') renderIdentityChip();
+    // The chip in the toolbar shows the same identity; it kept the old one.
+    loadIdentity();
   };
   $('pf-gsave').onclick = () => save(false);
   $('pf-lsave').onclick = () => save(true);
@@ -5460,7 +5626,6 @@ function syncTermCwd() {
 
 function showTerm() {
   $('term').hidden = false;
-  $('app').classList.add('term-open');
   term.open = true;
   saveTerm();
   document.documentElement.style.setProperty('--term-h', `${term.height}px`);
@@ -5475,7 +5640,6 @@ function showTerm() {
 
 function hideTerm() {
   $('term').hidden = true;
-  $('app').classList.remove('term-open');
   term.open = false;
   saveTerm();
 }
@@ -5484,7 +5648,8 @@ const toggleTerm = () => (termOpen() ? hideTerm() : showTerm());
 
 async function termRun(cmd) {
   if (!state.repo) { termWrite('Open a repository first.', 'term-err'); return; }
-  if (term.busy) return;
+  // Said, rather than swallowed: the box had already been emptied.
+  if (term.busy) { termWrite(`A command is still running — stop it first. (${cmd})`, 'term-err'); return; }
   termWrite(`$ ${cmd}`, 'term-cmd-echo');
   term.busy = true;
   $('term-stop').disabled = false;
@@ -5663,8 +5828,10 @@ const OUT_RULES = [
   [/\bdone\.$/, 'faint'],
 ];
 
-/** A diffstat's bar: "src/app.ts | 24 ++++----" — its plusses and minuses. */
-const STAT_BAR = /^(\s*\S.*?\|\s*\d+\s*)(\++)(-*)(\s*)$/;
+/** A diffstat's bar: "src/app.ts | 24 ++++----" — its plusses and minuses.
+    Either run may be empty, but not both: a file that only lost lines draws
+    nothing but minuses, and was left uncoloured. */
+const STAT_BAR = /^(\s*\S.*?\|\s*\d+\s*)(?=[+-])(\+*)(-*)(\s*)$/;
 
 function outLineHtml(line) {
   const bar = STAT_BAR.exec(line);
@@ -5927,13 +6094,15 @@ const markChecked = () => {
    busy, is not something to interrupt anyone about. Pressed by hand, the same
    failures are worth saying out loud. */
 async function checkForUpdates({ quiet = false } = {}) {
-  markChecked();
   if (!quiet) setStatus('Checking for updates…');
   const res = await window.gitbraid.invoke('update:check');
   if (!res.ok) {
     if (!quiet) setStatus(firstLine(res.error), 'error');
     return null;
   }
+  /* Marked once GitHub has answered. Marked before asking, a launch while
+     offline counted as the day's check and the next one waited a day. */
+  markChecked();
   update = res.data.newer ? res.data : null;
   paintUpdateFlag();
   /* Asked for by hand, "there is one" has to be the offer itself. Marking the
@@ -6233,7 +6402,8 @@ async function renderNotes() {
    so the parents the graph draws its lanes from are no longer all present —
    lanes that lie are worse than no lanes at all. */
 const fhist = { path: '', commits: [], names: {}, at: -1,
-                home: null, next: null, was: null };
+                home: null, next: null, was: null,
+                seq: 0 };   // bumped by every open and close: answers check it
 
 /* The diff panel is moved here rather than rebuilt. Everything it can do — the
    toolbar, the change map, block navigation, wrapping, side-by-side, drawing
@@ -6266,6 +6436,7 @@ async function openFileHistory(file) {
   fhist.commits = [];
   fhist.names = {};
   fhist.at = -1;
+  const seq = ++fhist.seq;
 
   $('fh-path').textContent = file;
   $('fh-path').title = file;
@@ -6276,8 +6447,11 @@ async function openFileHistory(file) {
   mountViewer();
 
   const out = await call('repo:fileLog', repoPath(), file, { limit: 200 });
+  /* Closed, or opened again for another file, while git ran: the answer is for
+     a panel that is gone. Applied anyway it set the selection and the open
+     file of whichever tab was in front, from another repository's history. */
+  if (seq !== fhist.seq) return;
   if (out === null) { closeFileHistory(); return; }
-  if (fhist.path !== file) return;        // another file was opened while git ran
   fhist.commits = out.commits;
   fhist.names = out.names || {};
 
@@ -6336,6 +6510,7 @@ $('fh-list').addEventListener('click', (e) => {
 });
 
 function closeFileHistory() {
+  fhist.seq += 1;
   unmountViewer();
   $('app').classList.remove('reading-fhist');
   $('fhist').hidden = true;
@@ -6394,6 +6569,12 @@ const SHORTCUTS = [
     ['Ctrl Enter', 'Commit (from the message box)'],
     ['Alt O', 'Open in file manager'],
     ['Alt T', 'Open an external terminal'],
+  ]],
+  ['A list of files', [
+    ['Enter / Space', 'Stage or unstage the selected files'],
+    ['Delete', 'Discard the selected files'],
+    ['Ctrl A', 'Select every file in the list'],
+    ['Esc', 'Clear a selection of several files'],
   ]],
   ['Reading a diff', [
     ['Alt Down', 'Next difference'],
@@ -6463,7 +6644,10 @@ const MENU_ACTIONS = {
   'repo-manager': () => ($('app').classList.contains('managing')
     ? closeRepoManager() : openRepoManager()),
   about: openAbout,
-  'check-updates': () => (update ? offerUpdate() : checkForUpdates()),
+  // An update already downloaded and put off is offered as the restart it
+  // needs, as the status bar's menu does; offering it again downloaded it again.
+  'check-updates': () => (updateReady ? restartForUpdate()
+    : update ? offerUpdate() : checkForUpdates()),
   'release-notes': () => ($('app').classList.contains('reading-notes')
     ? closeNotes() : openNotes()),
   'terminal-panel': toggleTerm,     // the panel inside the window
@@ -6478,12 +6662,25 @@ const MENU_ACTIONS = {
   shortcuts: showShortcuts,
 };
 
-/* Anything that opens a dialog is skipped while one is already up — the
-   modal is a single shared element. */
-const DIALOG_ACTIONS = new Set(['clone', 'init', 'shortcuts', 'check-updates']);
+/* While a dialog is up the menu does only what cannot change what the dialog
+   is about. Menu accelerators reach the window whatever has focus, and the
+   dialog's overlay stops only the mouse: Ctrl+Tab under "Drop stash" switched
+   the tab, and Enter then dropped the stash of the repository now in front.
+   Every destructive action reads its repository after its confirmation, so
+   the tab must not move while one is asked. A folder handed over by a second
+   `gitbraid <folder>` is not dropped: it opens once the dialog closes. */
+const SAFE_UNDER_DIALOG = new Set(['zoom-in', 'zoom-out', 'zoom-reset',
+  'toggle-sidebar', 'toggle-detail']);
 
-window.gitbraid.on('menu:action', (msg) => {
-  if (DIALOG_ACTIONS.has(msg.action) && !$('modal').hidden) return;
+const dialogClosed = async () => {
+  while (!$('modal').hidden) await new Promise((r) => setTimeout(r, 150));
+};
+
+window.gitbraid.on('menu:action', async (msg) => {
+  if (!$('modal').hidden && !SAFE_UNDER_DIALOG.has(msg.action)) {
+    if (msg.action !== 'open-recent') return;
+    await dialogClosed();
+  }
   MENU_ACTIONS[msg.action]?.(msg);
 });
 
@@ -6619,6 +6816,10 @@ async function pull(mode = 'ff') {
         : (mode === 'ff' ? 'Pulled' : `Pulled with ${mode}`),
         nothingHappened(out) ? '' : 'ok');
     });
+  /* Refused because another command was still running: nothing was tried, so
+     there is nothing to diagnose. Treated as a failed fast-forward it opened
+     the "histories have diverged" dialog on any branch that had. */
+  if (ok === undefined) return;
   if (ok || mode !== 'ff') {
     // A merge pull can stop on a conflict; the banner takes over from here.
     if (!ok) await refresh({ keepSelection: false });
@@ -7080,24 +7281,36 @@ $('commit-list').addEventListener('contextmenu', (e) => {
     return;
   }
 
+  const isMergeRow = (state.commits.find((c) => c.hash === hash)?.parents.length || 0) > 1;
   contextMenu(e, [
     { label: 'Copy SHA', run: () => navigator.clipboard.writeText(hash) },
     { label: `Check out ${short}`, run: () => checkout(hash) },
     { label: 'Branch from here', run: () => newBranch(hash) },
     '-',
-    { label: 'Cherry-pick onto current', run: async () => {
-        const res = await call('repo:cherryPick', repoPath(), hash);
-        if (res !== null) { await refresh({ keepSelection: false }); setStatus(`Cherry-picked ${short}`, 'ok'); }
-      } },
-    { label: 'Revert this commit', run: async () => {
-        const res = await call('repo:revert', repoPath(), hash);
-        if (res !== null) { await refresh({ keepSelection: false }); setStatus(`Reverted ${short}`, 'ok'); }
-      } },
+    { label: isMergeRow ? 'Cherry-pick onto current (as of its first parent)' : 'Cherry-pick onto current',
+      run: () => pickOrRevert('cherryPick', hash, isMergeRow, `Cherry-picked ${short}`) },
+    { label: isMergeRow ? 'Revert this merge (undo what it brought in)' : 'Revert this commit',
+      run: () => pickOrRevert('revert', hash, isMergeRow, `Reverted ${short}`) },
     '-',
     { label: 'Reset branch to here (keep changes)', run: () => resetTo(hash, 'mixed') },
     { label: 'Reset branch to here (discard changes)', danger: true, run: () => resetTo(hash, 'hard') },
   ]);
 });
+
+/* Cherry-pick and revert, which stop on a conflict exactly as a merge does.
+   The refresh runs either way: after a stop it is what puts the banner up and
+   the conflicted files in their group, and without it the window went on
+   showing a clean tree under a single line of error until the next refresh.
+   A merge commit is taken against its first parent — the branch it was made
+   on — which is what "this merge's changes" means; git refuses one outright
+   without being told which parent to measure from. */
+async function pickOrRevert(what, hash, merge, said) {
+  const tab = state;
+  const res = await call(`repo:${what}`, tab.repo.path, hash, merge ? 1 : 0);
+  if (tab !== state) return;
+  await refresh({ keepSelection: false });
+  if (res !== null) setStatus(said, 'ok');
+}
 
 async function resetTo(hash, mode) {
   const ok = await confirmAction(
@@ -7142,8 +7355,9 @@ $('btn-more').addEventListener('click', async () => {
      re-read the last few rows of the previous page, and a later full refresh
      asking for exactly the visible count would come back a few rows short. */
   const skip = tab.rawLoaded || tab.commits.length;
-  const more = await call('repo:log', tab.repo.path, { limit: page, all: true, skip });
-  if (!more) return;
+  const log = await call('repo:log', tab.repo.path, { limit: page, all: true, skip });
+  if (!log) return;
+  const more = log.commits;
   // A commit that landed between the two pages shifts everything below it
   // down by one, so the page can begin with a commit already here.
   const known = tab.rowIndex?.size ? tab.rowIndex : new Set(tab.commits.map((c) => c.hash));
@@ -7151,11 +7365,13 @@ $('btn-more').addEventListener('click', async () => {
   tab.commits = tab.commits.concat(fresh);   // a new array, so the layout memo misses
   tab.rawLoaded = skip + page;
   tab.limit = tab.rawLoaded;                  // a later full refresh reloads this much
-  tab.atEnd = more.length < page;
+  tab.atEnd = log.scanned < page;
 
   if (tab !== state) return;      // the reader moved on: keep the data, draw nothing
   state.containedBy = computeContainment(state.commits, state.refs.branches);
   await ensureAvatars(fresh);
+  if (tab !== state) return;
+  refreshFind();
   renderHistory();
 });
 
@@ -7274,7 +7490,7 @@ function wireFileList(id) {
 
     pickOne(kind, path);
     state.file = { path, kind, status: li.dataset.status,
-                   untracked: li.dataset.untracked === '1' };
+                   untracked: li.dataset.untracked === '1', orig: origOf(kind, path) };
     state.compareRef = null;
     $(id).querySelectorAll('li').forEach((n) => n.classList.remove('selected'));
     li.classList.add('selected');
@@ -7350,24 +7566,37 @@ $('btn-filter-clear').addEventListener('click', () => {
 
 $('btn-discard-all').addEventListener('click', async () => {
   const s = state.status;
-  const paths = [...s.conflicted, ...s.unstaged, ...s.untracked];
-  if (!paths.length) { setStatus('Nothing to discard', 'ok'); return; }
+  /* Conflicted files are left out. git refuses to restore an unmerged path —
+     "path is unmerged" — and it refuses for the whole list at once, so one
+     conflict in it used to restore nothing while the untracked files were
+     still deleted and the status bar said every file had been discarded. A
+     conflict is settled from its own group, or by aborting what stopped. */
+  const paths = [...s.unstaged, ...s.untracked];
+  const conflicts = s.conflicted.length;
+  const left = conflicts
+    ? ` ${plural(conflicts, 'conflicted file')} ${conflicts === 1 ? 'is' : 'are'} left alone — `
+      + 'resolve them, or abort the operation that stopped.'
+    : '';
+  if (!paths.length) {
+    setStatus(conflicts ? `Nothing to discard.${left}` : 'Nothing to discard', conflicts ? '' : 'ok');
+    return;
+  }
   const ok = await confirmAction(
     'Discard all changes',
     `${paths.length} file${paths.length === 1 ? '' : 's'} will go back to their last committed ` +
-    'state, and untracked files will be deleted. This cannot be undone.',
+    `state, and untracked files will be deleted. This cannot be undone.${left}`,
     'Discard everything'
   );
   if (!ok) return;
   // One process per file, in turn, was a long wait on a big tree; git takes
   // the whole list, so this is the same two calls discardMany makes.
-  await discardLists(
+  const done = await discardLists(
     paths.filter((f) => f.status !== '?').map((f) => f.path),
     paths.filter((f) => f.status === '?').map((f) => f.path)
   );
   closeFile();
   await refreshStatus();
-  setStatus(`Discarded ${paths.length} file${paths.length === 1 ? '' : 's'}`, 'ok');
+  if (done) setStatus(`Discarded ${plural(paths.length, 'file')}`, 'ok');
 });
 
 /* ── per-file context menu ──
@@ -7390,7 +7619,11 @@ for (const id of FILE_LISTS) {
     const n = paths.length;
     const many = n > 1;
     const these = many ? `${n} files` : 'this file';
-    const untracked = paths.filter((p) => isUntracked(p));
+    /* In a commit's list "untracked" means a stash's untracked files, which sit
+       in a parent of their own rather than in the working tree. */
+    const untracked = kind === 'commit'
+      ? paths.filter((p) => commitFiles.some((f) => f.path === p && f.untracked))
+      : paths.filter((p) => isUntracked(p));
 
     const items = [];
     if (kind === 'conflict') {
@@ -7410,24 +7643,33 @@ for (const id of FILE_LISTS) {
       items.push({ label: many ? `Unstage ${n} files` : 'Unstage this file',
         accel: 'Enter', run: () => unstage(paths) });
     }
-    if (kind !== 'commit') {
+    /* An unmerged file cannot be restored or stashed — git answers "path is
+       unmerged" to both — so a conflict is offered the three ways it can
+       actually be settled, and nothing that is certain to fail. */
+    if (kind === 'unstaged' || kind === 'staged') {
       items.push({ label: many ? `Discard ${n} files…` : 'Discard changes…',
         accel: 'Delete', danger: true, run: () => discardMany(paths) });
       items.push({ label: many ? `Stash ${n} files…` : 'Stash this file…',
         run: () => stashPaths(paths, untracked.length) });
       items.push('-');
     }
-    items.push({
-      label: many ? `Save ${n} files as patch…` : 'Save as patch…',
-      hint: untracked.length === n && n > 0
-        ? 'A patch is made from tracked changes, and these are untracked'
-        : untracked.length
-          ? `${untracked.length} untracked file${untracked.length === 1 ? '' : 's'} cannot go in a patch`
-          : '',
-      disabled: untracked.length === n,
-      run: () => savePatch(paths, kind, untracked.length),
-    });
-    items.push('-');
+    if (kind !== 'conflict') {
+      const combined = kind === 'commit' && state.mergeSide === 'combined'
+        && (state.commits.find((c) => c.hash === state.selection?.hash)?.parents.length || 0) > 1;
+      items.push({
+        label: many ? `Save ${n} files as patch…` : 'Save as patch…',
+        hint: combined
+          ? 'A combined diff answers against both parents at once, and git cannot apply one'
+          : untracked.length === n && n > 0
+            ? 'A patch is made from tracked changes, and these are untracked'
+            : untracked.length
+              ? `${untracked.length} untracked file${untracked.length === 1 ? '' : 's'} cannot go in a patch`
+              : '',
+        disabled: combined || untracked.length === n,
+        run: () => savePatch(paths, kind, untracked.length),
+      });
+      items.push('-');
+    }
 
     /* Ignoring means two different things depending on what git already knows
        about the file, and offering the wrong one is offering something that
@@ -7512,7 +7754,7 @@ for (const id of FILE_LISTS) {
       return;
     }
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      if (kind === 'commit') return;
+      if (kind !== 'unstaged' && kind !== 'staged') return;   // a commit, or a conflict
       e.preventDefault();
       discardMany(paths);
       return;
@@ -7526,19 +7768,40 @@ for (const id of FILE_LISTS) {
    changes nothing at all, which is why the menu offers a different thing for
    each: an untracked file is simply ignored, a tracked one has to stop being
    tracked first, and that is a change to the index worth saying out loud. */
+/* The characters a .gitignore line gives meaning to, escaped so a name means
+   itself: `notes[1].txt` is that file, not `notes1.txt`. */
+const ignoreEscape = (s) => s
+  .replace(/[\\*?[]/g, (c) => `\\${c}`)
+  .replace(/ +$/, (spaces) => spaces.replace(/ /g, '\\ '));
+
+/* A path as a .gitignore line that matches that path and nothing else. A
+   pattern with no slash before its end matches at every depth: written as
+   `config.json`, ignoring the file at the top also ignored src/config.json and
+   every other file of that name, and `build/` every folder called build. So a
+   path at the top is anchored with a leading slash; one with a slash in the
+   middle is anchored already. */
+function ignoreRule(path, folder = false) {
+  const rule = ignoreEscape(path);
+  const head = rule.includes('/') ? rule.replace(/^[#!]/, (c) => `\\${c}`) : `/${rule}`;
+  return folder ? `${head}/` : head;
+}
+
 function ignorePatterns(path) {
   const cut = path.lastIndexOf('/');
   const dir = cut < 0 ? '' : path.slice(0, cut);
   const name = cut < 0 ? path : path.slice(cut + 1);
   const dot = name.lastIndexOf('.');
   const ext = dot > 0 ? name.slice(dot) : '';
-  const out = [{ value: path, label: `Just this file`, help: path }];
+  const just = ignoreRule(path);
+  const out = [{ value: just, label: `Just this file`, help: just }];
   if (ext) {
-    out.push({ value: `*${ext}`, label: `Every ${ext} file`,
-      help: `*${ext} — anywhere in the repository` });
+    const every = `*${ignoreEscape(ext)}`;
+    out.push({ value: every, label: `Every ${ext} file`,
+      help: `${every} — anywhere in the repository` });
   }
   if (dir) {
-    out.push({ value: `${dir}/`, label: 'Everything in this folder', help: `${dir}/` });
+    const all = ignoreRule(dir, true);
+    out.push({ value: all, label: 'Everything in this folder', help: all });
   }
   return out;
 }
@@ -7561,7 +7824,7 @@ async function ignoreFiles(paths) {
     confirmLabel: 'Ignore',
   });
   if (!r) return;
-  const patterns = many ? paths : [r.how];
+  const patterns = many ? paths.map((p) => ignoreRule(p)) : [r.how];
   const out = await call('repo:ignore', repoPath(), patterns);
   if (out === null) return;
   clearPicked();
@@ -7586,7 +7849,7 @@ async function untrackAndIgnore(paths) {
   if (!ok) return;
   const gone = await call('repo:untrack', repoPath(), paths);
   if (gone === null) return;
-  await call('repo:ignore', repoPath(), paths);
+  await call('repo:ignore', repoPath(), paths.map((p) => ignoreRule(p)));
   if (paths.includes(state.file?.path)) { state.file = null; closeFile(); }
   clearPicked();
   await refreshStatus();
@@ -7774,7 +8037,10 @@ window.addEventListener('drop', async (e) => {
   // Dropping a file inside a repository still means "open that repository":
   // repo:open resolves whatever path it gets to the work tree root.
   const dropped = window.gitbraid.pathForFile(file);
-  if (dropped) await openRepoAt(dropped);
+  // Opening a tab under a dialog is the same hazard as switching to one.
+  if (!dropped) return;
+  await dialogClosed();
+  await openRepoAt(dropped);
 });
 
 /* ═════ startup ═════════════════════════════════════════════════ */
