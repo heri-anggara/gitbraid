@@ -435,6 +435,11 @@
      from the list, which is the operation a rename actually is. */
   function hunkButtons(file, fileIndex, hunkIndex, actions) {
     if (!actions.length) return '';
+    // In place of the buttons, a reason there are none: { note, title }.
+    if (actions[0].note) {
+      return `<span class="hunk-note" title="${esc(actions[0].title || '')}">`
+        + `${esc(actions[0].note)}</span>`;
+    }
     if (file.renamed) {
       return '<span class="hunk-note" title="A rename stages as a whole file, from the list">'
         + 'renamed — stage the whole file</span>';

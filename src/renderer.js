@@ -2210,7 +2210,7 @@ function fileRow(f, kind, depth = 0, mode = 'path') {
     `<span class="f-status s-${esc(f.status)}" title="${esc(STATUS_WORD[f.status] || f.status)}">` +
     `${esc(f.status)}</span>` +
     `<span class="f-path${mode === 'list' ? ' f-split' : ''}" ` +
-    `title="${esc(f.path)}">${name}</span>${actions}</li>`
+    `title="${esc(f.orig ? `${f.orig} → ${f.path}` : f.path)}">${name}</span>${actions}</li>`
   );
 }
 
@@ -3234,9 +3234,9 @@ const STATUS_WORD = {
   C: 'Copied', U: 'Conflicted', '?': 'Untracked',
 };
 
-function closeFile() {
-  state.file = null;
-  state.compareRef = null;
+/* The viewer off the screen and out of the document, with nothing else
+   touched: what the tab has open is the caller's to decide. */
+function hideViewer() {
   $('app').classList.remove('viewing-file');
   $('fileview').hidden = true;
   /* Hiding the viewer left everything in place: a diff of an 8,000-line file
@@ -3250,6 +3250,12 @@ function closeFile() {
   nav.blocks = [];
   nav.marks = [];
   nav.at = -1;
+}
+
+function closeFile() {
+  state.file = null;
+  state.compareRef = null;
+  hideViewer();
   renderDetail();
 }
 
@@ -3260,12 +3266,13 @@ async function showFileDiff() {
   // A file on screen ends the comparison; left set, the next toggle of wrap
   // or whitespace put the branch comparison back in place of the file.
   state.compareRef = null;
+  const tab = state;
 
   const raw = f.kind === 'conflict'
     ? await call('repo:conflictFile', repoPath(), f.path)
     : f.kind === 'commit'
     ? await call('repo:diffCommitFile', repoPath(), {
-        hash: state.selection?.hash, file: f.path,
+        hash: state.selection?.hash, file: f.path, orig: f.orig || '',
         ignoreWhitespace: viewer.ignoreWhitespace,
         context: viewer.allLines ? 100000 : 3,
         side: state.mergeSide || 'in',
@@ -3274,11 +3281,17 @@ async function showFileDiff() {
         parents: state.commits.find((c) => c.hash === state.selection?.hash)?.parents,
       })
     : await call('repo:diffFile', repoPath(), {
-        file: f.path, staged: f.kind === 'staged', untracked: f.untracked,
+        file: f.path, orig: f.orig || '', staged: f.kind === 'staged', untracked: f.untracked,
         ignoreWhitespace: viewer.ignoreWhitespace,
         context: viewer.allLines ? 100000 : 3,
       });
   if (raw === null) return;
+  /* The answer belongs to the file that asked. A slower diff landing after the
+     reader had clicked another file painted the first one over the second —
+     its hunks under the second one's buttons — and one landing after a tab
+     switch painted into the other repository's pane. Escape pressed while git
+     ran left the pane closed only until this reopened it. */
+  if (tab !== state || state.file !== f) return;
 
   state.diffFiles = window.Diff.parse(raw || '');
   state.diffContext = f.kind;
@@ -3309,11 +3322,19 @@ async function showFileDiff() {
   /* No hunk buttons on a conflicted file: staging half of it is not how a
      conflict is settled, and offering it invites a mess. The three resolution
      buttons in the panel are the way through. */
+  /* With whitespace hidden a hunk's context is the working tree's copy of
+     lines whose whitespace the index does not share, and git refuses to place
+     it: measured, Stage hunk answered "patch does not apply" whenever a line
+     next to the change differed only in spaces. The hunks are staged from the
+     whole diff, so the pane says how to get it back. */
   const actions = f.kind === 'commit' || f.kind === 'conflict' || f.untracked
     ? []
-    : f.kind === 'staged'
-      ? [{ action: 'unstage', label: 'Unstage hunk' }]
-      : [{ action: 'stage', label: 'Stage hunk' }, { action: 'discard', label: 'Discard hunk' }];
+    : viewer.ignoreWhitespace
+      ? [{ note: 'whitespace hidden — show it to stage hunks',
+           title: 'Hunks are staged from the full diff. Turn off "Ignore whitespace" first.' }]
+      : f.kind === 'staged'
+        ? [{ action: 'unstage', label: 'Unstage hunk' }]
+        : [{ action: 'stage', label: 'Stage hunk' }, { action: 'discard', label: 'Discard hunk' }];
 
   $('fv-stage-tools').hidden = f.kind === 'commit' || f.kind === 'conflict';
   $('fv-stage').hidden = f.kind === 'staged';
@@ -3380,16 +3401,41 @@ const repoPath = () => state.repo.path;
 /* Staging moves a file to the other list, so a selection naming it is about a
    row that is no longer there. It is dropped rather than left pointing at a
    list the file has left. */
+/* The name a renamed entry had, from the list it is drawn in, or ''. git
+   reports a rename as one entry carrying both names, and a command handed only
+   the new one acts on half of it: unstaging a staged rename by its new name
+   left the deletion of the old name staged and the new file untracked. */
+function origOf(kind, path) {
+  const list = kind === 'commit' ? commitFiles
+    : kind === 'staged' ? state.status?.staged
+    : kind === 'unstaged' ? state.status?.unstaged
+    : null;
+  return list?.find((f) => f.path === path)?.orig || '';
+}
+
+/** The paths, and for each renamed one the name it came from as well. */
+const withOrigins = (kind, paths) =>
+  [...new Set([...paths, ...paths.map((p) => origOf(kind, p)).filter(Boolean)])];
+
 async function stage(paths) {
-  await call('repo:stage', repoPath(), paths);
+  await call('repo:stage', repoPath(), withOrigins('unstaged', paths));
   clearPicked();
   await refreshStatus();
 }
 async function unstage(paths) {
-  await call('repo:unstage', repoPath(), paths);
+  await call('repo:unstage', repoPath(), withOrigins('staged', paths));
   clearPicked();
   await refreshStatus();
 }
+
+/* The viewer, put away without the redraw closeFile() asks for: the callers
+   here redraw the panel themselves straight after. */
+function dropOpenFile(paths) {
+  if (!state.file || !paths.includes(state.file.path) || state.file.kind === 'commit') return;
+  state.file = null;
+  hideViewer();
+}
+
 async function discard(path, untracked) {
   const ok = await confirmAction(
     'Discard changes',
@@ -3397,16 +3443,24 @@ async function discard(path, untracked) {
     'Discard'
   );
   if (!ok) return;
-  await call('repo:discard', repoPath(), [path], untracked);
-  state.file = null;
+  /* Only the file that was discarded leaves the viewer. This used to clear
+     whichever file was open, and to leave the discarded one on screen with
+     its hunk buttons live: Stage hunk on that stale diff put the change just
+     thrown away back into the index. */
+  const res = await call('repo:discard', repoPath(), [path], untracked);
+  if (res !== null) dropOpenFile([path]);
   await refreshStatus();
+  if (res !== null) setStatus(`Discarded ${path}`, 'ok');
 }
 
 /* git takes the whole list at once, so two calls cover any number of files:
    the tracked ones go back to the index, the untracked ones are deleted. */
+/* Whether both calls went through. Each failure is already in the status bar;
+   the caller only needs to know not to claim it worked. */
 async function discardLists(kept, gone) {
-  if (kept.length) await call('repo:discard', repoPath(), kept, false);
-  if (gone.length) await call('repo:discard', repoPath(), gone, true);
+  const a = kept.length ? await call('repo:discard', repoPath(), kept, false) : '';
+  const b = gone.length ? await call('repo:discard', repoPath(), gone, true) : '';
+  return a !== null && b !== null;
 }
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -3429,11 +3483,11 @@ async function discardMany(paths) {
     'Discard'
   );
   if (!ok) return;
-  await discardLists(kept, gone);
-  if (paths.includes(state.file?.path)) { state.file = null; closeFile(); }
+  const done = await discardLists(kept, gone);
+  dropOpenFile(paths);
   clearPicked();
   await refreshStatus();
-  setStatus(`Discarded ${plural(paths.length, 'file')}`, 'ok');
+  if (done) setStatus(`Discarded ${plural(paths.length, 'file')}`, 'ok');
 }
 
 async function resolveMany(paths, how) {
@@ -3470,13 +3524,26 @@ async function stashPaths(paths, untrackedCount) {
 
 /* A patch of what was picked, saved wherever the user says. */
 async function savePatch(paths, kind, untrackedCount) {
-  const usable = paths.filter((p) => !isUntracked(p));
+  /* From a commit's list the patch is that commit's change, on the side the
+     panel is showing. It used to be `git diff` of the working tree whatever
+     list it came from, so a file the commit changed and the tree did not gave
+     "no changes", and one edited since gave a patch of the wrong thing. */
+  const fromCommit = kind === 'commit';
+  const usable = fromCommit
+    ? paths.filter((p) => !commitFiles.some((f) => f.path === p && f.untracked))
+    : paths.filter((p) => !isUntracked(p));
   if (!usable.length) { setStatus('A patch is made from tracked changes', 'warn'); return; }
   const name = usable.length === 1
     ? usable[0].split('/').pop().replace(/\.[^.]*$/, '')
     : `${baseName(repoPath())}-${usable.length}-files`;
-  const out = await call('repo:savePatch', repoPath(), usable,
-    { staged: kind === 'staged', skipped: untrackedCount, name });
+  const hash = state.selection?.hash;
+  const commit = fromCommit ? {
+    hash,
+    side: state.mergeSide || 'in',
+    parents: state.commits.find((c) => c.hash === hash)?.parents,
+  } : null;
+  const out = await call('repo:savePatch', repoPath(), withOrigins(kind, usable),
+    { staged: kind === 'staged', skipped: untrackedCount, name, commit });
   if (out === null) return;              // cancelled, or the call failed and said so
   if (out.empty) { setStatus('Those files have no changes to put in a patch', 'warn'); return; }
   setStatus(
@@ -7295,7 +7362,7 @@ function wireFileList(id) {
 
     pickOne(kind, path);
     state.file = { path, kind, status: li.dataset.status,
-                   untracked: li.dataset.untracked === '1' };
+                   untracked: li.dataset.untracked === '1', orig: origOf(kind, path) };
     state.compareRef = null;
     $(id).querySelectorAll('li').forEach((n) => n.classList.remove('selected'));
     li.classList.add('selected');
@@ -7371,24 +7438,37 @@ $('btn-filter-clear').addEventListener('click', () => {
 
 $('btn-discard-all').addEventListener('click', async () => {
   const s = state.status;
-  const paths = [...s.conflicted, ...s.unstaged, ...s.untracked];
-  if (!paths.length) { setStatus('Nothing to discard', 'ok'); return; }
+  /* Conflicted files are left out. git refuses to restore an unmerged path —
+     "path is unmerged" — and it refuses for the whole list at once, so one
+     conflict in it used to restore nothing while the untracked files were
+     still deleted and the status bar said every file had been discarded. A
+     conflict is settled from its own group, or by aborting what stopped. */
+  const paths = [...s.unstaged, ...s.untracked];
+  const conflicts = s.conflicted.length;
+  const left = conflicts
+    ? ` ${plural(conflicts, 'conflicted file')} ${conflicts === 1 ? 'is' : 'are'} left alone — `
+      + 'resolve them, or abort the operation that stopped.'
+    : '';
+  if (!paths.length) {
+    setStatus(conflicts ? `Nothing to discard.${left}` : 'Nothing to discard', conflicts ? '' : 'ok');
+    return;
+  }
   const ok = await confirmAction(
     'Discard all changes',
     `${paths.length} file${paths.length === 1 ? '' : 's'} will go back to their last committed ` +
-    'state, and untracked files will be deleted. This cannot be undone.',
+    `state, and untracked files will be deleted. This cannot be undone.${left}`,
     'Discard everything'
   );
   if (!ok) return;
   // One process per file, in turn, was a long wait on a big tree; git takes
   // the whole list, so this is the same two calls discardMany makes.
-  await discardLists(
+  const done = await discardLists(
     paths.filter((f) => f.status !== '?').map((f) => f.path),
     paths.filter((f) => f.status === '?').map((f) => f.path)
   );
   closeFile();
   await refreshStatus();
-  setStatus(`Discarded ${paths.length} file${paths.length === 1 ? '' : 's'}`, 'ok');
+  if (done) setStatus(`Discarded ${plural(paths.length, 'file')}`, 'ok');
 });
 
 /* ── per-file context menu ──
@@ -7411,7 +7491,11 @@ for (const id of FILE_LISTS) {
     const n = paths.length;
     const many = n > 1;
     const these = many ? `${n} files` : 'this file';
-    const untracked = paths.filter((p) => isUntracked(p));
+    /* In a commit's list "untracked" means a stash's untracked files, which sit
+       in a parent of their own rather than in the working tree. */
+    const untracked = kind === 'commit'
+      ? paths.filter((p) => commitFiles.some((f) => f.path === p && f.untracked))
+      : paths.filter((p) => isUntracked(p));
 
     const items = [];
     if (kind === 'conflict') {
@@ -7431,24 +7515,33 @@ for (const id of FILE_LISTS) {
       items.push({ label: many ? `Unstage ${n} files` : 'Unstage this file',
         accel: 'Enter', run: () => unstage(paths) });
     }
-    if (kind !== 'commit') {
+    /* An unmerged file cannot be restored or stashed — git answers "path is
+       unmerged" to both — so a conflict is offered the three ways it can
+       actually be settled, and nothing that is certain to fail. */
+    if (kind === 'unstaged' || kind === 'staged') {
       items.push({ label: many ? `Discard ${n} files…` : 'Discard changes…',
         accel: 'Delete', danger: true, run: () => discardMany(paths) });
       items.push({ label: many ? `Stash ${n} files…` : 'Stash this file…',
         run: () => stashPaths(paths, untracked.length) });
       items.push('-');
     }
-    items.push({
-      label: many ? `Save ${n} files as patch…` : 'Save as patch…',
-      hint: untracked.length === n && n > 0
-        ? 'A patch is made from tracked changes, and these are untracked'
-        : untracked.length
-          ? `${untracked.length} untracked file${untracked.length === 1 ? '' : 's'} cannot go in a patch`
-          : '',
-      disabled: untracked.length === n,
-      run: () => savePatch(paths, kind, untracked.length),
-    });
-    items.push('-');
+    if (kind !== 'conflict') {
+      const combined = kind === 'commit' && state.mergeSide === 'combined'
+        && (state.commits.find((c) => c.hash === state.selection?.hash)?.parents.length || 0) > 1;
+      items.push({
+        label: many ? `Save ${n} files as patch…` : 'Save as patch…',
+        hint: combined
+          ? 'A combined diff answers against both parents at once, and git cannot apply one'
+          : untracked.length === n && n > 0
+            ? 'A patch is made from tracked changes, and these are untracked'
+            : untracked.length
+              ? `${untracked.length} untracked file${untracked.length === 1 ? '' : 's'} cannot go in a patch`
+              : '',
+        disabled: combined || untracked.length === n,
+        run: () => savePatch(paths, kind, untracked.length),
+      });
+      items.push('-');
+    }
 
     /* Ignoring means two different things depending on what git already knows
        about the file, and offering the wrong one is offering something that
@@ -7547,19 +7640,40 @@ for (const id of FILE_LISTS) {
    changes nothing at all, which is why the menu offers a different thing for
    each: an untracked file is simply ignored, a tracked one has to stop being
    tracked first, and that is a change to the index worth saying out loud. */
+/* The characters a .gitignore line gives meaning to, escaped so a name means
+   itself: `notes[1].txt` is that file, not `notes1.txt`. */
+const ignoreEscape = (s) => s
+  .replace(/[\\*?[]/g, (c) => `\\${c}`)
+  .replace(/ +$/, (spaces) => spaces.replace(/ /g, '\\ '));
+
+/* A path as a .gitignore line that matches that path and nothing else. A
+   pattern with no slash before its end matches at every depth: written as
+   `config.json`, ignoring the file at the top also ignored src/config.json and
+   every other file of that name, and `build/` every folder called build. So a
+   path at the top is anchored with a leading slash; one with a slash in the
+   middle is anchored already. */
+function ignoreRule(path, folder = false) {
+  const rule = ignoreEscape(path);
+  const head = rule.includes('/') ? rule.replace(/^[#!]/, (c) => `\\${c}`) : `/${rule}`;
+  return folder ? `${head}/` : head;
+}
+
 function ignorePatterns(path) {
   const cut = path.lastIndexOf('/');
   const dir = cut < 0 ? '' : path.slice(0, cut);
   const name = cut < 0 ? path : path.slice(cut + 1);
   const dot = name.lastIndexOf('.');
   const ext = dot > 0 ? name.slice(dot) : '';
-  const out = [{ value: path, label: `Just this file`, help: path }];
+  const just = ignoreRule(path);
+  const out = [{ value: just, label: `Just this file`, help: just }];
   if (ext) {
-    out.push({ value: `*${ext}`, label: `Every ${ext} file`,
-      help: `*${ext} — anywhere in the repository` });
+    const every = `*${ignoreEscape(ext)}`;
+    out.push({ value: every, label: `Every ${ext} file`,
+      help: `${every} — anywhere in the repository` });
   }
   if (dir) {
-    out.push({ value: `${dir}/`, label: 'Everything in this folder', help: `${dir}/` });
+    const all = ignoreRule(dir, true);
+    out.push({ value: all, label: 'Everything in this folder', help: all });
   }
   return out;
 }
@@ -7582,7 +7696,7 @@ async function ignoreFiles(paths) {
     confirmLabel: 'Ignore',
   });
   if (!r) return;
-  const patterns = many ? paths : [r.how];
+  const patterns = many ? paths.map((p) => ignoreRule(p)) : [r.how];
   const out = await call('repo:ignore', repoPath(), patterns);
   if (out === null) return;
   clearPicked();
@@ -7607,7 +7721,7 @@ async function untrackAndIgnore(paths) {
   if (!ok) return;
   const gone = await call('repo:untrack', repoPath(), paths);
   if (gone === null) return;
-  await call('repo:ignore', repoPath(), paths);
+  await call('repo:ignore', repoPath(), paths.map((p) => ignoreRule(p)));
   if (paths.includes(state.file?.path)) { state.file = null; closeFile(); }
   clearPicked();
   await refreshStatus();

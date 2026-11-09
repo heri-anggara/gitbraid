@@ -2380,9 +2380,12 @@ handle('repo:fileLog', async (repo, file, { limit = 200 } = {}) => {
    not written twice, and a file that does not end in a newline gets one first —
    otherwise the new pattern would join itself to the last one. */
 handle('repo:ignore', async (repo, patterns) => {
+  /* Trimmed, except for a space escaped with a backslash: that is how a name
+     ending in a space is written, and trimming it away left a backslash at
+     the end of the line that matched nothing. */
   const list = (Array.isArray(patterns) ? patterns : [patterns])
     .filter((p) => typeof p === 'string' && p.trim())
-    .map((p) => p.trim());
+    .map((p) => p.replace(/^\s+/, '').replace(/(?<!\\)\s+$/, ''));
   if (!list.length) throw new Error('Nothing was named to ignore.');
 
   const file = path.join(repo, '.gitignore');
@@ -2618,7 +2621,13 @@ const contextArg = (context) =>
    always worked while staging one of its hunks did not. */
 const diffArgs = (...rest) => ['-c', 'core.quotePath=false', ...rest];
 
-handle('repo:diffFile', async (repo, { file, staged, untracked, ignoreWhitespace, context }) => {
+/* A renamed file is one change with two names, and git can only see it as one
+   when both are in the pathspec. Handed only the new name, it showed a staged
+   rename as a new file and a renamed file in a commit as all additions. */
+const pathsOf = (file, orig) =>
+  (typeof orig === 'string' && orig && orig !== file ? [orig, file] : [file]);
+
+handle('repo:diffFile', async (repo, { file, orig, staged, untracked, ignoreWhitespace, context }) => {
   if (untracked) {
     // Show the whole new file as additions. The flags belong here too: this
     // branch used to return early and quietly drop them.
@@ -2635,7 +2644,7 @@ handle('repo:diffFile', async (repo, { file, staged, untracked, ignoreWhitespace
   const args = diffArgs('diff', '--no-color', '--find-renames');
   if (staged) args.push('--cached');
   if (ignoreWhitespace) args.push('-w');
-  args.push(...contextArg(context), '--', file);
+  args.push(...contextArg(context), '--', ...pathsOf(file, orig));
   return git(repo, args);
 });
 
@@ -2662,13 +2671,18 @@ function knownParents(repo, hash, parents) {
   return stashParents.get(repo)?.get(hash) || (Array.isArray(parents) ? parents : null);
 }
 
-/** Whether a commit has more than one parent. Asked of git only when the caller
-    did not say: the window asks this three times for one merge commit. */
-async function isMerge(repo, hash, parents) {
+/** A commit's parents, asked of git only when the caller did not say. */
+async function parentsOf(repo, hash, parents) {
   const known = knownParents(repo, hash, parents);
-  if (known) return known.length > 1;
-  const out = (await git(repo, ['rev-list', '--parents', '-n', '1', hash])).trim().split(' ');
-  return out.length > 2;   // the commit's own hash, then its parents
+  if (known) return known;
+  // The commit's own hash, then its parents.
+  return (await git(repo, ['rev-list', '--parents', '-n', '1', hash])).trim().split(' ').slice(1);
+}
+
+/** Whether a commit has more than one parent. The window asks this three times
+    for one merge commit, which is why the parents it already holds go along. */
+async function isMerge(repo, hash, parents) {
+  return (await parentsOf(repo, hash, parents)).length > 1;
 }
 
 /* The tree with nothing in it, for showing a file the branch has never seen as
@@ -2687,7 +2701,7 @@ async function emptyTree(repo) {
 }
 
 /** One file's changes inside one commit, rather than the whole commit. */
-handle('repo:diffCommitFile', async (repo, { hash, file, ignoreWhitespace, context, side = 'in', parents }) => {
+handle('repo:diffCommitFile', async (repo, { hash, file, orig, ignoreWhitespace, context, side = 'in', parents }) => {
   const merge = await isMerge(repo, hash, parents);
   const args = diffArgs('diff', '--no-color', '--find-renames');
   if (ignoreWhitespace) args.push('-w');
@@ -2697,7 +2711,7 @@ handle('repo:diffCommitFile', async (repo, { hash, file, ignoreWhitespace, conte
     // `git show --cc` is the only form that lays both parents against the result.
     const show = diffArgs('show', '--no-color', '--format=', '--cc');
     if (ignoreWhitespace) show.push('-w');
-    show.push(...contextArg(context), hash, '--', file);
+    show.push(...contextArg(context), hash, '--', ...pathsOf(file, orig));
     return git(repo, show);
   }
   if (merge) {
@@ -2712,12 +2726,12 @@ handle('repo:diffCommitFile', async (repo, { hash, file, ignoreWhitespace, conte
         return git(repo, args);
       }
     }
-    args.push(`${hash}${MERGE_SIDES[side] || '^1'}`, hash, '--', file);
+    args.push(`${hash}${MERGE_SIDES[side] || '^1'}`, hash, '--', ...pathsOf(file, orig));
     return git(repo, args);
   }
   const show = diffArgs('show', '--no-color', '--find-renames', '--format=');
   if (ignoreWhitespace) show.push('-w');
-  show.push(...contextArg(context), hash, '--', file);
+  show.push(...contextArg(context), hash, '--', ...pathsOf(file, orig));
   return git(repo, show);
 });
 
@@ -3248,9 +3262,24 @@ handle('repo:savePatch', async (repo, files, opts) => {
   const list = (Array.isArray(files) ? files : [files])
     .filter((f) => typeof f === 'string' && f.trim());
   if (!list.length) throw new Error('Nothing was named to save.');
-  const { staged = false, skipped = 0, name = 'changes' } = opts || {};
+  const { staged = false, skipped = 0, name = 'changes', commit = null } = opts || {};
+  /* From a commit, the patch is what that commit changed: against its parent,
+     against the side of a merge the panel is showing, or against the empty
+     tree for a root commit. Before, every patch was `git diff` of the working
+     tree, whichever list it was asked for from. A combined diff is refused:
+     it is written against two parents at once and nothing can apply it. */
+  let range = staged ? ['--cached'] : [];
+  if (commit && commit.hash) {
+    const ps = await parentsOf(repo, commit.hash, commit.parents);
+    if (ps.length > 1 && !MERGE_SIDES[commit.side]) {
+      throw new Error('A combined diff cannot be saved as a patch. Pick one side of the merge.');
+    }
+    const base = ps.length > 1 ? `${commit.hash}${MERGE_SIDES[commit.side]}`
+      : ps.length ? `${commit.hash}^` : await emptyTree(repo);
+    range = [base, commit.hash];
+  }
   const patch = await git(repo,
-    diffArgs('diff', '--no-color', ...(staged ? ['--cached'] : []), '--', ...list));
+    diffArgs('diff', '--no-color', '--find-renames', ...range, '--', ...list));
   if (!patch.trim()) return { empty: true, skipped };
 
   const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
