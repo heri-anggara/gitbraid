@@ -1005,6 +1005,10 @@ async function activateTab(id) {
 
   activeId = id;
   state = tab;
+  /* The viewer showed whatever the last tab had open, over this tab's history,
+     until Escape was pressed. It is cleared here and drawn again below from
+     this tab's own file, if it has one. */
+  hideViewer();
   renderShell();
   syncTermCwd();
 
@@ -1027,6 +1031,7 @@ async function activateTab(id) {
     renderHistory();
     $('history-scroll').scrollTop = state.scrollTop;
     await renderDetail();
+    if (state === tab && state.compareRef) showCompare();
     saveTabs();
     // Catches up behind the reader; refresh() drops its result if they have
     // moved to another tab by the time it lands.
@@ -1061,6 +1066,7 @@ function stepTab(delta) {
 
 /** No tabs left at all: the start page, without a tab strip above it. */
 async function showWelcome() {
+  hideViewer();
   activeId = null;
   state = newTab(null);
   /* These live outside the tab, so the last repository's rows and file list
@@ -1123,7 +1129,9 @@ async function refresh({ keepSelection = true } = {}) {
   state.containedBy = computeContainment(state.commits, state.refs.branches);
   // Resolve avatar URLs up front; renderHistory reads the cache synchronously.
   await ensureAvatars(state.commits);
+  if (tab !== state) return;      // the photos took long enough for a switch
   settleSelection(keepSelection);
+  refreshFind();
 
   renderToolbar();
   renderSidebar();
@@ -1143,6 +1151,17 @@ function settleSelection(keepSelection) {
   }
   if (state.selection?.kind === 'wip' && !dirty && state.commits[0]) {
     state.selection = { kind: 'commit', hash: state.commits[0].hash };
+  }
+  /* A commit rewritten away from outside — a rebase or a reset in a terminal —
+     left its hash selected and its details on screen with nothing in the list
+     behind them. File history is the exception: it selects commits the log
+     does not hold, on purpose, and puts the selection back when it closes. */
+  const sel = state.selection;
+  if (sel?.kind === 'commit' && $('fhist').hidden
+      && !state.commits.some((c) => c.hash === sel.hash)) {
+    state.selection = dirty ? { kind: 'wip' }
+      : state.commits[0] ? { kind: 'commit', hash: state.commits[0].hash } : null;
+    if (state.file?.kind === 'commit') state.file = null;
   }
 }
 
@@ -1834,6 +1853,21 @@ function runFind(query) {
   if (f.hits.length) gotoMatch(0);
 }
 
+/* The hits again after the commits changed underneath a search — a refresh,
+   a fetch, another page. New commits that matched were drawn faded and were
+   not in the count until the query was typed again. The current hit stays
+   current; nothing jumps. */
+function refreshFind() {
+  const f = state.find;
+  const q = f.query.trim().toLowerCase();
+  if (!q) return;
+  const at = f.hits[f.index];
+  f.hits = state.commits.filter((c) => commitMatches(c, q)).map((c) => c.hash);
+  f.hitSet = new Set(f.hits);
+  f.index = Math.max(0, f.hits.indexOf(at));
+  renderFindCount();
+}
+
 function renderFindCount() {
   const f = state.find;
   $('find-count').textContent = !f.query.trim()
@@ -2368,6 +2402,7 @@ function viewAsMenu(button) {
 const STATUS_LABEL = { M: 'modified', A: 'added', D: 'deleted', R: 'renamed', C: 'copied' };
 
 let commitFiles = [];
+let commitFilesFor = '';   // which commit and side commitFiles was read for
 
 function renderCommitFiles() {
   const files = fileView.byName
@@ -2391,6 +2426,9 @@ function renderCommitFiles() {
 
   $('c-sort').classList.toggle('on', fileView.byName);
   paintViewAs('c-viewas');
+  // Redrawn rows carry no selection of their own; changing the view mode
+  // dropped the highlight and kept the selection.
+  paintPicked();
 }
 
 async function renderCommitPanel(hash) {
@@ -2451,17 +2489,31 @@ async function renderCommitPanel(hash) {
      counts belong on the buttons: a side that turns out to be empty should say
      so before you click it, not after. */
   const side = isMergeCommit ? (state.mergeSide || 'in') : 'in';
+  /* Each await below can be overtaken. A big merge clicked before a small
+     commit answered last, and drew its files, counts and side buttons under
+     the small commit's header — or under another tab's. */
+  const tab = state;
+  const current = () => tab === state && state.selection?.kind === 'commit'
+    && state.selection.hash === hash && (!isMergeCommit || (state.mergeSide || 'in') === side);
   // The parents go along: main otherwise spawns git rev-list to learn whether
   // this is a merge, on every click, when the log already said.
   const sides = isMergeCommit
     ? await Promise.all(MERGE_SIDES.map((m) =>
-        call('repo:commitFiles', state.repo.path, hash, m.key, { parents }).then((r) => r || [])))
+        call('repo:commitFiles', tab.repo.path, hash, m.key, { parents }).then((r) => r || [])))
     : null;
+  if (!current()) return;
   renderMergeBar(isMergeCommit ? sides : null, side, parents);
 
   const files = sides
     ? sides[MERGE_SIDES.findIndex((m) => m.key === side)]
-    : (await call('repo:commitFiles', state.repo.path, hash, 'in', { parents })) || [];
+    : (await call('repo:commitFiles', tab.repo.path, hash, 'in', { parents })) || [];
+  if (!current()) return;
+  /* A selection made in one commit's list means nothing in another's: a path
+     both happen to share stayed picked, unpainted, and the menu offered to act
+     on it. */
+  const listKey = `${hash}:${side}`;
+  if (commitFilesFor !== listKey && picked.kind === 'commit') clearPicked();
+  commitFilesFor = listKey;
   commitFiles = files;
   renderCommitFiles();
 
@@ -3577,17 +3629,25 @@ async function doCommit() {
   const body = $('commit-body').value.trim();
   const message = body ? `${subject}\n\n${body}` : subject;
   const amend = $('chk-amend').checked;
-  const res = await call('repo:commit', repoPath(), { message, amend });
+  /* A commit can take a while — a hook runs first — and the reader may be in
+     another tab by the time it is made. The message box, the draft and the
+     selection that get cleared are this tab's: clearing whatever was in front
+     wiped the other tab's half-written message and left this one's draft, so
+     the message just committed came back on return. */
+  const tab = state;
+  const repo = tab.repo.path;
+  const res = await call('repo:commit', repo, { message, amend });
   if (res === null) return;
+  tab.commitMsg = '';
+  tab.commitBody = '';
+  tab.amend = false;
+  tab.file = null;
+  tab.selection = null;
+  clearDraft(repo);
+  if (tab !== state) { setStatus(`Committed in ${tab.repo.name}`, 'ok'); return; }
   $('commit-msg').value = '';
   $('commit-body').value = '';
   $('chk-amend').checked = false;
-  state.commitMsg = '';
-  state.commitBody = '';
-  state.amend = false;
-  clearDraft(repoPath());
-  state.file = null;
-  state.selection = null;
   await refresh({ keepSelection: false });
   setStatus(amend ? 'Amended the last commit' : 'Committed', 'ok');
 }
@@ -3758,6 +3818,7 @@ async function mergeBranch(ref) {
   if (mode === null) return;
 
   let out = '';
+  const startedOn = activeId;
   const ok = await gitAction(null, `Merging ${ref}`,
     async () => (out = await call('repo:merge', repoPath(), ref, mode)),
     async () => {
@@ -3769,8 +3830,10 @@ async function mergeBranch(ref) {
           : `Merged ${ref} into ${info.head}`,
       nothingHappened(out) ? '' : 'ok');
     });
-  // A conflict stops the merge half-done; the history has to show that state.
-  if (!ok) await refresh({ keepSelection: false });
+  /* A conflict stops the merge half-done; the history has to show that state.
+     Only a real failure, and only in the tab it happened in: gitAction answers
+     undefined when it refused to start, and false when git failed. */
+  if (ok === false && activeId === startedOn) await refresh({ keepSelection: false });
 }
 
 /** git's way of saying it did nothing, on merge, pull and rebase alike. */
@@ -3779,6 +3842,7 @@ const nothingHappened = (out) =>
 
 async function rebaseOnto(ref) {
   let out = '';
+  const startedOn = activeId;
   const ok = await gitAction(null, `Rebasing onto ${ref}`,
     async () => (out = await call('repo:rebase', repoPath(), ref)),
     async () => {
@@ -3787,7 +3851,7 @@ async function rebaseOnto(ref) {
         ? `Already on top of ${ref} — nothing to rebase`
         : `Rebased onto ${ref}`, nothingHappened(out) ? '' : 'ok');
     });
-  if (!ok) await refresh({ keepSelection: false });
+  if (ok === false && activeId === startedOn) await refresh({ keepSelection: false });
 }
 
 async function applyStash(ref, drop) {
@@ -6321,7 +6385,8 @@ async function renderNotes() {
    so the parents the graph draws its lanes from are no longer all present —
    lanes that lie are worse than no lanes at all. */
 const fhist = { path: '', commits: [], names: {}, at: -1,
-                home: null, next: null, was: null };
+                home: null, next: null, was: null,
+                seq: 0 };   // bumped by every open and close: answers check it
 
 /* The diff panel is moved here rather than rebuilt. Everything it can do — the
    toolbar, the change map, block navigation, wrapping, side-by-side, drawing
@@ -6354,6 +6419,7 @@ async function openFileHistory(file) {
   fhist.commits = [];
   fhist.names = {};
   fhist.at = -1;
+  const seq = ++fhist.seq;
 
   $('fh-path').textContent = file;
   $('fh-path').title = file;
@@ -6364,8 +6430,11 @@ async function openFileHistory(file) {
   mountViewer();
 
   const out = await call('repo:fileLog', repoPath(), file, { limit: 200 });
+  /* Closed, or opened again for another file, while git ran: the answer is for
+     a panel that is gone. Applied anyway it set the selection and the open
+     file of whichever tab was in front, from another repository's history. */
+  if (seq !== fhist.seq) return;
   if (out === null) { closeFileHistory(); return; }
-  if (fhist.path !== file) return;        // another file was opened while git ran
   fhist.commits = out.commits;
   fhist.names = out.names || {};
 
@@ -6424,6 +6493,7 @@ $('fh-list').addEventListener('click', (e) => {
 });
 
 function closeFileHistory() {
+  fhist.seq += 1;
   unmountViewer();
   $('app').classList.remove('reading-fhist');
   $('fhist').hidden = true;
@@ -6566,12 +6636,25 @@ const MENU_ACTIONS = {
   shortcuts: showShortcuts,
 };
 
-/* Anything that opens a dialog is skipped while one is already up — the
-   modal is a single shared element. */
-const DIALOG_ACTIONS = new Set(['clone', 'init', 'shortcuts', 'check-updates']);
+/* While a dialog is up the menu does only what cannot change what the dialog
+   is about. Menu accelerators reach the window whatever has focus, and the
+   dialog's overlay stops only the mouse: Ctrl+Tab under "Drop stash" switched
+   the tab, and Enter then dropped the stash of the repository now in front.
+   Every destructive action reads its repository after its confirmation, so
+   the tab must not move while one is asked. A folder handed over by a second
+   `gitbraid <folder>` is not dropped: it opens once the dialog closes. */
+const SAFE_UNDER_DIALOG = new Set(['zoom-in', 'zoom-out', 'zoom-reset',
+  'toggle-sidebar', 'toggle-detail']);
 
-window.gitbraid.on('menu:action', (msg) => {
-  if (DIALOG_ACTIONS.has(msg.action) && !$('modal').hidden) return;
+const dialogClosed = async () => {
+  while (!$('modal').hidden) await new Promise((r) => setTimeout(r, 150));
+};
+
+window.gitbraid.on('menu:action', async (msg) => {
+  if (!$('modal').hidden && !SAFE_UNDER_DIALOG.has(msg.action)) {
+    if (msg.action !== 'open-recent') return;
+    await dialogClosed();
+  }
   MENU_ACTIONS[msg.action]?.(msg);
 });
 
@@ -6707,6 +6790,10 @@ async function pull(mode = 'ff') {
         : (mode === 'ff' ? 'Pulled' : `Pulled with ${mode}`),
         nothingHappened(out) ? '' : 'ok');
     });
+  /* Refused because another command was still running: nothing was tried, so
+     there is nothing to diagnose. Treated as a failed fast-forward it opened
+     the "histories have diverged" dialog on any branch that had. */
+  if (ok === undefined) return;
   if (ok || mode !== 'ff') {
     // A merge pull can stop on a conflict; the banner takes over from here.
     if (!ok) await refresh({ keepSelection: false });
@@ -7168,24 +7255,36 @@ $('commit-list').addEventListener('contextmenu', (e) => {
     return;
   }
 
+  const isMergeRow = (state.commits.find((c) => c.hash === hash)?.parents.length || 0) > 1;
   contextMenu(e, [
     { label: 'Copy SHA', run: () => navigator.clipboard.writeText(hash) },
     { label: `Check out ${short}`, run: () => checkout(hash) },
     { label: 'Branch from here', run: () => newBranch(hash) },
     '-',
-    { label: 'Cherry-pick onto current', run: async () => {
-        const res = await call('repo:cherryPick', repoPath(), hash);
-        if (res !== null) { await refresh({ keepSelection: false }); setStatus(`Cherry-picked ${short}`, 'ok'); }
-      } },
-    { label: 'Revert this commit', run: async () => {
-        const res = await call('repo:revert', repoPath(), hash);
-        if (res !== null) { await refresh({ keepSelection: false }); setStatus(`Reverted ${short}`, 'ok'); }
-      } },
+    { label: isMergeRow ? 'Cherry-pick onto current (as of its first parent)' : 'Cherry-pick onto current',
+      run: () => pickOrRevert('cherryPick', hash, isMergeRow, `Cherry-picked ${short}`) },
+    { label: isMergeRow ? 'Revert this merge (undo what it brought in)' : 'Revert this commit',
+      run: () => pickOrRevert('revert', hash, isMergeRow, `Reverted ${short}`) },
     '-',
     { label: 'Reset branch to here (keep changes)', run: () => resetTo(hash, 'mixed') },
     { label: 'Reset branch to here (discard changes)', danger: true, run: () => resetTo(hash, 'hard') },
   ]);
 });
+
+/* Cherry-pick and revert, which stop on a conflict exactly as a merge does.
+   The refresh runs either way: after a stop it is what puts the banner up and
+   the conflicted files in their group, and without it the window went on
+   showing a clean tree under a single line of error until the next refresh.
+   A merge commit is taken against its first parent — the branch it was made
+   on — which is what "this merge's changes" means; git refuses one outright
+   without being told which parent to measure from. */
+async function pickOrRevert(what, hash, merge, said) {
+  const tab = state;
+  const res = await call(`repo:${what}`, tab.repo.path, hash, merge ? 1 : 0);
+  if (tab !== state) return;
+  await refresh({ keepSelection: false });
+  if (res !== null) setStatus(said, 'ok');
+}
 
 async function resetTo(hash, mode) {
   const ok = await confirmAction(
@@ -7244,6 +7343,8 @@ $('btn-more').addEventListener('click', async () => {
   if (tab !== state) return;      // the reader moved on: keep the data, draw nothing
   state.containedBy = computeContainment(state.commits, state.refs.branches);
   await ensureAvatars(fresh);
+  if (tab !== state) return;
+  refreshFind();
   renderHistory();
 });
 
@@ -7909,7 +8010,10 @@ window.addEventListener('drop', async (e) => {
   // Dropping a file inside a repository still means "open that repository":
   // repo:open resolves whatever path it gets to the work tree root.
   const dropped = window.gitbraid.pathForFile(file);
-  if (dropped) await openRepoAt(dropped);
+  // Opening a tab under a dialog is the same hazard as switching to one.
+  if (!dropped) return;
+  await dialogClosed();
+  await openRepoAt(dropped);
 });
 
 /* ═════ startup ═════════════════════════════════════════════════ */
