@@ -28,7 +28,7 @@ contents.
 ## Taking them again
 
 ```bash
-./screenshots/make-demo.sh          # builds ~/Documents/Project Pribadi/gitbraid-demo/inkwell
+./screenshots/make-demo.sh /tmp/inkwell   # rebuilt on every run; refuses a folder it did not make
 ```
 
 The demo has five branches, two tags, three authors, **two stashes** — one of

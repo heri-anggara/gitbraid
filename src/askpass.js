@@ -28,6 +28,8 @@ function giveUp() { process.exit(1); }
 if (!sock) giveUp();
 
 const conn = net.connect(sock);
+// Whole characters: a passphrase is not ASCII by any rule.
+conn.setEncoding('utf8');
 let answer = '';
 
 /* Long, because a person is reading a dialog at the other end, but not

@@ -32,7 +32,8 @@ const CHANNELS = new Set([
   
   'shell:openPath', 'shell:openExternal', 'shell:openInEditor',
   'git:option', 'git:setOption', 'repos:existing',
-  'repo:state', 'repo:abort', 'repo:continue', 'repo:resolve', 'repo:conflictFile',
+  'repo:state', 'repo:abort', 'repo:continue', 'repo:skip', 'repo:resolve', 'repo:conflictFile',
+  'repo:conflictMarkers',
   'askpass:answer', 'askpass:storage',
 ]);
 
