@@ -2749,8 +2749,16 @@ const remoteNamesOf = async (repo) =>
    out refs/heads/. Anything that is not a full ref name is passed through. */
 async function unambiguous(repo, ref) {
   if (!/^refs\//.test(ref)) return ref;
-  const out = await git(repo, ['for-each-ref', '--format=%(refname:short)', ref]).catch(() => '');
-  return out.split('\n')[0].trim() || ref;
+  /* for-each-ref matches by prefix: refs/heads/release also lists
+     refs/heads/release/1.0. Only the ref itself may be shortened; when it is
+     not there the full name goes through, and git says it does not exist. */
+  const out = await git(repo, ['for-each-ref', '--format=%(refname)%00%(refname:short)', ref])
+    .catch(() => '');
+  for (const line of out.split('\n')) {
+    const [full, short] = line.split('\0');
+    if (full === ref && short) return short;
+  }
+  return ref;
 }
 
 /* A revision the window sends: a hash, or a full ref name. Nothing that could
@@ -2775,9 +2783,13 @@ handle('repo:refs', async (repo) => {
        and an upstream that is another local branch has no remote at all
        (remotename "."). */
     '%(upstream)', '%(upstream:remotename)', '%(upstream:remoteref)'].join('%1f');
-  const [raw, remoteNames] = await Promise.all([
+  const [raw, remoteNames, pushDefault] = await Promise.all([
     git(repo, ['for-each-ref', `--format=${fmt}`]),
     remoteNamesOf(repo),
+    /* Whether a branch tracking a differently named one pushes there. Only
+       "upstream" (and its old name "tracking") says yes; git's default,
+       "simple", refuses such a push, and so does the window without asking. */
+    git(repo, ['config', '--get', 'push.default']).then((v) => v.trim()).catch(() => ''),
   ]);
   const branches = [], remotes = [], tags = [];
   for (const line of raw.split('\n')) {
@@ -2808,6 +2820,7 @@ handle('repo:refs', async (repo) => {
     remotes: remotes.sort(sortByDate),
     tags: tags.sort(sortByDate),
     remoteNames,
+    pushDefault,
   };
 });
 
@@ -3650,6 +3663,15 @@ function operationState(gitDir) {
     return { kind: 'merge', label: 'Merging', target: named ? named[1] : '', step: 0, total: 0 };
   }
 
+  /* `git am` keeps its state in rebase-apply too, and marks it with an
+     `applying` file. It is not a rebase: HEAD is still the reader's branch,
+     and its skip and abort are `git am`'s own. */
+  if (gitPathExists(gitDir, 'rebase-apply', 'applying')) {
+    return { kind: 'am', label: 'Applying patches', target: '',
+      step: Number(readGitFile(gitDir, 'rebase-apply', 'next')) || 0,
+      total: Number(readGitFile(gitDir, 'rebase-apply', 'last')) || 0 };
+  }
+
   for (const dir of ['rebase-merge', 'rebase-apply']) {
     if (!gitPathExists(gitDir, dir)) continue;
     const step = Number(readGitFile(gitDir, dir, 'msgnum')) || 0;
@@ -3706,6 +3728,11 @@ function conflictSides(op) {
         mine: { stage: 'ours', label: 'your version' },
         incoming: { stage: 'theirs', label: `the reverted version (undoing ${op.target})` },
       };
+    case 'am':
+      return {
+        mine: { stage: 'ours', label: 'your version' },
+        incoming: { stage: 'theirs', label: "the patch's version" },
+      };
     default:
       // No operation on record: a stash apply or pop, where --ours is the
       // working tree it was applied to and --theirs is the stash.
@@ -3730,12 +3757,12 @@ async function ontoName(repo, onto) {
 }
 
 const ABORTABLE = {
-  merge: 'merge', rebase: 'rebase', 'cherry-pick': 'cherry-pick', revert: 'revert',
+  merge: 'merge', rebase: 'rebase', 'cherry-pick': 'cherry-pick', revert: 'revert', am: 'am',
 };
 
 /* A merge has no "skip": there is one commit being made and nothing after it. */
 const SKIPPABLE = {
-  rebase: 'rebase', 'cherry-pick': 'cherry-pick', revert: 'revert',
+  rebase: 'rebase', 'cherry-pick': 'cherry-pick', revert: 'revert', am: 'am',
 };
 
 handle('repo:state', async (repo) => {
@@ -3793,6 +3820,12 @@ handle('repo:resolve', async (repo, filePath, side) => {
        "does not have our version" — and taking that side means the deletion.
        Without this the side that removed a file could not be chosen at all. */
     const stages = await unmergedStages(repo, filePath);
+    /* No stage at all is not "that side deleted it": the file is not in
+       conflict any more — settled in a terminal or an editor while the list on
+       screen was older. Taking a side then would delete or overwrite it. */
+    if (stages.size === 0) {
+      throw new Error(`${filePath} is not in conflict any more. Refresh to see where it stands.`);
+    }
     if (!stages.has(stage === 'ours' ? 2 : 3)) {
       await git(repo, ['rm', '-q', '-f', '--', filePath]);
       return { removed: true };

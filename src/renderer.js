@@ -4691,7 +4691,7 @@ async function finishFlow(flow) {
   // The same choice a push of this branch makes, asked first when it is open.
   let remote = 'origin';
   if (hasRemote) {
-    const plan = await resolvePush(b);
+    const plan = await resolvePush(b, { remoteOnly: true });
     if (!plan) return;
     remote = plan.remote;
   }
@@ -5302,6 +5302,10 @@ window.gitbraid.on('repo:progress', (p) => {
    stays suspended until you finish or abandon it. That state is invisible in
    git's own output once the message scrolls away, so it gets a strip of its
    own that cannot be missed. */
+/* What an operation is called in a sentence. git's own word does for most;
+   "the am" is not English. */
+const opName = (op) => (op.kind === 'am' ? 'patch series' : op.kind);
+
 function renderOpState() {
   const op = state.op;
   const bar = $('opstate');
@@ -5320,9 +5324,9 @@ function renderOpState() {
   const done = left === 0;
   $('op-continue').disabled = !done;
   $('op-continue').title = done
-    ? `Finish the ${op.kind} with what is staged`
+    ? `Finish the ${opName(op)} with what is staged`
     : `Resolve the remaining ${left} file${left === 1 ? '' : 's'} first`;
-  $('op-abort').title = `Undo the ${op.kind} and put the repository back as it was`;
+  $('op-abort').title = `Undo the ${opName(op)} and put the repository back as it was`;
   // main.js says which operations have a --skip; a merge has nothing to skip to.
   $('op-skip').hidden = !op.canSkip;
   $('op-skip').title = 'Leave this commit out and carry on with the next one';
@@ -5333,12 +5337,12 @@ const conflictCount = () => state.status?.conflicted.length || 0;
 $('op-abort').addEventListener('click', async () => {
   const op = state.op;
   if (!op) return;
-  const ok = await confirmAction(`Abort the ${op.kind}`,
-    `The repository goes back to how it was before the ${op.kind} started. ` +
+  const ok = await confirmAction(`Abort the ${opName(op)}`,
+    `The repository goes back to how it was before the ${opName(op)} started. ` +
     'Work you have already committed is untouched; changes made while resolving are lost.',
     'Abort', true);
   if (!ok) return;
-  await gitAction(null, `Aborting the ${op.kind}`,
+  await gitAction(null, `Aborting the ${opName(op)}`,
     () => call('repo:abort', repoPath(), op.kind),
     async () => { await refresh({ keepSelection: false }); setStatus(`${op.label} aborted`, 'ok'); });
 });
@@ -5346,7 +5350,7 @@ $('op-abort').addEventListener('click', async () => {
 $('op-continue').addEventListener('click', async () => {
   const op = state.op;
   if (!op) return;
-  const ok = await gitAction(null, `Continuing the ${op.kind}`,
+  const ok = await gitAction(null, `Continuing the ${opName(op)}`,
     () => call('repo:continue', repoPath(), op.kind),
     async () => {
       await refresh({ keepSelection: false });
@@ -5363,10 +5367,10 @@ $('op-skip').addEventListener('click', async () => {
   const op = state.op;
   if (!op || !op.canSkip) return;
   const ok = await confirmAction(`Skip this commit`,
-    `The ${op.kind} carries on without this commit: its changes, and anything ` +
+    `The ${opName(op)} carries on without this commit: its changes, and anything ` +
     'done while resolving it, are dropped.', 'Skip', true);
   if (!ok) return;
-  const done = await gitAction(null, `Skipping a commit in the ${op.kind}`,
+  const done = await gitAction(null, `Skipping a commit in the ${opName(op)}`,
     () => call('repo:skip', repoPath(), op.kind),
     async () => {
       await refresh({ keepSelection: false });
@@ -7562,9 +7566,30 @@ async function fetchInto(b) {
 function pushPlan(b, refs) {
   const names = refs.remoteNames || [];
   if (b.upstreamRemote && b.upstreamRemote !== '.' && names.includes(b.upstreamRemote)) {
+    const own = `refs/heads/${b.name}`;
+    const tracked = b.upstreamMerge || own;
+    /* A branch made from origin/main tracks origin/main — git sets that up on
+       its own — so "push to what it tracks" would put a feature onto main, and
+       a forced push would overwrite it. git's default refuses a push to a
+       differently named upstream; here the reader is asked which they meant,
+       unless push.default says to follow the upstream. */
+    const follow = tracked === own || ['upstream', 'tracking'].includes(refs.pushDefault);
+    if (!follow) {
+      return {
+        remote: b.upstreamRemote,
+        remoteRef: null,
+        setUpstream: false,
+        tracking: null,
+        choices: null,
+        renamed: {
+          own, tracked, trackedRef: b.upstreamRef || null,
+          ownRef: `refs/remotes/${b.upstreamRemote}/${b.name}`,
+        },
+      };
+    }
     return {
       remote: b.upstreamRemote,
-      remoteRef: b.upstreamMerge || `refs/heads/${b.name}`,
+      remoteRef: tracked,
       setUpstream: false,
       tracking: b.upstreamRef || null,
       choices: null,
@@ -7587,8 +7612,12 @@ const leaseExpect = (plan, refs) =>
   refs.remotes.find((r) => r.refname === plan.tracking)?.oid || '';
 
 /* The plan, with the remote asked for when the refs cannot settle it. */
-async function resolvePush(b) {
+/* `remoteOnly` is for callers that need just the remote (a flow finish pushes
+   its own branches by name), so the question about the branch there is not
+   asked of them. */
+async function resolvePush(b, { remoteOnly = false } = {}) {
   const plan = pushPlan(b, state.refs);
+  if (plan.renamed && !remoteOnly) return askPushTarget(b, plan);
   if (plan.remote) return plan;
   if (!plan.choices.length) {
     setStatus('This repository has no remote', 'error');
@@ -7607,6 +7636,29 @@ async function resolvePush(b) {
   });
   if (!r || !r.remote) return null;
   return { ...plan, remote: r.remote, tracking: `refs/remotes/${r.remote}/${b.name}`, choices: null };
+}
+
+/** A branch tracking one of another name: which of the two the push is for. */
+async function askPushTarget(b, plan) {
+  const { own, tracked, trackedRef, ownRef } = plan.renamed;
+  const theirs = shortRefName(tracked);
+  const r = await modal({
+    title: `Push ${b.name} where?`,
+    description: `${b.name} tracks ${plan.remote}/${theirs}, which has a different name. `
+      + 'Pushing there puts these commits on that branch.',
+    fields: [{
+      name: 'to', type: 'choice', value: 'own',
+      options: [
+        { value: 'own', label: `${plan.remote}/${b.name} — its own branch, which ${b.name} then tracks` },
+        { value: 'tracked', label: `${plan.remote}/${theirs} — the branch it tracks now` },
+      ],
+    }],
+    confirmLabel: 'Push',
+  });
+  if (!r || !r.to) return null;
+  return r.to === 'tracked'
+    ? { ...plan, renamed: null, remoteRef: tracked, setUpstream: false, tracking: trackedRef }
+    : { ...plan, renamed: null, remoteRef: own, setUpstream: true, tracking: ownRef };
 }
 
 async function pushBranch(b, force = false, channel = 'repo:pushBranch') {

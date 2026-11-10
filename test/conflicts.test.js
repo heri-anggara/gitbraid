@@ -518,6 +518,56 @@ function rendererBox(names, globals = {}) {
     check('the strip has a Skip button', /id="op-skip"/.test(fs.readFileSync(path.join(ROOT, 'src/index.html'), 'utf8')));
   });
 
+  section('taking a side of a file that is no longer in conflict');
+  await scenario('settled elsewhere', async () => {
+    /* The list on screen can be older than the index: a file merged by hand
+       and added in a terminal has no stages left, and that is not the same as
+       a side having deleted it. */
+    const { r } = forked();
+    r.commit('keep.txt', 'keep\n', 'an unrelated file');
+    stops(r, ['merge', 'side']);
+    const plain = await call('repo:resolve', r.dir, 'keep.txt', 'mine');
+    check('a file that was never in conflict is refused, not deleted',
+      plain.ok === false && /not in conflict/.test(plain.error) && exists(r, 'keep.txt'), { plain });
+    r.write('f.txt', 'merged by hand\n');
+    r.g(['add', 'f.txt']);
+    const settled = await call('repo:resolve', r.dir, 'f.txt', 'incoming');
+    check('a conflict settled in a terminal is refused, and the hand merge stays',
+      settled.ok === false && r.read('f.txt') === 'merged by hand\n', { settled, f: r.read('f.txt') });
+    r.rm();
+  });
+
+  section('git am is not a rebase');
+  await scenario('am', async () => {
+    /* git am keeps its state in rebase-apply, and was read as a rebase: the
+       sides turned round, so "mine" took the patch, and Skip and Abort were
+       sent to a rebase that was not running. */
+    const { r, theirsHash } = forked({ mine: 'MY BRANCH\n', theirs: 'THE PATCH\n' });
+    const patchDir = path.join(r.dir, '..', path.basename(r.dir) + '-patches');
+    fs.mkdirSync(patchDir);
+    r.g(['format-patch', '-q', '-o', patchDir, `${theirsHash}^..${theirsHash}`]);
+    const patch = fs.readdirSync(patchDir).map((f) => path.join(patchDir, f));
+    check('git am stops in a conflict', stops(r, ['am', '-3', ...patch]));
+    const st = (await call('repo:state', r.dir)).data;
+    check('the state says am, not rebase', st && st.kind === 'am', st);
+    check('and Skip is offered for it', st && st.canSkip === true, st);
+    check('its sides: yours, and the patch', st && /your/.test(st.sides?.mine?.label || '')
+      && /patch/.test(st.sides?.incoming?.label || ''), st && st.sides);
+    const res = await call('repo:resolve', r.dir, 'f.txt', 'mine');
+    check('"mine" keeps your branch\'s file', res.ok && r.read('f.txt') === 'MY BRANCH\n', { res, f: r.read('f.txt') });
+    const skip = await call('repo:skip', r.dir, 'am');
+    check('Skip runs git am --skip and the session ends',
+      skip.ok && (await call('repo:state', r.dir)).data === null, skip);
+    check('the branch is as it was before the patch', r.g(['log', '-1', '--format=%s']).trim() === 'my change');
+
+    check('a second am, then Abort, ends it too', stops(r, ['am', '-3', ...patch]));
+    const abort = await call('repo:abort', r.dir, 'am');
+    check('Abort runs git am --abort', abort.ok && (await call('repo:state', r.dir)).data === null
+      && r.read('f.txt') === 'MY BRANCH\n', abort);
+    fs.rmSync(patchDir, { recursive: true, force: true });
+    r.rm();
+  });
+
   m.restoreEnv();
   done();
 })().catch((e) => { console.error(e); process.exit(1); });
