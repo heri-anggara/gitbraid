@@ -460,6 +460,19 @@ const has = (fn) => typeof R[fn] === 'function';
     r.rm();
   }
 
+  section('a tag whose name begins with a dash');
+  {
+    /* git refuses such a name for a branch, but a tag can arrive with one —
+       fetched, or written with update-ref — and the sidebar lists it. */
+    const r = scratchRepo();
+    r.commit('a.txt', 'one\n', 'one');
+    r.g(['update-ref', 'refs/tags/-q', 'HEAD']);
+    const res = await m.call('repo:deleteTag', r.dir, '-q');
+    check('deleting it deletes it rather than reading it as an option',
+      res.ok && r.g(['tag', '-l']).trim() === '', { res, left: r.g(['tag', '-l']) });
+    r.rm();
+  }
+
   for (const d of made) fs.rmSync(d, { recursive: true, force: true });
   done();
 })().catch((e) => { console.error(e); process.exit(1); });
