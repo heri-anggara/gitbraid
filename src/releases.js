@@ -7,6 +7,77 @@
  */
 window.Releases = [
   {
+    version: '0.12.0',
+    date: '2026-11-10',
+    title: 'The right side, the right branch',
+    summary:
+      'A third audit, run area by area: branches and remotes, conflicts and '
+      + 'stashes, the keyboard, and what the AppImage hands to the programs it '
+      + 'starts. "Keep your version" during a rebase kept the other side and '
+      + 'dropped your commit, a push could land on a branch you did not mean, '
+      + 'and Enter in a confirmation could reach the list behind it. Most of the '
+      + 'new checks call the real git handlers against real repositories, and '
+      + 'the suite grew from 535 checks to 781.',
+    sections: [
+      {
+        heading: 'Conflicts, stashes and file history',
+        items: [
+          '“Keep your version” keeps yours in every operation. During a rebase git calls the branch being rebased onto “ours”, so the old button took the upstream’s file and the rebase then dropped your commit as empty. The buttons now name both sides — your commit and the branch it is going onto — and mean the same thing in a merge, a rebase, a cherry-pick, a revert, a patch series and a stash pop.',
+          'A side that deleted the file can be chosen, and choosing it deletes the file. Picking a side of a file that is no longer in conflict — settled in a terminal while the list on screen was older — is refused instead of deleting it.',
+          '“Mark resolved” asks first when the file still holds conflict markers, naming the files. Resolving several files reports each one that failed instead of saying all were resolved.',
+          'A cherry-pick, revert, rebase or git am that stops on a commit with nothing left in it has a Skip button next to Continue and Abort. git am is no longer mistaken for a rebase.',
+          'Dropping, applying or popping a stash acts on the stash you clicked, found by its commit. A stash made in a terminal while the dialog was open used to renumber the list, and the newer one was dropped.',
+          'The view refreshes after a stash pop that stops in a conflict, so the conflicted files appear at once.',
+          'File history works for names holding quotes, backslashes, tabs or newlines, lists the merges that changed the file, and shows a rename as a rename.',
+          'Discarding a file added with intent-to-add removes it, instead of leaving an empty file behind.',
+        ],
+      },
+      {
+        heading: 'Branches and remotes',
+        items: [
+          'The sidebar sends git the full name of what you clicked. A tag and a branch with the same name were confused — merging branch x merged tag x, and double-clicking the tag checked out the branch — and a local branch called origin/main stood in for the remote one.',
+          'Push goes to the remote the branch tracks, not always to origin, and with no upstream it prefers origin or asks which remote. A branch that tracks one with another name — git does this by itself for a branch made from origin/main — asks whether to push to a branch of its own or to the one it tracks, instead of putting your feature on main.',
+          'Force push from the toolbar asks first, as the sidebar did, and leases against the remote commit you last saw. A background fetch can no longer make the lease pass over commits you never looked at.',
+          'Renaming a branch to a name starting with a dash is refused. “-M” used to force-rename the current branch and leave the other one’s commits on no branch. A tag whose name starts with a dash can be deleted.',
+          'A remote whose path has a space in it is listed. The repository menu used to say there was no remote at all.',
+          'After a pull that cannot fast-forward the counts are read again, so the merge-or-rebase question appears on the first try. Fetching into a branch says “diverged” only when it has.',
+          'Checking out a remote branch named like a folder in the work tree works, and Git-Flow refuses to set up in a repository with no commit instead of leaving half a configuration.',
+        ],
+      },
+      {
+        heading: 'The keyboard and dialogs',
+        items: [
+          'A dialog takes the keyboard. Enter in a confirmation used to reach the file list behind it too, so “Discard 2 files” both staged and discarded them. Focus moves into the dialog and stays there, and goes back where it was when the dialog closes.',
+          'In a dialog that deletes or overwrites, Cancel has focus: Enter cancels, and Tab then Enter confirms. Enter on a focused button presses that button — Enter on Cancel used to confirm.',
+          'Shortcuts read Shift, not the letter’s case, so with Caps Lock on p pulls instead of pushing.',
+          'The commit list can be walked with the arrow keys, Home, End and Page Up/Down, and the sidebar with the arrows, Home and End, the arrows opening and shutting its folders as well. The Menu key or Shift+F10 opens a row’s menu, and Enter in the sidebar shows a branch rather than checking it out.',
+          'Escape handled by a search box or the reword editor no longer also closes the file you were reading.',
+          'Icon-only buttons keep their names for screen readers, tooltips show on keyboard focus, text fields are named, and the initials discs and light-theme buttons reach 4.5:1 contrast.',
+        ],
+      },
+      {
+        heading: 'The AppImage, the Flatpak and the terminal',
+        items: [
+          'The AppImage launcher left a relative ./share/ in XDG_DATA_DIRS and an empty entry in LD_LIBRARY_PATH, and every program GitBraid started inherited them — so a cloned repository could choose what opened its folders. They are cleaned at start.',
+          '“Restart now” after an AppImage update starts the new file, not the old image it was running from.',
+          'A clone URL can no longer be read as a git option, and a folder name starting with a dash clones.',
+          'Stop in the terminal panel stops the whole command, including what it started, and the panel is free at once. Long output no longer garbles accented characters at chunk boundaries.',
+          'In the Flatpak, “Open in terminal” says what permission it needs instead of claiming no terminal is installed, and updates point to Flathub.',
+          '`gitbraid .` with GitBraid already open opens the folder you typed it in. Recent repositories and favourites are written so a crash cannot empty the list.',
+        ],
+      },
+      {
+        heading: 'Smaller things',
+        items: [
+          'The commit panel’s “authored” shows when it was authored; after a rebase it used to show the rebase.',
+          'The history fills the window after it grows, without needing a scroll first. The git output pane keeps up with commands that print thousands of lines.',
+          'Search highlighting stays on the matched letters after characters like İ, and Rust lifetimes and Ruby’s defined? are coloured correctly.',
+          'A password dialog left open when the window reloads lets git fail at once instead of waiting fifteen minutes. A pre-release build is offered the final release.',
+        ],
+      },
+    ],
+  },
+  {
     version: '0.11.1',
     date: '2026-11-09',
     title: 'Doing what it says',
