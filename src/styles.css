@@ -23,6 +23,13 @@
   --accent:      #7c8cff;
   --accent-hi:   #8f9cff;
   --accent-ink:  #0f1118;
+  /* What --accent-ink is written on: a primary button, a count badge, an
+     action icon. The accent itself everywhere but where it is too light for
+     its ink — see the light theme. */
+  --accent-fill:    var(--accent);
+  --accent-fill-hi: var(--accent-hi);
+  /* The dimming behind a dialog. */
+  --scrim:       rgba(8, 9, 14, .6);
   /* Small coloured text sits on the page background, where the fill colours
      above are too light to read. Same hue, enough contrast. */
   --accent-text: #7c8cff;
@@ -112,6 +119,11 @@
   --accent:      #2b7fd4;
   --accent-hi:   #1f6dbd;
   --accent-ink:  #ffffff;
+  /* White on #2b7fd4 is 4.13:1, short of 4.5 for the button text it carries;
+     the darker step reads 5.28:1 and its hover 6.47:1. */
+  --accent-fill:    #1f6dbd;
+  --accent-fill-hi: #1a5fa8;
+  --scrim:       rgba(34, 38, 46, .45);
   --accent-text: #17538c;
   --pending-text: #8a5104;
   --pending:     #c97a12;
@@ -196,6 +208,9 @@
   --accent:      #1c477f;
   --accent-hi:   #14375f;
   --accent-ink:  #f3eedf;
+  --accent-fill:    var(--accent);
+  --accent-fill-hi: var(--accent-hi);
+  --scrim:       rgba(34, 38, 46, .45);
   --accent-text: #1c477f;
   --pending-text: #7a5218;   /* sand cannot be writing anywhere — 5.9:1 */
   --pending:     #ceaa7a;
@@ -274,6 +289,9 @@
   --accent:      #3785d8;
   --accent-hi:   #5a9ce4;
   --accent-ink:  #0f0c19;
+  --accent-fill:    var(--accent);
+  --accent-fill-hi: var(--accent-hi);
+  --scrim:       rgba(8, 9, 14, .6);
   --accent-text: #3785d8;
   --pending-text: #c08ce2;   /* 7.2:1 */
   --pending:     #c08ce2;
@@ -349,6 +367,9 @@
   --accent:      #ffd64c;
   --accent-hi:   #ffe173;
   --accent-ink:  #171e14;
+  --accent-fill:    var(--accent);
+  --accent-fill-hi: var(--accent-hi);
+  --scrim:       rgba(8, 9, 14, .6);
   --accent-text: #ffd64c;
 
   /* The palette's own ramp does the semantic work: yellow acts, orange waits,
@@ -1011,12 +1032,12 @@ textarea {
 .btn:hover:not(:disabled) { background: var(--surface-3); border-color: var(--line-strong); }
 .btn:disabled { opacity: .4; cursor: default; }
 .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
   color: var(--accent-ink);
   font-weight: 600;
 }
-.btn-primary:hover:not(:disabled) { background: var(--accent-hi); border-color: var(--accent-hi); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-fill-hi); border-color: var(--accent-fill-hi); }
 .btn-quiet { background: transparent; }
 .btn-icon {
   display: flex;
@@ -1043,7 +1064,7 @@ textarea {
   margin-left: 6px;
   padding: 0 5px;
   min-width: 16px;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--accent-ink);
   border-radius: 999px;
   font-family: var(--mono);
@@ -1157,8 +1178,8 @@ textarea {
   border-color: var(--accent);
 }
 .action-card.is-primary .ac-icon {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
   color: var(--accent-ink);
 }
 
@@ -1858,7 +1879,7 @@ textarea {
   place-items: center;
   width: 32px; height: 32px;
   flex: none;
-  background: var(--accent);
+  background: var(--accent-fill);
   border-radius: 50%;
   color: var(--accent-ink);
   font-size: 12px;
@@ -1964,7 +1985,7 @@ textarea {
   font-size: 10px;
   text-align: center;
 }
-.mb-side.on .mb-n { background: var(--accent); color: var(--accent-ink); }
+.mb-side.on .mb-n { background: var(--accent-fill); color: var(--accent-ink); }
 /* A side with nothing in it says so before you click it. */
 .mb-n.zero { background: none; color: var(--text-faint); }
 
@@ -2483,7 +2504,7 @@ textarea {
   font-size: 13px;
   font-weight: 700;
   color: var(--accent-ink);
-  background: var(--accent);
+  background: var(--accent-fill);
   border-radius: 999px;
   padding: 2px 11px;
 }
@@ -2640,8 +2661,8 @@ textarea {
 .c-stats b { font-weight: 600; }
 .c-viewtoggle { margin-left: auto; display: flex; gap: 4px; }
 .c-viewtoggle .btn.on {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
   color: var(--accent-ink);
 }
 
@@ -2903,8 +2924,8 @@ textarea {
 .fv-ib.danger:hover { border-color: var(--danger); color: var(--danger); }
 /* A toggle that is on wears the accent, so its state reads without a label. */
 .fv-ib.on {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
   color: var(--accent-ink);
 }
 .fv-i { width: 14px; height: 14px; display: block; }
@@ -3823,7 +3844,9 @@ mark {
   align-items: center;
   gap: 10px;
   padding: 3px 12px;
-  background: rgba(124, 140, 255, .05);
+  /* The accent's own tint, so the band is blue in a blue theme and gold in a
+     gold one; a fixed rgba of the dark theme's indigo was the same everywhere. */
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
 }
 /* One line, always. A hunk header carries the enclosing function after the line
    numbers, and on a file with very long lines that ran to a second line — which
@@ -3960,7 +3983,7 @@ mark {
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgba(8, 9, 14, .6);
+  background: var(--scrim);
   z-index: 50;
 }
 /* Dialogs follow the display the way the start screen does, just more gently —
@@ -4063,7 +4086,7 @@ mark {
 }
 .ctxmenu li { padding: 5px 10px; border-radius: 4px; cursor: pointer; }
 .ctxmenu li:hover,
-.ctxmenu li:focus { background: var(--accent); color: var(--accent-ink); outline: none; }
+.ctxmenu li:focus { background: var(--accent-fill); color: var(--accent-ink); outline: none; }
 .ctxmenu li.sep { height: 1px; padding: 0; margin: 4px 2px; background: var(--line); pointer-events: none; }
 .ctxmenu li.danger:hover,
 .ctxmenu li.danger:focus { background: var(--danger); }

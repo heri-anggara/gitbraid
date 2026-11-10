@@ -319,6 +319,28 @@ section('the avatar colours');
     check(`${name}: the Preferences discs clear 4.5:1 (${main.toFixed(2)} and ${alt.toFixed(2)})`,
       main >= 4.5 && alt >= 4.5, { main, alt });
   }
+
+  /* Text in --accent-ink sits on --accent-fill: primary buttons, count badges,
+     the version pill, the action icons. Resolved through var() the way the
+     browser does, theme by theme, at rest and on hover. */
+  const resolve = (v, val, depth = 0) => {
+    const ref = /^var\((--[\w-]+)\)$/.exec(String(val || '').trim());
+    return ref && depth < 5 ? resolve(v, v[ref[1]], depth + 1) : val;
+  };
+  for (const name of names) {
+    const v = { ...base, ...(theme[name] || {}) };
+    // A token the theme never defines measures as no contrast at all.
+    const of = (t) => { const x = resolve(v, v[t]); return /^#[0-9a-fA-F]{3,6}$/.test(x || '') ? hex(x) : null; };
+    const ink = of('--accent-ink');
+    const rest = ink && of('--accent-fill') ? ratio(of('--accent-fill'), ink) : 0;
+    const hover = ink && of('--accent-fill-hi') ? ratio(of('--accent-fill-hi'), ink) : 0;
+    check(`${name}: accent ink on the accent fill clears 4.5:1 (${rest.toFixed(2)}, hover ${hover.toFixed(2)})`,
+      rest >= 4.5 && hover >= 4.5, { rest, hover });
+  }
+  const bare = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+    .filter((m) => /color:\s*var\(--accent-ink\)/.test(m[2]) && /background:\s*var\(--accent\)/.test(m[2]))
+    .map((m) => m[1].trim());
+  check('nothing writes the accent ink straight on the bare accent', bare.length === 0, bare);
 }
 
 done();

@@ -5747,22 +5747,25 @@ function renderPrefGroup(g) {
 }
 
 function prefRow(f, i) {
+  /* The row's label is a span beside the control, so the control is named
+     outright; a screen reader otherwise announced "checkbox, checked". */
+  const named = ` aria-label="${esc(f.label)}"`;
   let control = '';
   if (f.kind === 'toggle') {
-    control = `<label class="pf-switch"><input type="checkbox" data-f="${i}"` +
+    control = `<label class="pf-switch"><input type="checkbox" data-f="${i}"${named}` +
       `${f.get() ? ' checked' : ''}><span class="pf-track"></span></label>`;
   } else if (f.kind === 'number') {
-    control = `<span class="pf-numwrap"><input class="pf-num" type="number" data-f="${i}"` +
+    control = `<span class="pf-numwrap"><input class="pf-num" type="number" data-f="${i}"${named}` +
       ` min="${f.min}" max="${f.max}"${f.step ? ` step="${f.step}"` : ''}` +
       ` value="${esc(String(f.get()))}">` +
       (f.unit ? `<span class="pf-unit">${esc(f.unit)}</span>` : '') + '</span>';
   } else if (f.kind === 'select') {
     const now = String(f.get());
-    control = `<select class="pf-select" data-f="${i}">` + f.options.map(([v, label]) =>
+    control = `<select class="pf-select" data-f="${i}"${named}>` + f.options.map(([v, label]) =>
       `<option value="${esc(v)}"${v === now ? ' selected' : ''}>${esc(label)}</option>`).join('') +
       '</select>';
   } else if (f.kind === 'gitconfig') {
-    control = `<input class="pf-text" type="text" data-f="${i}" data-key="${esc(f.key)}"` +
+    control = `<input class="pf-text" type="text" data-f="${i}" data-key="${esc(f.key)}"${named}` +
       ` spellcheck="false" placeholder="${esc(f.placeholder || '')}" value="">`;
   } else if (f.kind === 'action') {
     control = `<button class="btn" data-f="${i}">${esc(f.button)}</button>`;
