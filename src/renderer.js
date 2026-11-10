@@ -78,7 +78,7 @@ function newTab(repo) {
     repo,
     status: null,
     commits: [],
-    refs: { branches: [], remotes: [], tags: [] },
+    refs: { branches: [], remotes: [], tags: [], remoteNames: [] },
     remoteRefNames: new Set(),  // "origin/main", … — to tell remotes from locals
     stashes: [],
     limit: prefs.commitLimit,
@@ -3697,14 +3697,16 @@ async function askAboutLocalChanges(ref) {
   return r ? r.mode : null;
 }
 
-async function checkout(ref) {
+/* `ref` is what the reader sees; `target` what git is handed — the full ref
+   name from the sidebar, or a commit hash. */
+async function checkout(ref, target = ref) {
   const mode = await askAboutLocalChanges(ref);
   if (mode === null) return;
 
   // gitAction hands nothing to its follow-up, so the outcome rides a closure.
   let res = null;
   await gitAction(null, `Checking out ${ref}`,
-    async () => (res = await call('repo:checkoutWith', repoPath(), ref, mode)),
+    async () => (res = await call('repo:checkoutWith', repoPath(), target, mode)),
     async () => {
       await refresh({ keepSelection: false });
       if (res?.stash === 'conflict') {
@@ -3751,12 +3753,13 @@ async function revealRef(ref, kind) {
 }
 
 async function newBranch(startPoint) {
+  const shown = shortRefName(startPoint);
   const r = await modal({
     title: 'New branch',
     // A start point is either a commit hash, which is shortened, or a ref name,
     // which must be shown whole.
     description: startPoint
-      ? `Starting from ${/^[0-9a-f]{7,40}$/.test(startPoint) ? startPoint.slice(0, 7) : startPoint}`
+      ? `Starting from ${/^[0-9a-f]{7,40}$/.test(shown) ? shown.slice(0, 7) : shown}`
       : 'Starting from the current HEAD',
     fields: [
       { name: 'name', label: 'Branch name', placeholder: 'feature/rename-lanes' },
@@ -3813,8 +3816,8 @@ async function askAboutMerge(ref, info) {
   return r ? r.mode : null;
 }
 
-async function mergeBranch(ref) {
-  const info = await call('repo:mergeInfo', repoPath(), ref);
+async function mergeBranch(ref, target = ref) {
+  const info = await call('repo:mergeInfo', repoPath(), target);
   if (info === null) return;
   /* git succeeds and changes nothing when the branch is already contained.
      Saying "Merged" there would claim something that did not happen — and
@@ -3830,7 +3833,7 @@ async function mergeBranch(ref) {
   let out = '';
   const startedOn = activeId;
   const ok = await gitAction(null, `Merging ${ref}`,
-    async () => (out = await call('repo:merge', repoPath(), ref, mode)),
+    async () => (out = await call('repo:merge', repoPath(), target, mode)),
     async () => {
       await refresh({ keepSelection: false });
       setStatus(nothingHappened(out)
@@ -3850,11 +3853,11 @@ async function mergeBranch(ref) {
 const nothingHappened = (out) =>
   /already up to date|is up to date|current branch .* is up to date/i.test(String(out || ''));
 
-async function rebaseOnto(ref) {
+async function rebaseOnto(ref, target = ref) {
   let out = '';
   const startedOn = activeId;
   const ok = await gitAction(null, `Rebasing onto ${ref}`,
-    async () => (out = await call('repo:rebase', repoPath(), ref)),
+    async () => (out = await call('repo:rebase', repoPath(), target)),
     async () => {
       await refresh({ keepSelection: false });
       setStatus(nothingHappened(out)
@@ -3875,19 +3878,17 @@ async function applyStash(ref, drop) {
     });
 }
 
+/* The toolbar pushes the checked-out branch exactly as the sidebar would push
+   it: to the remote and branch it tracks, and only after asking when forced. */
 async function push(force = false) {
   const s = state.status;
   if (!s?.branch) {
     setStatus('You are on a detached HEAD. Check out a branch before pushing.', 'error');
     return;
   }
-  await gitAction('btn-push', force ? 'Force pushing' : 'Pushing',
-    () => call('repo:push', repoPath(), {
-      branch: s.branch,
-      setUpstream: !s.upstream,
-      force,
-    }),
-    async () => { await refresh(); setStatus(`Pushed ${s.branch}`, 'ok'); });
+  // A branch with no commit yet has no ref, so nothing to read an upstream from.
+  const b = state.refs.branches.find((x) => x.name === s.branch) || { name: s.branch };
+  await pushBranch(b, force, 'repo:push');
 }
 
 /* ═════ wiring ══════════════════════════════════════════════════ */
@@ -4367,11 +4368,15 @@ async function askRemoteLater(remote, branch) {
 async function finishFlow(flow) {
   const cfg = state.flow;
   const tagged = flow.kind !== 'feature';
-  const b = state.refs.branches.find((x) => x.name === flow.branch);
-  const remote = b?.upstream
-    ? b.upstream.slice(0, b.upstream.indexOf('/'))
-    : (state.refs.remotes[0]?.name.split('/')[0] || 'origin');
-  const hasRemote = state.refs.remotes.length > 0;
+  const b = state.refs.branches.find((x) => x.name === flow.branch) || { name: flow.branch };
+  const hasRemote = (state.refs.remoteNames || []).length > 0;
+  // The same choice a push of this branch makes, asked first when it is open.
+  let remote = 'origin';
+  if (hasRemote) {
+    const plan = await resolvePush(b);
+    if (!plan) return;
+    remote = plan.remote;
+  }
   const landing = tagged ? `${cfg.master} and ${cfg.develop}` : cfg.develop;
 
   /* Only worth offering when the branch was actually published; a feature that
@@ -6807,6 +6812,7 @@ $('btn-pull').addEventListener('click', () => pull());
    yours — the shape of your history is not something to settle silently. */
 async function pull(mode = 'ff') {
   let out = '';
+  const startedOn = activeId;
   const ok = await gitAction('btn-pull', 'Pulling',
     async () => (out = await call('repo:pull', repoPath(), { mode })),
     async () => {
@@ -6825,6 +6831,12 @@ async function pull(mode = 'ff') {
     if (!ok) await refresh({ keepSelection: false });
     return;
   }
+  /* The pull fetched before it refused, so the counts on screen are from before
+     it learnt anything: a branch only ahead until then read as not diverged,
+     and the dialog never came. Read them again first. */
+  if (activeId !== startedOn) return;
+  await refresh();
+  if (activeId !== startedOn) return;
   if (!diverged()) return;         // it failed for some other reason, already reported
   await askHowToPull();
 }
@@ -6924,19 +6936,32 @@ $('sidebar').addEventListener('dblclick', (e) => {
   const li = e.target.closest('li[data-ref]');
   if (!li) return;
   const { ref, kind } = li.dataset;
-  if (kind === 'branch' || kind === 'tag') checkout(ref);
+  if (kind === 'branch' || kind === 'tag') checkout(ref, fullRefName(kind, ref));
   else if (kind === 'remote') {
     // Checking out a remote branch means working on the local one that follows
-    // it; git creates that branch on the spot if it does not exist yet.
-    checkout(ref.split('/').slice(1).join('/'));
+    // it; that branch is created on the spot if it does not exist yet.
+    const r = state.refs.remotes.find((x) => x.name === ref);
+    checkout(r?.branch || ref, fullRefName(kind, ref));
   }
 });
 
 /* ═════ branch commands ═════════════════════════════════════════ */
 
+/* The full name of a ref the sidebar shows by its short one. git reads a bare
+   "x" as the tag x before the branch x, and "origin/main" as a local branch of
+   that name before the remote one — so the short name is for people only. */
+function fullRefName(kind, name, refs = state.refs) {
+  const list = kind === 'tag' ? refs.tags : kind === 'remote' ? refs.remotes : refs.branches;
+  return list.find((r) => r.name === name)?.refname || name;
+}
+
+/** refs/heads/x → x, for anything said to the reader. A hash is left alone. */
+const shortRefName = (ref) => String(ref || '').replace(/^refs\/(heads|remotes|tags)\//, '');
+
 /** Tag anything that resolves: a commit hash, a branch, another tag. */
 async function tagAt(target) {
-  const short = /^[0-9a-f]{7,40}$/.test(target) ? target.slice(0, 7) : target;
+  const shown = shortRefName(target);
+  const short = /^[0-9a-f]{7,40}$/.test(shown) ? shown.slice(0, 7) : shown;
   const r = await modal({
     title: 'New tag',
     description: `Tagging ${short}`,
@@ -7035,8 +7060,9 @@ async function showCompare() {
   $('fileview').hidden = false;
   $('fv-status').textContent = '↔';
   $('fv-status').className = 'fv-status';
-  $('fv-path').textContent = `HEAD → ${ref}`;
-  $('fv-path').title = `What ${ref} has that HEAD does not`;
+  const shown = shortRefName(ref);
+  $('fv-path').textContent = `HEAD → ${shown}`;
+  $('fv-path').title = `What ${shown} has that HEAD does not`;
 
   const totals = state.diffFiles.reduce(
     (a, d) => ({ add: a.add + d.additions, del: a.del + d.deletions }), { add: 0, del: 0 });
@@ -7050,7 +7076,7 @@ async function showCompare() {
   if (!state.diffFiles.length) {
     diffView = null;
     $('fv-body').innerHTML =
-      `<div class="empty-note">${esc(ref)} has nothing that HEAD does not already have.</div>`;
+      `<div class="empty-note">${esc(shown)} has nothing that HEAD does not already have.</div>`;
   } else {
     diffView = {
       actions: [],
@@ -7068,13 +7094,13 @@ async function showCompare() {
     paintDiff();
   }
   indexBlocks();
-  setStatus(`Comparing HEAD with ${ref}`, 'ok');
+  setStatus(`Comparing HEAD with ${shown}`, 'ok');
 }
 
 async function fastForward(b) {
   await gitAction(null, `Fast-forwarding ${b.name}`,
     () => call('repo:fastForward', repoPath(),
-      { branch: b.name, upstream: b.upstream, current: b.current }),
+      { branch: b.name, upstream: b.upstreamRef, current: b.current }),
     async () => { await refresh(); setStatus(`${b.name} fast-forwarded to ${b.upstream}`, 'ok'); });
 }
 
@@ -7082,42 +7108,110 @@ async function fetchInto(b) {
   let out = '';
   await gitAction('btn-fetch', `Fetching ${b.upstream}`,
     async () => (out = await call('repo:fetchInto', repoPath(), {
-      remote: b.upstream.slice(0, b.upstream.indexOf('/')),
-      branch: b.name, upstream: b.upstream, current: b.current,
+      remote: b.upstreamRemote, remoteRef: b.upstreamMerge,
+      branch: b.name, upstream: b.upstreamRef, current: b.current,
     })),
     async () => { await refresh(); setStatus(`${b.name}: ${out}`, 'ok'); });
 }
 
-async function pushBranch(b, force = false) {
-  const remote = b.upstream
-    ? b.upstream.slice(0, b.upstream.indexOf('/'))
-    : (state.refs.remotes[0]?.name.split('/')[0] || 'origin');
+/* Where a push of branch `b` goes, from what the refs say. Pure, so it can be
+   checked without a window.
+
+   The branch it tracks, when that is on a remote this repository still has —
+   by that branch's own name there, which need not be this one's. Otherwise
+   origin, or the only remote there is; with several and no origin the answer
+   is the reader's (`choices`). It used to be whichever remote happened to hold
+   the newest commit, which could publish a new branch to someone else's
+   repository. A branch following another local branch keeps following it. */
+function pushPlan(b, refs) {
+  const names = refs.remoteNames || [];
+  if (b.upstreamRemote && b.upstreamRemote !== '.' && names.includes(b.upstreamRemote)) {
+    return {
+      remote: b.upstreamRemote,
+      remoteRef: b.upstreamMerge || `refs/heads/${b.name}`,
+      setUpstream: false,
+      tracking: b.upstreamRef || null,
+      choices: null,
+    };
+  }
+  const remote = names.includes('origin') ? 'origin' : names.length === 1 ? names[0] : null;
+  return {
+    remote,
+    remoteRef: `refs/heads/${b.name}`,
+    setUpstream: b.upstreamRemote !== '.',
+    tracking: remote ? `refs/remotes/${remote}/${b.name}` : null,
+    choices: remote ? null : names.slice(),
+  };
+}
+
+/* The remote commit a forced push may replace: the one the refs on screen hold
+   for the branch there. Empty when there is none, which tells git the branch
+   must not exist there yet. */
+const leaseExpect = (plan, refs) =>
+  refs.remotes.find((r) => r.refname === plan.tracking)?.oid || '';
+
+/* The plan, with the remote asked for when the refs cannot settle it. */
+async function resolvePush(b) {
+  const plan = pushPlan(b, state.refs);
+  if (plan.remote) return plan;
+  if (!plan.choices.length) {
+    setStatus('This repository has no remote', 'error');
+    return null;
+  }
+  const r = await modal({
+    title: `Which remote is ${b.name} for?`,
+    description: `${b.name} does not track a branch on any remote, and there is no `
+      + 'remote called origin to assume.'
+      + (plan.setUpstream ? ' The one chosen here becomes what it tracks.' : ''),
+    fields: [{
+      name: 'remote', type: 'choice', value: plan.choices[0],
+      options: plan.choices.map((n) => ({ value: n, label: n })),
+    }],
+    confirmLabel: 'Use this remote',
+  });
+  if (!r || !r.remote) return null;
+  return { ...plan, remote: r.remote, tracking: `refs/remotes/${r.remote}/${b.name}`, choices: null };
+}
+
+async function pushBranch(b, force = false, channel = 'repo:pushBranch') {
+  const plan = await resolvePush(b);
+  if (!plan) return;
+  const there = `${plan.remote}/${shortRefName(plan.remoteRef)}`;
   if (force) {
     const ok = await confirmAction('Force push',
-      `${b.name} will overwrite ${remote}/${b.name}. Commits on the remote that you do ` +
+      `${b.name} will overwrite ${there}. Commits on the remote that you do ` +
       'not have will be lost.', 'Force push');
     if (!ok) return;
   }
   await gitAction('btn-push', force ? `Force pushing ${b.name}` : `Pushing ${b.name}`,
-    () => call('repo:pushBranch', repoPath(),
-      { branch: b.name, remote, setUpstream: !b.upstream, force }),
-    async () => { await refresh(); setStatus(`Pushed ${b.name} to ${remote}`, 'ok'); });
+    () => call(channel, repoPath(), {
+      branch: b.name,
+      remote: plan.remote,
+      remoteRef: plan.remoteRef,
+      setUpstream: plan.setUpstream,
+      force,
+      // Read when the reader said yes, from the refs they were looking at.
+      expect: force ? leaseExpect(plan, state.refs) : undefined,
+    }),
+    async () => { await refresh(); setStatus(`Pushed ${b.name} to ${there}`, 'ok'); });
 }
 
 $('sidebar').addEventListener('contextmenu', (e) => {
   const li = e.target.closest('li[data-ref]');
   if (!li) return;
   const { ref, kind } = li.dataset;
+  // What git is handed, so a tag and a branch both called x stay two things.
+  const full = fullRefName(kind, ref);
 
   if (kind === 'branch') {
     const b = state.refs.branches.find((x) => x.name === ref) || { name: ref };
     const head = state.status?.branch;
     const behind = /behind/.test(b.track || '');
-    const hasRemote = state.refs.remotes.length > 0;
+    const hasRemote = (state.refs.remoteNames || []).length > 0;
 
     contextMenu(e, [
       { label: `Check out ${ref}`, disabled: b.current,
-        hint: b.current ? 'Already checked out' : '', run: () => checkout(ref) },
+        hint: b.current ? 'Already checked out' : '', run: () => checkout(ref, full) },
       { label: b.upstream ? `Fast-forward to ${b.upstream}` : 'Fast-forward to upstream',
         disabled: !b.upstream || !behind,
         hint: !b.upstream ? 'This branch tracks nothing'
@@ -7137,16 +7231,16 @@ $('sidebar').addEventListener('contextmenu', (e) => {
           + (alreadyIn(ref) ? ' — already merged' : ''), disabled: b.current,
         hint: b.current ? 'A branch cannot be merged into itself'
           : alreadyIn(ref) ? `${head} already contains every commit of ${ref}` : '',
-        run: () => mergeBranch(ref) },
+        run: () => mergeBranch(ref, full) },
       { label: `Rebase ${head || 'current'} onto ${ref}`, disabled: b.current,
         hint: b.current ? 'A branch cannot be rebased onto itself'
           : alreadyIn(ref) ? `${head} is already on top of ${ref}` : '',
-        run: () => rebaseOnto(ref) },
+        run: () => rebaseOnto(ref, full) },
       { label: 'Compare with HEAD', disabled: b.current,
-        hint: b.current ? 'This is HEAD' : '', run: () => compareWithHead(ref) },
+        hint: b.current ? 'This is HEAD' : '', run: () => compareWithHead(full) },
       '-',
-      { label: `New branch from ${ref}…`, run: () => newBranch(ref) },
-      { label: `New tag at ${ref}…`, run: () => tagAt(ref) },
+      { label: `New branch from ${ref}…`, run: () => newBranch(full) },
+      { label: `New tag at ${ref}…`, run: () => tagAt(full) },
       { label: 'Set tracking branch…', run: () => setUpstream(ref, b.upstream) },
       { label: 'Edit description…', run: () => editDescription(ref) },
       '-',
@@ -7177,18 +7271,20 @@ $('sidebar').addEventListener('contextmenu', (e) => {
         } },
     ]);
   } else if (kind === 'remote') {
-    const remote = ref.slice(0, ref.indexOf('/'));
-    const local = ref.slice(ref.indexOf('/') + 1);
+    // Read from the refs: a remote may have a slash in its own name.
+    const item = state.refs.remotes.find((x) => x.name === ref);
+    const remote = item?.remote || ref.slice(0, ref.indexOf('/'));
+    const local = item?.branch || ref.slice(ref.indexOf('/') + 1);
     const head = state.status?.branch;
     contextMenu(e, [
-      { label: `Check out ${local}`, run: () => checkout(local) },
+      { label: `Check out ${local}`, run: () => checkout(local, full) },
       '-',
-      { label: `Merge ${ref} into ${head || 'current'}`, run: () => mergeBranch(ref) },
-      { label: `Rebase ${head || 'current'} onto ${ref}`, run: () => rebaseOnto(ref) },
-      { label: 'Compare with HEAD', run: () => compareWithHead(ref) },
+      { label: `Merge ${ref} into ${head || 'current'}`, run: () => mergeBranch(ref, full) },
+      { label: `Rebase ${head || 'current'} onto ${ref}`, run: () => rebaseOnto(ref, full) },
+      { label: 'Compare with HEAD', run: () => compareWithHead(full) },
       '-',
-      { label: `New branch from ${ref}…`, run: () => newBranch(ref) },
-      { label: `New tag at ${ref}…`, run: () => tagAt(ref) },
+      { label: `New branch from ${ref}…`, run: () => newBranch(full) },
+      { label: `New tag at ${ref}…`, run: () => tagAt(full) },
       '-',
       { label: `Delete ${ref} on ${remote}`, danger: true, run: async () => {
           const ok = await confirmAction('Delete remote branch',
@@ -7207,10 +7303,10 @@ $('sidebar').addEventListener('contextmenu', (e) => {
     ]);
   } else if (kind === 'tag') {
     contextMenu(e, [
-      { label: `Check out ${ref}`, run: () => checkout(ref) },
-      { label: 'Compare with HEAD', run: () => compareWithHead(ref) },
+      { label: `Check out ${ref}`, run: () => checkout(ref, full) },
+      { label: 'Compare with HEAD', run: () => compareWithHead(full) },
       '-',
-      { label: `New branch from ${ref}…`, run: () => newBranch(ref) },
+      { label: `New branch from ${ref}…`, run: () => newBranch(full) },
       '-',
       { label: `Delete tag ${ref}`, danger: true, run: async () => {
           const ok = await confirmAction('Delete tag',
