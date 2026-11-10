@@ -6,6 +6,13 @@
  * The stand-in records what main.js asks of Electron (relaunch, quit, shell
  * opens, messages to the window) so a test can check those too. A window is
  * never created: `whenReady` does not resolve.
+ *
+ * With `ready: true` it does resolve, so main.js starts askpass, opens its
+ * window and builds its menu. The window is a stand-in too: what main.js sends
+ * it lands in `sent`, and `windows[0]` can raise the events a real one would
+ * (`emit('closed')`, `webContents.emit('render-process-gone')`). `emit` raises
+ * app events — 'second-instance', 'will-quit' — and `menus` holds every menu
+ * template main.js built, so a test can click an item.
  */
 'use strict';
 
@@ -14,19 +21,57 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { EventEmitter } = require('events');
 
 const ROOT = path.join(__dirname, '..');
 
-function loadMain({ env = {}, home } = {}) {
+function loadMain({ env = {}, home, ready = false } = {}) {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'gitbraid-userdata-'));
   const handlers = new Map();
   const calls = [];                       // what main.js asked Electron to do
   const note = (what, ...args) => calls.push({ what, args });
+  const listeners = new Map();            // app event -> handlers
+  const listen = (event, fn) => {
+    if (!listeners.has(event)) listeners.set(event, []);
+    listeners.get(event).push(fn);
+    return app;
+  };
+  const emit = (event, ...args) => (listeners.get(event) || []).map((fn) => fn(...args));
+  const sent = [];                        // { channel, payload } sent to a window
+  const windows = [];
+  const menus = [];
+
+  /* Enough of a BrowserWindow for createWindow and everything that talks to
+     the window afterwards. */
+  function FakeWindow() {
+    const w = new EventEmitter();
+    let visible = false;
+    let destroyed = false;
+    w.webContents = Object.assign(new EventEmitter(), {
+      send: (channel, payload) => sent.push({ channel, payload }),
+      setWindowOpenHandler: () => {},
+      getURL: () => 'file:///index.html',
+      setZoomLevel: () => {},
+      executeJavaScript: async () => undefined,
+    });
+    Object.assign(w, {
+      loadFile: () => {},
+      isDestroyed: () => destroyed,
+      isVisible: () => visible,
+      isMinimized: () => false,
+      show: () => { visible = true; },
+      focus: () => {},
+      restore: () => {},
+      close: () => { destroyed = true; w.emit('closed'); },
+    });
+    windows.push(w);
+    return w;
+  }
 
   const app = {
-    on: () => app,
-    once: () => app,
-    whenReady: () => new Promise(() => {}),
+    on: listen,
+    once: listen,
+    whenReady: () => (ready ? Promise.resolve() : new Promise(() => {})),
     requestSingleInstanceLock: () => true,
     commandLine: { appendSwitch: () => {} },
     getPath: (name) => (name === 'home' ? (home || os.homedir())
@@ -45,9 +90,16 @@ function loadMain({ env = {}, home } = {}) {
   const electron = {
     app,
     BrowserWindow: Object.assign(function BrowserWindow() {
-      throw new Error('no windows under test');
-    }, { getAllWindows: () => [], getFocusedWindow: () => null }),
-    Menu: { buildFromTemplate: () => ({}), setApplicationMenu: () => {} },
+      if (!ready) throw new Error('no windows under test');
+      return FakeWindow();
+    }, {
+      getAllWindows: () => windows.filter((w) => !w.isDestroyed()),
+      getFocusedWindow: () => null,
+    }),
+    Menu: {
+      buildFromTemplate: (template) => { menus.push(template); return {}; },
+      setApplicationMenu: () => {},
+    },
     ipcMain: { handle: (ch, fn) => handlers.set(ch, fn), on: () => {} },
     dialog: {
       showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
@@ -91,7 +143,22 @@ function loadMain({ env = {}, home } = {}) {
     if (!fn) throw new Error(`no handler for ${channel}`);
     return fn({ sender: { send: () => {} } }, ...args);
   };
-  return { handlers, call, calls, userData, restoreEnv };
+  /* The newest menu's item with this label, wherever it sits. */
+  const menuItem = (label) => {
+    const walk = (items) => {
+      for (const item of items || []) {
+        if (item && item.label === label) return item;
+        const inner = item && walk(item.submenu);
+        if (inner) return inner;
+      }
+      return null;
+    };
+    return walk(menus[menus.length - 1]);
+  };
+  return {
+    handlers, call, calls, userData, restoreEnv,
+    emit, sent, windows, menus, menuItem,
+  };
 }
 
 /* A scratch repository with a fixed identity and fixed dates, so a test reads
