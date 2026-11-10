@@ -2213,6 +2213,15 @@ handle('flow:config', async (repo) => {
 });
 
 handle('flow:init', async (repo, cfg) => {
+  /* Asked before anything is written. With no commit there is nothing to branch
+     the development line from, so the branch below failed — after the config
+     had gone in, leaving a repository that read as set up and refused every
+     Start. */
+  const born = await git(repo, ['rev-parse', '--verify', '-q', 'HEAD']).catch(() => '');
+  if (!born.trim()) {
+    throw new Error('This repository has no commits yet. Make a first commit, '
+      + 'then set up Git-Flow.');
+  }
   for (const [key, field] of Object.entries(FLOW_KEYS)) {
     await git(repo, ['config', '--local', key, cfg[field] ?? '']);
   }
@@ -2263,22 +2272,25 @@ handle('flow:finish', async (repo, { kind, branch, cfg, tag, message,
     }
   }
 
+  /* A tag spelled like the branch would otherwise be what gets merged. */
+  const source = await unambiguous(repo, `refs/heads/${branch}`);
+
   if (kind === 'feature') {
-    await step(repo, `Checking out ${cfg.develop}`, ['checkout', cfg.develop]);
-    await step(repo, `Merging ${branch} into ${cfg.develop}`, ['merge', '--no-ff', '--no-edit', branch]);
+    await step(repo, `Checking out ${cfg.develop}`, ['checkout', cfg.develop, '--']);
+    await step(repo, `Merging ${branch} into ${cfg.develop}`, ['merge', '--no-ff', '--no-edit', source]);
     done.push(`merged into ${cfg.develop}`);
   } else {
     // A release or hotfix lands on production first, is tagged there, and is
     // then carried back so development keeps the fix.
-    await step(repo, `Checking out ${cfg.master}`, ['checkout', cfg.master]);
-    await step(repo, `Merging ${branch} into ${cfg.master}`, ['merge', '--no-ff', '--no-edit', branch]);
+    await step(repo, `Checking out ${cfg.master}`, ['checkout', cfg.master, '--']);
+    await step(repo, `Merging ${branch} into ${cfg.master}`, ['merge', '--no-ff', '--no-edit', source]);
     done.push(`merged into ${cfg.master}`);
     if (tag) {
       await step(repo, `Tagging ${tag}`, ['tag', '-a', tag, '-m', message || tag]);
       done.push(`tagged ${tag}`);
     }
-    await step(repo, `Checking out ${cfg.develop}`, ['checkout', cfg.develop]);
-    await step(repo, `Merging ${branch} into ${cfg.develop}`, ['merge', '--no-ff', '--no-edit', branch]);
+    await step(repo, `Checking out ${cfg.develop}`, ['checkout', cfg.develop, '--']);
+    await step(repo, `Merging ${branch} into ${cfg.develop}`, ['merge', '--no-ff', '--no-edit', source]);
     done.push(`merged into ${cfg.develop}`);
   }
   await step(repo, `Deleting ${branch}`, ['branch', '-d', branch]);
@@ -2290,18 +2302,23 @@ handle('flow:finish', async (repo, { kind, branch, cfg, tag, message,
      work there, which is exactly what you want when the merge has not landed. */
   if (push && remote) {
     const branches = kind === 'feature' ? [cfg.develop] : [cfg.master, cfg.develop];
-    await step(repo, `Pushing ${branches.join(' and ')}`, ['push', remote, ...branches]);
+    // Spelled out in full: a short name that is also a tag is refused outright.
+    await step(repo, `Pushing ${branches.join(' and ')}`,
+      ['push', '--', remote, ...branches.map((b) => `refs/heads/${b}:refs/heads/${b}`)]);
     done.push(`pushed ${branches.join(' and ')}`);
     if (tag) {
       // A release tag that exists only on one machine is not a release.
-      await step(repo, `Pushing ${tag}`, ['push', remote, tag]);
+      await step(repo, `Pushing ${tag}`, ['push', '--', remote, `refs/tags/${tag}`]);
       done.push(`pushed ${tag}`);
     }
   }
 
   if (deleteRemote && remote) {
     try {
-      await step(repo, `Deleting ${remote}/${branch}`, ['push', remote, '--delete', branch]);
+      /* By its short name on purpose: a full refs/heads/ name that is not
+         there is "deleted" with only a warning, and this would then claim to
+         have removed something somebody else already had. */
+      await step(repo, `Deleting ${remote}/${branch}`, ['push', '--delete', '--', remote, branch]);
       done.push(`${remote}/${branch} deleted`);
     } catch (e) {
       /* Somebody else removed it first. That is the outcome asked for, so it is
@@ -2497,6 +2514,40 @@ handle('repo:untrack', async (repo, files) => {
   return git(repo, ['rm', '--cached', '-r', '--', ...list]);
 });
 
+/* Remote names may hold a slash — `git remote add team/fork …` is allowed — so
+   the remote a tracking ref belongs to cannot be read off its first segment.
+   The longest remote name that prefixes it is the one. */
+function splitRemoteRef(name, remoteNames) {
+  const owner = remoteNames
+    .filter((r) => name.startsWith(`${r}/`))
+    .sort((a, b) => b.length - a.length)[0];
+  if (owner) return { remote: owner, branch: name.slice(owner.length + 1) };
+  const at = name.indexOf('/');   // a ref left behind by a remote since removed
+  return at < 0 ? { remote: '', branch: name } : { remote: name.slice(0, at), branch: name.slice(at + 1) };
+}
+
+const remoteNamesOf = async (repo) =>
+  (await git(repo, ['remote']).catch(() => '')).split('\n').map((l) => l.trim()).filter(Boolean);
+
+/* The shortest name git itself would not misread. A branch and a tag both
+   called x are each "x" to a person, and git resolves a bare x to the tag; this
+   answers "heads/x" for the branch then, and plain "x" whenever that is safe —
+   which keeps merge messages reading "Merge branch 'x'" rather than spelling
+   out refs/heads/. Anything that is not a full ref name is passed through. */
+async function unambiguous(repo, ref) {
+  if (!/^refs\//.test(ref)) return ref;
+  const out = await git(repo, ['for-each-ref', '--format=%(refname:short)', ref]).catch(() => '');
+  return out.split('\n')[0].trim() || ref;
+}
+
+/* A revision the window sends: a hash, or a full ref name. Nothing that could
+   be read as an option. */
+const revision = (ref) => {
+  const r = String(ref || '').trim();
+  if (!r || r.startsWith('-')) throw new Error(`"${ref}" is not a valid revision.`);
+  return r;
+};
+
 handle('repo:refs', async (repo) => {
   /* An annotated tag is an object in its own right, so %(objectname) is the tag
      rather than the commit it marks, and %(committerdate) is empty because a tag
@@ -2505,13 +2556,21 @@ handle('repo:refs', async (repo) => {
      exactly when the plain ones are already right. */
   const fmt = ['%(refname)', '%(objectname)', '%(upstream:short)',
     '%(upstream:track)', '%(HEAD)', '%(committerdate:unix)',
-    '%(*objectname)', '%(*committerdate:unix)'].join('%1f');
-  const raw = await git(repo, ['for-each-ref', `--format=${fmt}`]);
+    '%(*objectname)', '%(*committerdate:unix)',
+    /* Where the upstream really is. Its short name cannot say: a remote may
+       have a slash in its name, the branch there may be called something else,
+       and an upstream that is another local branch has no remote at all
+       (remotename "."). */
+    '%(upstream)', '%(upstream:remotename)', '%(upstream:remoteref)'].join('%1f');
+  const [raw, remoteNames] = await Promise.all([
+    git(repo, ['for-each-ref', `--format=${fmt}`]),
+    remoteNamesOf(repo),
+  ]);
   const branches = [], remotes = [], tags = [];
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
-    const [refname, oid, upstream, track, head, date, peeledOid, peeledDate] =
-      line.split(UNIT);
+    const [refname, oid, upstream, track, head, date, peeledOid, peeledDate,
+      upstreamRef, upstreamRemote, upstreamMerge] = line.split(UNIT);
     const item = {
       refname,
       // What the ref means to the history: the commit a reader can point at.
@@ -2522,10 +2581,10 @@ handle('repo:refs', async (repo) => {
       date: Number(peeledDate || date) * 1000,
     };
     if (refname.startsWith('refs/heads/')) {
-      branches.push({ ...item, name: refname.slice(11) });
+      branches.push({ ...item, name: refname.slice(11), upstreamRef, upstreamRemote, upstreamMerge });
     } else if (refname.startsWith('refs/remotes/')) {
       const name = refname.slice(13);
-      if (!name.endsWith('/HEAD')) remotes.push({ ...item, name });
+      if (!name.endsWith('/HEAD')) remotes.push({ ...item, name, ...splitRemoteRef(name, remoteNames) });
     } else if (refname.startsWith('refs/tags/')) {
       tags.push({ ...item, name: refname.slice(10) });
     }
@@ -2535,6 +2594,7 @@ handle('repo:refs', async (repo) => {
     branches: branches.sort(sortByDate),
     remotes: remotes.sort(sortByDate),
     tags: tags.sort(sortByDate),
+    remoteNames,
   };
 });
 
@@ -2542,9 +2602,13 @@ handle('repo:refs', async (repo) => {
 /* branch level commands                                               */
 /* ------------------------------------------------------------------ */
 
+/* A new name typed as "-M" was an option: `branch -m other -M` force-renamed
+   the current branch onto other, and other's own commits went with it. */
 handle('repo:renameBranch', async (repo, from, to) => {
-  await git(repo, ['branch', '-m', from, to]);
-  return to;
+  const old = refName(from, 'branch');
+  const name = refName(to, 'branch');
+  await git(repo, ['branch', '-m', '--', old, name]);
+  return name;
 });
 
 handle('repo:setUpstream', async (repo, branch, upstream) => {
@@ -2554,34 +2618,78 @@ handle('repo:setUpstream', async (repo, branch, upstream) => {
 });
 
 /** A branch you are standing on is advanced by merging; one you are not on can
-    be moved with a fetch whose source is this same repository. */
-handle('repo:fastForward', async (repo, { branch, upstream, current }) => {
-  if (current) return git(repo, ['merge', '--ff-only', upstream]);
-  return git(repo, ['fetch', '.', `${upstream}:${branch}`]);
-});
+    be moved with a fetch whose source is this same repository. `upstream` is
+    the tracking ref's full name, so a local branch spelled like it is not the
+    one read. */
+function fastForwardTo(repo, branch, upstream, current) {
+  const name = refName(branch, 'branch');
+  const from = revision(upstream);
+  if (current) return git(repo, ['merge', '--ff-only', from]);
+  return git(repo, ['fetch', '.', `${from}:refs/heads/${name}`]);
+}
 
-handle('repo:fetchInto', async (repo, { remote, branch, upstream, current }) => {
-  await withProgress('fetch', repo, ['fetch', '--progress', remote, branch]);
+handle('repo:fastForward', async (repo, { branch, upstream, current }) =>
+  fastForwardTo(repo, branch, upstream, current));
+
+/* The branch is fetched by its name on the remote, which need not be its name
+   here: feat tracking origin/feature-x asked the server for "feat" and failed.
+   An upstream that is another local branch (remote ".") has nothing to fetch. */
+handle('repo:fetchInto', async (repo, { remote, remoteRef, branch, upstream, current }) => {
+  const name = refName(branch, 'branch');
+  if (remote !== '.') {
+    await withProgress('fetch', repo,
+      ['fetch', '--progress', '--', refName(remote, 'remote'), revision(remoteRef)]);
+  }
   // Then carry what arrived into the local branch, if it can go without a merge.
   try {
-    if (current) await git(repo, ['merge', '--ff-only', upstream]);
-    else await git(repo, ['fetch', '.', `${upstream}:${branch}`]);
+    await fastForwardTo(repo, name, upstream, current);
     return 'fetched and fast-forwarded';
-  } catch {
-    return 'fetched — the branch has diverged, so it was left alone';
+  } catch (e) {
+    /* Only a real divergence is an outcome to report calmly. A refusal over
+       local changes, or a branch checked out in another worktree, said
+       "diverged" too, which sent the reader looking for commits that did not
+       exist; git's own reason is the answer then. */
+    const counts = await git(repo, ['rev-list', '--left-right', '--count',
+      `refs/heads/${name}...${upstream}`]).catch(() => '');
+    const [ahead, behind] = counts.trim().split(/\s+/).map(Number);
+    if (ahead > 0 && behind > 0) return 'fetched — the branch has diverged, so it was left alone';
+    throw e;
   }
 });
 
-handle('repo:pushBranch', async (repo, { branch, remote, setUpstream, force }) => {
+/* One push for the toolbar and the sidebar alike. The refspec names both ends
+   in full: the local branch, so a tag of the same name cannot make it "match
+   more than one", and the branch it tracks on the remote, which is not always
+   the one with its own name — a bare `push origin feat` created a second
+   branch beside the feature-x it was meant to update.
+
+   A forced push carries the remote commit the reader last saw as the lease.
+   A bare --force-with-lease checks against the tracking ref, and a background
+   fetch moves that ref without anyone looking — after which the lease passes
+   and overwrites commits nobody here has seen. */
+function pushArgs({ branch, remote, remoteRef, setUpstream, force, expect }) {
+  const name = refName(branch, 'branch');
+  const where = refName(remote, 'remote');
+  const dst = remoteRef || `refs/heads/${name}`;
+  if (!/^refs\/heads\/./.test(dst)) throw new Error(`"${dst}" is not a branch on ${where}.`);
   const args = ['push', '--progress'];
-  if (force) args.push('--force-with-lease');
+  if (force) {
+    if (typeof expect !== 'string' || !/^([0-9a-f]{40}|[0-9a-f]{64})?$/.test(expect)) {
+      throw new Error('A forced push needs the remote commit it expects to replace.');
+    }
+    args.push(`--force-with-lease=${dst}:${expect}`);
+  }
   if (setUpstream) args.push('--set-upstream');
-  args.push(remote, branch);
-  return withProgress('push', repo, args);
-});
+  args.push('--', where, `refs/heads/${name}:${dst}`);
+  return args;
+}
+
+handle('repo:pushBranch', async (repo, opts) =>
+  withProgress('push', repo, pushArgs(opts || {})));
 
 handle('repo:deleteRemoteBranch', async (repo, remote, branch) =>
-  git(repo, ['push', remote, '--delete', branch]));
+  git(repo, ['push', '--delete', '--', refName(remote, 'remote'),
+    `refs/heads/${refName(branch, 'branch')}`]));
 
 handle('repo:deleteTag', async (repo, tag) => git(repo, ['tag', '-d', tag]));
 
@@ -2594,7 +2702,7 @@ handle('repo:deleteTag', async (repo, tag) => git(repo, ['tag', '-d', tag]));
 handle('repo:compare', async (repo, a, b, ignoreWhitespace, context) => {
   const args = diffArgs('diff', '--no-color');
   if (ignoreWhitespace) args.push('-w');
-  args.push(...contextArg(context), `${a}...${b}`);
+  args.push(...contextArg(context), `${revision(a)}...${revision(b)}`);
   return git(repo, args);
 });
 
@@ -2689,8 +2797,11 @@ handle('askpass:storage', async (repo) =>
 handle('repo:remotes', async (repo) => {
   const raw = await git(repo, ['remote', '-v']);
   const map = new Map();
+  /* Split on the tab git puts after the name. Matching the URL as \S+ dropped
+     every remote whose path holds a space — "Project Pribadi/…" — and the
+     menu then offered to add a remote the repository already had. */
   for (const line of raw.split('\n')) {
-    const m = line.match(/^(\S+)\s+(\S+)\s+\((fetch|push)\)$/);
+    const m = line.match(/^([^\t]+)\t(.*) \((fetch|push)\)$/);
     if (m && !map.has(m[1])) map.set(m[1], { name: m[1], url: m[2] });
   }
   return [...map.values()];
@@ -3096,23 +3207,49 @@ const CHECKOUT_MODES = new Set(['keep', 'stash', 'discard']);
 const stashTop = (repo) =>
   git(repo, ['rev-parse', '--verify', '-q', 'refs/stash']).catch(() => '');
 
+/* What `git checkout` is handed for each kind of thing the window can name.
+   Every form ends in `--`, so a name that is also a file or folder in the work
+   tree is read as the revision it was meant to be — `checkout docs` beside a
+   docs/ folder was refused as "could be both a local file and a tracking
+   branch".
+
+   - refs/heads/x    by its short name, which checkout always reads as the
+                     branch (even beside a tag x) and which leaves you on it;
+                     the full name would detach.
+   - refs/remotes/…  the local branch of that name, created to track it when
+                     there is none yet. Spelled out rather than left to git's
+                     guess, which needs the name to be unique across remotes.
+   - anything else   a tag or a commit, checked out detached. */
+async function checkoutTarget(repo, ref) {
+  const r = revision(ref);
+  if (r.startsWith('refs/heads/')) return { args: [r.slice(11), '--'], shown: r.slice(11) };
+  if (r.startsWith('refs/remotes/')) {
+    const { branch } = splitRemoteRef(r.slice(13), await remoteNamesOf(repo));
+    const local = refName(branch, 'branch');
+    const exists = await git(repo, ['show-ref', '--verify', '-q', `refs/heads/${local}`])
+      .then(() => true, () => false);
+    return { args: exists ? [local, '--'] : ['-b', local, '--track', r], shown: local };
+  }
+  return { args: [r, '--'], shown: r.replace(/^refs\/tags\//, '') };
+}
+
 handle('repo:checkoutWith', async (repo, ref, mode) => {
   if (!CHECKOUT_MODES.has(mode)) throw new Error(`Unknown checkout mode: ${mode}`);
+  const target = await checkoutTarget(repo, ref);
 
   if (mode !== 'stash') {
-    const args = mode === 'discard' ? ['checkout', '--force', ref] : ['checkout', ref];
-    await git(repo, args);
+    await git(repo, ['checkout', ...(mode === 'discard' ? ['--force'] : []), ...target.args]);
     return { stash: 'none' };
   }
 
   const before = await stashTop(repo);
-  await git(repo, ['stash', 'push', '--include-untracked', '-m', `GitBraid: switching to ${ref}`]);
+  await git(repo, ['stash', 'push', '--include-untracked', '-m', `GitBraid: switching to ${target.shown}`]);
   // `stash push` with nothing to save is a success that stashes nothing, so the
   // ref itself is the only trustworthy evidence that anything was set aside.
   const stashed = (await stashTop(repo)) !== before;
 
   try {
-    await git(repo, ['checkout', ref]);
+    await git(repo, ['checkout', ...target.args]);
   } catch (e) {
     // A refused switch must cost nothing: put the work back where it was.
     if (stashed) await git(repo, ['stash', 'pop']).catch(() => {});
@@ -3140,8 +3277,10 @@ const refName = (name, what) => {
 
 handle('repo:createBranch', async (repo, name, startPoint, checkout) => {
   const branch = refName(name, 'branch');
-  if (checkout) return git(repo, ['checkout', '-b', branch, ...(startPoint ? [startPoint] : [])]);
-  return git(repo, ['branch', branch, ...(startPoint ? [startPoint] : [])]);
+  // A full ref name keeps a tag spelled like a branch from being the start.
+  const from = startPoint ? [await unambiguous(repo, revision(startPoint))] : [];
+  if (checkout) return git(repo, ['checkout', '-b', branch, ...from]);
+  return git(repo, ['branch', branch, ...from]);
 });
 
 handle('repo:deleteBranch', async (repo, name, force) =>
@@ -3153,8 +3292,11 @@ handle('repo:deleteBranch', async (repo, name, force) =>
    straight line. Merging the wrong way round is the easy mistake, and no button
    label can show it. */
 handle('repo:mergeInfo', async (repo, ref) => {
-  const head = (await git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
-  const counts = await git(repo, ['rev-list', '--left-right', '--count', `HEAD...${ref}`]);
+  // Read as a ref rather than abbreviated: --abbrev-ref answers "heads/x" for a
+  // branch that shares its name with a tag.
+  const sym = (await git(repo, ['symbolic-ref', '-q', 'HEAD']).catch(() => '')).trim();
+  const head = sym.startsWith('refs/heads/') ? sym.slice(11) : 'HEAD';
+  const counts = await git(repo, ['rev-list', '--left-right', '--count', `HEAD...${revision(ref)}`]);
   const [outgoing, incoming] = counts.trim().split(/\s+/).map(Number);
   /* A fast-forward is possible exactly when HEAD is already an ancestor of the
      other ref — that is, when nothing here is missing from there. The counts
@@ -3172,11 +3314,15 @@ handle('repo:merge', async (repo, ref, mode = 'ff') => {
   // --squash brings the changes in and stages them; it deliberately does not
   // commit, so the reader writes the message themselves.
   if (mode === 'squash') args.push('--squash');
-  args.push(ref);
+  /* The window sends the full ref name, so a tag called x is never merged in
+     place of the branch x. Shortened again here only as far as stays
+     unambiguous, because git writes the name into the merge message. */
+  args.push(await unambiguous(repo, revision(ref)));
   return git(repo, args);
 });
 
-handle('repo:rebase', async (repo, ref) => git(repo, ['rebase', ref]));
+handle('repo:rebase', async (repo, ref) =>
+  git(repo, ['rebase', await unambiguous(repo, revision(ref))]));
 
 const RESET_MODES = new Set(['soft', 'mixed', 'hard', 'merge', 'keep']);
 
@@ -3199,7 +3345,8 @@ handle('repo:cherryPick', async (repo, hash, mainline = 0) =>
 
 handle('repo:tag', async (repo, name, hash, message) => {
   const tag = refName(name, 'tag');
-  return git(repo, message ? ['tag', '-a', tag, hash, '-m', message] : ['tag', tag, hash]);
+  const at = await unambiguous(repo, revision(hash));
+  return git(repo, message ? ['tag', '-a', tag, at, '-m', message] : ['tag', tag, at]);
 });
 
 /* --- remote ops --- */
@@ -3249,13 +3396,10 @@ handle('repo:pull', async (repo, { mode = 'ff' } = {}) => {
   return withProgress('pull', repo, ['pull', ...how, '--progress']);
 });
 
-handle('repo:push', async (repo, { branch, remote = 'origin', setUpstream, force }) => {
-  const args = ['push', '--progress'];
-  if (force) args.push('--force-with-lease');
-  if (setUpstream) args.push('-u');
-  args.push(remote, branch);
-  return withProgress('push', repo, args);
-});
+/* The toolbar's push. It used to assume a remote called origin and a branch
+   there of the same name; it now takes the same answers the sidebar does. */
+handle('repo:push', async (repo, opts) =>
+  withProgress('push', repo, pushArgs(opts || {})));
 
 
 /* ------------------------------------------------------------------ */
