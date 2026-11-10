@@ -183,7 +183,7 @@ git config --local user.email "email-yang-Anda-pilih"
 npm test
 ```
 
-758 test dalam enam berkas. `test/run.js` menjalankan setiap `*.test.js` di
+781 test dalam enam berkas. `test/run.js` menjalankan setiap `*.test.js` di
 prosesnya sendiri, sehingga repo, stub, dan environment satu berkas tidak
 bocor ke berkas berikutnya.
 
@@ -2011,21 +2011,26 @@ menulis dua kunci ini; kunci lain ditolak.
 **Audit kedua: yang dilakukan berbeda dari yang dikatakan**
 - Setelah 0.11.1, empat pemeriksaan paralel per area (cabang dan remote;
   konflik, stash, dan riwayat berkas; sistem dan updater; tampilan dan
-  keyboard). Uji naik dari 535 ke 758, dan sebagian besar memanggil handler
+  keyboard). Uji naik dari 535 ke 781, dan sebagian besar memanggil handler
   yang asli lewat harness baru. Setiap uji baru dibuktikan gagal pada kode
-  lama. Lima driver Electron (134 langkah) ditambah driver audit pertama lulus
+  lama. Lima driver Electron (135 langkah) ditambah driver audit pertama lulus
   tanpa error di konsol
 - **Konflik**: "Keep your version" memakai `--ours` di setiap operasi, padahal
   saat rebase ours adalah upstream; commit pengguna hilang dari cabang. Kini
   jendela meminta `mine`/`incoming`, dan `conflictSides()` di main.js satu-
   satunya tempat yang menerjemahkannya per operasi. Sisi yang menghapus
-  berkas di-`git rm`; "Mark resolved" bertanya bila penanda konflik masih ada;
-  cherry-pick, revert, dan rebase punya Skip
+  berkas di-`git rm`, dan berkas yang sudah tidak berkonflik ditolak alih-alih
+  dihapus; "Mark resolved" bertanya bila penanda konflik masih ada;
+  cherry-pick, revert, rebase, dan `git am` punya Skip, dan `git am` tidak lagi
+  terbaca sebagai rebase
 - **Cabang dan remote**: rename ke `-M` memaksa cabang aktif pindah nama;
   tag dan cabang bernama sama tertukar karena handler menerima nama pendek;
   push selalu ke `origin` dengan nama lokal; remote yang path-nya berspasi
   tidak terbaca. Kini sidebar mengirim nama ref lengkap, push memakai
-  `%(upstream:remotename)`/`%(upstream:remoteref)`, cabang tanpa upstream ke
+  `%(upstream:remotename)`/`%(upstream:remoteref)` — tetapi cabang yang
+  melacak cabang bernama lain (git melakukannya sendiri untuk cabang yang
+  dibuat dari origin/main) ditanya dulu, kecuali `push.default=upstream` —
+  cabang tanpa upstream ke
   origin atau ditanyakan, dan force push dari toolbar dikonfirmasi serta
   memakai lease atas commit yang terakhir dilihat
 - **Stash dan riwayat berkas**: drop memakai `stash@{n}` yang bisa bergeser
