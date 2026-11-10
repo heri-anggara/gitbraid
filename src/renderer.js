@@ -6257,7 +6257,10 @@ async function offerUpdate() {
       ? 'GitBraid will hand the package to your system installer, which asks for '
         + 'your password — installing system packages needs rights this app does '
         + 'not have and should not ask for.'
-      : 'This build cannot update itself; the release page has the files.';
+      : kind === 'flatpak'
+        ? 'Flatpak keeps this copy up to date: update it from your software centre, '
+          + 'or run flatpak update io.github.heri_anggara.GitBraid.'
+        : 'This build cannot update itself; the release page has the files.';
 
   const r = await modal({
     title: `GitBraid ${update.latest} is available`,
@@ -6265,9 +6268,10 @@ async function offerUpdate() {
     html: '<div class="modal-field up-notes">' +
       `<div class="up-title">${esc(update.title || `Version ${update.latest}`)}</div>` +
       `<div class="up-body">${notesHtml(update.notes)}</div></div>`,
-    confirmLabel: kind === 'other' ? 'Open the release page' : 'Download and install',
+    confirmLabel: kind === 'other' ? 'Open the release page'
+      : kind === 'flatpak' ? 'OK' : 'Download and install',
   });
-  if (!r) return;
+  if (!r || kind === 'flatpak') return;
 
   if (kind === 'other') { call('shell:openExternal', update.page); return; }
 
