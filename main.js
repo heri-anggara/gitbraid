@@ -2904,7 +2904,10 @@ handle('repo:deleteRemoteBranch', async (repo, remote, branch) =>
   git(repo, ['push', '--delete', '--', refName(remote, 'remote'),
     `refs/heads/${refName(branch, 'branch')}`]));
 
-handle('repo:deleteTag', async (repo, tag) => git(repo, ['tag', '-d', tag]));
+/* The name comes from the repository's own refs, and a tag may begin with a
+   dash where a branch may not: without the `--` a tag named -q was read as an
+   option and could not be deleted at all. */
+handle('repo:deleteTag', async (repo, tag) => git(repo, ['tag', '-d', '--', String(tag)]));
 
 /** What is on `b` that is not yet on `a`. */
 /* The window sends five arguments and this took three, so "ignore whitespace"

@@ -5,14 +5,26 @@
 # a tag, a stash, and a conflict — without a line of anything private in it.
 # Everything here is invented.
 #
-#   ./screenshots/make-demo.sh [target-folder]
+#   ./screenshots/make-demo.sh <target-folder>
 set -e
-DIR=${1:-"$HOME/Documents/Project Pribadi/gitbraid-demo/inkwell"}
-rm -rf "$DIR"
+DIR=${1:?usage: ./screenshots/make-demo.sh <target-folder>}
+# The folder is rebuilt from nothing on every run, so it is only ever deleted
+# when this script made it — a mark it leaves inside .git says so — or when it
+# is empty. A mistyped argument must not be able to take a real folder with it.
+MARK="$DIR/.git/gitbraid-demo"
+if [ -e "$DIR" ]; then
+  if [ -f "$MARK" ]; then
+    rm -rf "$DIR"
+  elif [ -n "$(ls -A "$DIR")" ]; then
+    echo "make-demo.sh: $DIR exists and is not a demo this script built; refusing to delete it." >&2
+    exit 1
+  fi
+fi
 mkdir -p "$DIR"
 cd "$DIR"
 
 git init -q -b main
+touch .git/gitbraid-demo
 git config user.name  'Heri Anggara'
 git config user.email 'herianggara2409@gmail.com'
 git config commit.gpgsign false
