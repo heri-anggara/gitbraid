@@ -92,8 +92,14 @@
     else case when default in yield var const let`);
   const PUG_LITERALS = words('true false null undefined');
 
-  /* Each entry is tried in order at the current position. `re` must be sticky. */
-  const clike = (keywords, literals, types, lineComment) => [
+  /* Each entry is tried in order at the current position. `re` must be sticky.
+     `ident` is what ends a name: a word boundary everywhere but Ruby, whose
+     methods may end in ? or ! — `defined?` was in the keyword list and never
+     coloured, because the name stopped at the question mark. With
+     `keywordsCall` off a keyword before a bracket stays a keyword, which is
+     how Ruby writes `defined?(x)`; the other tables keep what they had. */
+  const clike = (keywords, literals, types, lineComment,
+                 { ident = '\\b', keywordsCall = true } = {}) => [
     { cls: 'hl-com', re: new RegExp(`${lineComment}.*`, 'y') },
     { cls: 'hl-com', re: /\/\*[\s\S]*?(?:\*\/|$)/y },
     { cls: 'hl-com', re: /\*\/|^\s*\*(?!\/)/y },          // middle of a block comment
@@ -102,8 +108,9 @@
     { cls: 'hl-str', re: /'(?:\\.|[^'\\])*'?/y },
     { cls: 'hl-num', re: /\b(?:0[xXbBoO][0-9a-fA-F_]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?)n?\b/y },
     { cls: 'hl-tag', re: /<\/?[A-Z][\w.]*|<\/?[a-z][\w-]*(?=[\s/>])/y },
-    { cls: 'hl-fn',  re: /\b[A-Za-z_$][\w$]*(?=\s*\()/y },
-    { word: true,    re: /\b[A-Za-z_$][\w$]*\b/y, keywords, literals, types },
+    { cls: 'hl-fn',  re: new RegExp(`\\b[A-Za-z_$][\\w$]*(?:${ident})?(?=\\s*\\()`, 'y'),
+      unless: keywordsCall ? null : keywords },
+    { word: true,    re: new RegExp(`\\b[A-Za-z_$][\\w$]*(?:${ident})`, 'y'), keywords, literals, types },
     { cls: 'hl-op',  re: /[=+\-*/%!<>&|^~?:]+/y },
     { cls: null,     re: /\s+|[\s\S]/y },
   ];
@@ -112,7 +119,8 @@
     js: clike(JS_KEYWORDS, JS_LITERALS, JS_TYPES, '//'),
     /* Ruby comments with #, and its block form is =begin/=end rather than the
        C one — but that never appears mid-line, so the C rules cost nothing. */
-    ruby: clike(RB_KEYWORDS, RB_LITERALS, words('Integer String Symbol Hash Array Float Struct Comparable Enumerable'), '#'),
+    ruby: clike(RB_KEYWORDS, RB_LITERALS, words('Integer String Symbol Hash Array Float Struct Comparable Enumerable'), '#',
+      { ident: '[?!](?!=)|\\b', keywordsCall: false }),
     // PHP takes both // and #, and $variables fall through as ordinary words.
     php: clike(PHP_KEYWORDS, PHP_LITERALS, PHP_TYPES, '(?://|#)'),
     json: [
@@ -180,7 +188,14 @@
       { cls: null, re: /\s+|[\s\S]/y },
     ],
     go: clike(GO_KEYWORDS, words('nil true false iota'), words(''), '//'),
-    rust: clike(RS_KEYWORDS, words('true false None Some Ok Err'), words(''), '//'),
+    /* A lifetime opens with the quote a char literal does and never closes
+       it, so the char rule took `'a>(x: &'` for a string and swallowed the
+       real string after it. Tried first: a quote followed by a name and no
+       closing quote is a lifetime; 'a' and '\n' still reach the char rule. */
+    rust: [
+      { cls: 'hl-attr', re: /'[A-Za-z_]\w*(?![\w'])/y },
+      ...clike(RS_KEYWORDS, words('true false None Some Ok Err'), words(''), '//'),
+    ],
 
     /* The tag opens the line and the indentation carries the nesting, so the
        first rule anchored at the start is what finds the element. `^` only
@@ -297,6 +312,7 @@
         rule.re.lastIndex = i;
         const m = rule.re.exec(src);
         if (!m || m.index !== i || m[0] === '') continue;
+        if (rule.unless && rule.unless.has(m[0])) continue;   // the word rule below has it
 
         if (rule.word) {
           const w = m[0];
