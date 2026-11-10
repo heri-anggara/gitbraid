@@ -1345,6 +1345,7 @@ textarea {
 .chev { font-size: 9px; transition: transform .12s; }
 .side-group.collapsed .chev { transform: rotate(-90deg); }
 .side-group.collapsed .side-list { display: none; }
+.side-list > li:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .side-count { margin-left: auto; font-family: var(--mono); }
 
 .side-list { list-style: none; margin: 0; padding: 0 6px; }
