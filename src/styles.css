@@ -680,14 +680,17 @@ textarea {
 }
 .profile-name { overflow: hidden; text-overflow: ellipsis; }
 
-/* Hue comes from the address, so the same person keeps the same colour. */
+/* Hue comes from the address, so the same person keeps the same colour.
+   The lightness is what keeps the white initials readable on every hue: at
+   46% half the wheel fell under 4.5:1, yellow to 2.25:1. 31% is the lightest
+   that clears 4.5:1 all the way round (test/ui.test.js measures all 360). */
 .avatar {
   display: grid;
   place-items: center;
   width: 22px; height: 22px;
   flex: none;
   border-radius: 50%;
-  background: hsl(var(--hue, 240) 52% 46%);
+  background: hsl(var(--hue, 240) 52% 31%);
   color: #fff;
   font-size: 10px;
   font-weight: 700;
@@ -1861,6 +1864,12 @@ textarea {
   font-weight: 650;
 }
 .pf-avatar-alt { background: var(--surface-3); color: var(--text-dim); }
+/* Light's accent carries white at 4.1:1 and its dim text sits on surface-3 at
+   4.49:1 — both under the 4.5:1 that letters this size need. The two discs
+   take the theme's own darker shades there; every other theme already clears
+   it (measured in test/ui.test.js). */
+:root[data-theme="light"] .pf-avatar:not(.pf-avatar-alt) { background: var(--accent-hi); }
+:root[data-theme="light"] .pf-avatar-alt { color: var(--text); }
 
 .pf-fields { display: grid; gap: 10px; padding: 14px; }
 .pf-field { display: grid; grid-template-columns: 66px minmax(0, 1fr); align-items: center; gap: 10px; }
@@ -3387,7 +3396,7 @@ mark {
 .c-face-ini {
   display: grid;
   place-items: center;
-  background: hsl(var(--hue, 240) 52% 46%);
+  background: hsl(var(--hue, 240) 52% 31%);
   color: #fff;
   font-size: 8px;
   font-weight: 700;
@@ -3400,6 +3409,9 @@ mark {
 
 .commit-row:hover { background-color: var(--row-hover); }
 .commit-row.selected { background-color: var(--row-sel); }
+/* The row the arrow keys are on. Inset, because the list clips at its edges
+   and an outline drawn outside the row would be cut away. */
+.commit-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .commit-row.pending .c-msg-text { color: var(--pending); font-weight: 600; }
 
 .c-msg-text {
@@ -4049,9 +4061,11 @@ mark {
   box-shadow: 0 12px 30px rgba(0, 0, 0, .45);
 }
 .ctxmenu li { padding: 5px 10px; border-radius: 4px; cursor: pointer; }
-.ctxmenu li:hover { background: var(--accent); color: var(--accent-ink); }
+.ctxmenu li:hover,
+.ctxmenu li:focus { background: var(--accent); color: var(--accent-ink); outline: none; }
 .ctxmenu li.sep { height: 1px; padding: 0; margin: 4px 2px; background: var(--line); pointer-events: none; }
-.ctxmenu li.danger:hover { background: var(--danger); }
+.ctxmenu li.danger:hover,
+.ctxmenu li.danger:focus { background: var(--danger); }
 /* Shown but not available — the reason sits in its tooltip. */
 .ctxmenu li.checkable { display: flex; align-items: baseline; gap: 7px; }
 .ctxmenu li .ctx-tick {
@@ -4061,7 +4075,8 @@ mark {
   font-size: 11px;
   color: var(--accent);
 }
-.ctxmenu li.checkable:hover .ctx-tick { color: var(--accent-ink); }
+.ctxmenu li.checkable:hover .ctx-tick,
+.ctxmenu li.checkable:focus .ctx-tick { color: var(--accent-ink); }
 .ctxmenu li.has-accel { display: flex; align-items: baseline; gap: 7px; }
 .ctxmenu li .ctx-accel {
   margin-left: auto;
@@ -4071,7 +4086,8 @@ mark {
   color: var(--text-faint);
   white-space: nowrap;
 }
-.ctxmenu li:hover .ctx-accel { color: var(--accent-ink); opacity: .75; }
+.ctxmenu li:hover .ctx-accel,
+.ctxmenu li:focus .ctx-accel { color: var(--accent-ink); opacity: .75; }
 .ctxmenu li.off { color: var(--text-faint); cursor: default; }
 /* A heading, not an action. */
 .ctxmenu li.off:first-child {

@@ -483,112 +483,178 @@ function fieldHtml(f) {
  * from another, `api.note` for the line under the form, and `api.invalid` to
  * block the confirm button beyond the automatic `required` check.
  */
-function modal({
+/* #modal is one element, so a second dialog asked for while one is up waits
+   its turn instead of being painted over the first. Painted over, the first
+   one's listeners stayed bound to the same OK button: one click answered both
+   questions, the second with values collected from the first one's fields. */
+const modalQueue = [];
+let modalOpen = false;
+/* Where the keyboard was before the first dialog of a run took it, so closing
+   the last one gives it back rather than leaving it on <body>. */
+let modalReturn = null;
+
+function modal(opts) {
+  return new Promise((resolve) => {
+    modalQueue.push({ opts, resolve });
+    if (!modalOpen) nextModal();
+  });
+}
+
+function nextModal() {
+  const turn = modalQueue.shift();
+  if (!turn) {
+    modalOpen = false;
+    const back = modalReturn;
+    modalReturn = null;
+    if (back && back.isConnected && back !== document.body) back.focus({ preventScroll: true });
+    return;
+  }
+  modalOpen = true;
+  if (!modalReturn) modalReturn = document.activeElement;
+  showModal(turn.opts, (value) => {
+    turn.resolve(value);
+    nextModal();
+  });
+}
+
+/* What Tab may land on inside the card. A field revealed later (a checkbox
+   that waits on a slow answer) is skipped while it is still hidden. */
+const MODAL_FOCUSABLE = 'button, input, select, textarea, [tabindex]:not([tabindex="-1"])';
+const modalStops = () => [...$('modal').querySelector('.modal-card').querySelectorAll(MODAL_FOCUSABLE)]
+  .filter((n) => !n.disabled && !n.hidden && n.getClientRects().length > 0);
+
+function showModal({
   title, description = '', fields = [], confirmLabel = 'Confirm',
   danger = false, onChange = null, html = '', hideCancel = false,
   cancelLabel = 'Cancel',
-}) {
-  return new Promise((resolve) => {
-    $('modal-title').textContent = title;
-    $('modal-desc').textContent = description;
-    $('modal-desc').hidden = !description;
+}, resolve) {
+  $('modal-title').textContent = title;
+  $('modal-desc').textContent = description;
+  $('modal-desc').hidden = !description;
 
-    const wrap = $('modal-fields');
-    wrap.innerHTML = html || fields.map(fieldHtml).join('');
+  const wrap = $('modal-fields');
+  wrap.innerHTML = html || fields.map(fieldHtml).join('');
 
-    const ok = $('modal-ok');
-    ok.textContent = confirmLabel;
-    ok.classList.toggle('btn-danger', danger);
-    $('modal-cancel').hidden = hideCancel;
-    /* Naming it matters when both buttons are real choices: "Later" is a
-       decision, "Cancel" sounds like backing out of one. */
-    $('modal-cancel').textContent = cancelLabel;
-    $('modal-note').hidden = true;
-    $('modal-note').textContent = '';
-    $('modal').hidden = false;
+  const ok = $('modal-ok');
+  ok.textContent = confirmLabel;
+  ok.classList.toggle('btn-danger', danger);
+  $('modal-cancel').hidden = hideCancel;
+  /* Naming it matters when both buttons are real choices: "Later" is a
+     decision, "Cancel" sounds like backing out of one. */
+  $('modal-cancel').textContent = cancelLabel;
+  $('modal-note').hidden = true;
+  $('modal-note').textContent = '';
+  $('modal').hidden = false;
 
-    const collect = () => {
-      const out = {};
-      wrap.querySelectorAll('[data-field]').forEach((i) => {
-        if (i.type === 'radio') { if (i.checked) out[i.dataset.field] = i.value; return; }
-        if (i.type === 'checkbox') { out[i.dataset.field] = i.checked; return; }
-        /* Everything else here is an identifier, and a stray space in one is a
-           typo. A secret is not: a passphrase may legitimately begin or end
-           with a space, and trimming it would refuse a correct answer. */
-        out[i.dataset.field] = i.type === 'password' ? i.value : i.value.trim();
-      });
-      return out;
-    };
+  const collect = () => {
+    const out = {};
+    wrap.querySelectorAll('[data-field]').forEach((i) => {
+      if (i.type === 'radio') { if (i.checked) out[i.dataset.field] = i.value; return; }
+      if (i.type === 'checkbox') { out[i.dataset.field] = i.checked; return; }
+      /* Everything else here is an identifier, and a stray space in one is a
+         typo. A secret is not: a passphrase may legitimately begin or end
+         with a space, and trimming it would refuse a correct answer. */
+      out[i.dataset.field] = i.type === 'password' ? i.value : i.value.trim();
+    });
+    return out;
+  };
 
-    let blocked = false;
-    const api = {
-      set(name, value) {
-        const input = wrap.querySelector(`[data-field="${name}"]`);
-        if (input && input.value !== value) input.value = value;
-      },
-      note(text, isError = false) {
-        const n = $('modal-note');
-        n.textContent = text || '';
-        n.hidden = !text;
-        n.classList.toggle('error', !!isError);
-      },
-      invalid(reason) {
-        blocked = true;
-        if (reason) api.note(reason, true);
-      },
-    };
+  let blocked = false;
+  const api = {
+    set(name, value) {
+      const input = wrap.querySelector(`[data-field="${name}"]`);
+      if (input && input.value !== value) input.value = value;
+    },
+    note(text, isError = false) {
+      const n = $('modal-note');
+      n.textContent = text || '';
+      n.hidden = !text;
+      n.classList.toggle('error', !!isError);
+    },
+    invalid(reason) {
+      blocked = true;
+      if (reason) api.note(reason, true);
+    },
+  };
 
-    const validate = () => {
-      blocked = false;
-      if (onChange) onChange(collect(), api);
-      const v = collect();
-      const missing = fields.some((f) => f.required && !String(v[f.name] ?? '').trim());
-      ok.disabled = missing || blocked;
-    };
+  const validate = () => {
+    blocked = false;
+    if (onChange) onChange(collect(), api);
+    const v = collect();
+    const missing = fields.some((f) => f.required && !String(v[f.name] ?? '').trim());
+    ok.disabled = missing || blocked;
+  };
 
-    const onEdit = () => validate();
-    const onBrowse = async (e) => {
-      const btn = e.target.closest('[data-browse]');
-      if (!btn) return;
-      const target = wrap.querySelector(`[data-field="${btn.dataset.browse}"]`);
-      const dir = await call('repo:pickDirectory', target?.value || '');
-      if (dir) { target.value = dir; validate(); }
-    };
+  const onEdit = () => validate();
+  const onBrowse = async (e) => {
+    const btn = e.target.closest('[data-browse]');
+    if (!btn) return;
+    const target = wrap.querySelector(`[data-field="${btn.dataset.browse}"]`);
+    const dir = await call('repo:pickDirectory', target?.value || '');
+    if (dir) { target.value = dir; validate(); }
+  };
 
-    wrap.addEventListener('input', onEdit);
-    wrap.addEventListener('change', onEdit);
-    wrap.addEventListener('click', onBrowse);
-    validate();
+  wrap.addEventListener('input', onEdit);
+  wrap.addEventListener('change', onEdit);
+  wrap.addEventListener('click', onBrowse);
+  validate();
 
-    const firstEmpty =
-      [...wrap.querySelectorAll('input[type="text"],input[type="password"]')]
-        .find((i) => !i.value) ||
-      el('input[type="text"],input[type="password"]', wrap);
-    if (firstEmpty) { firstEmpty.focus(); firstEmpty.select(); }
+  const firstEmpty =
+    [...wrap.querySelectorAll('input[type="text"],input[type="password"]')]
+      .find((i) => !i.value) ||
+    el('input[type="text"],input[type="password"]', wrap);
+  /* The keyboard goes into the card, always. Left where it was, keys meant
+     for the dialog reached whatever sat behind the scrim: Enter on a file
+     list stood still under "Discard 2 files" staged those files while the
+     dialog discarded them. A field to type in comes first; otherwise the
+     safe answer — Cancel on a dialog that destroys something, so a stray
+     Enter backs out, and the confirm button everywhere else. */
+  if (firstEmpty) { firstEmpty.focus(); firstEmpty.select(); }
+  else if (danger && !hideCancel) $('modal-cancel').focus();
+  else ok.focus();
 
-    const close = (value) => {
-      $('modal').hidden = true;
-      ok.disabled = false;
-      $('modal-cancel').hidden = false;
-      wrap.removeEventListener('input', onEdit);
-      wrap.removeEventListener('change', onEdit);
-      wrap.removeEventListener('click', onBrowse);
-      ok.removeEventListener('click', onOk);
-      $('modal-cancel').removeEventListener('click', onCancel);
-      document.removeEventListener('keydown', onKey);
-      resolve(value);
-    };
-    const onOk = () => { if (!ok.disabled) close(collect()); };
-    const onCancel = () => close(null);
-    const onKey = (e) => {
-      if (e.key === 'Escape') onCancel();
-      if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') onOk();
-    };
+  const close = (value) => {
+    $('modal').hidden = true;
+    ok.disabled = false;
+    $('modal-cancel').hidden = false;
+    wrap.removeEventListener('input', onEdit);
+    wrap.removeEventListener('change', onEdit);
+    wrap.removeEventListener('click', onBrowse);
+    ok.removeEventListener('click', onOk);
+    $('modal-cancel').removeEventListener('click', onCancel);
+    document.removeEventListener('keydown', onKey);
+    resolve(value);
+  };
+  const onOk = () => { if (!ok.disabled) close(collect()); };
+  const onCancel = () => close(null);
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); onCancel(); return; }
+    if (e.key === 'Tab') {
+      /* Kept inside the card: Tab used to walk on into the history and the
+         toolbar behind the scrim, where the next key did something else. */
+      const stops = modalStops();
+      if (!stops.length) return;
+      const at = stops.indexOf(document.activeElement);
+      const to = at < 0 ? (e.shiftKey ? stops.length - 1 : 0)
+        : e.shiftKey ? (at === 0 ? stops.length - 1 : -1)
+          : (at === stops.length - 1 ? 0 : -1);
+      if (to >= 0) { e.preventDefault(); stops[to].focus(); }
+      return;
+    }
+    /* Enter on a button is that button's own: Cancel focused and Enter
+       pressed used to confirm, because this ran first and answered OK. A
+       textarea keeps its newline. Anywhere else Enter is the confirm, and
+       the key is spent here — left alive, its keypress went on to click
+       whatever got the focus back when the dialog closed. */
+    if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA' && !e.target.closest('button')) {
+      e.preventDefault();
+      onOk();
+    }
+  };
 
-    ok.addEventListener('click', onOk);
-    $('modal-cancel').addEventListener('click', onCancel);
-    document.addEventListener('keydown', onKey);
-  });
+  ok.addEventListener('click', onOk);
+  $('modal-cancel').addEventListener('click', onCancel);
+  document.addEventListener('keydown', onKey);
 }
 
 /* ═════ credentials ═════════════════════════════════════════════ */
@@ -704,22 +770,46 @@ function hideTip() {
   $('tooltip').hidden = true;
 }
 
-document.addEventListener('mouseover', (e) => {
-  const target = e.target.closest('[title], [data-tip]');
+/* Taking the `title` away also took the only name an icon-only button had:
+   after one hover a screen reader announced "button" and nothing else. The
+   text moves to aria-label on a control with no words of its own, and to
+   aria-description on anything else, so it is still read wherever it went.
+   Only labels this put there are rewritten — one written in the markup is the
+   author's and stays. */
+function lendTitle(target) {
+  const text = target.title;
+  target.dataset.tip = text;
+  target.removeAttribute('title');
+  const iconOnly = target.matches('button, [role="button"]') && !target.textContent.trim();
+  const attr = iconOnly ? 'aria-label' : 'aria-description';
+  if (!target.hasAttribute(attr) || target.dataset.tipAria === attr) {
+    target.setAttribute(attr, text);
+    target.dataset.tipAria = attr;
+  }
+}
+
+function aimTip(target) {
   if (!target || target === tip.el) return;
   hideTip();
   // A live `title` always wins, so labels that change stay truthful.
-  if (target.title) {
-    target.dataset.tip = target.title;
-    target.removeAttribute('title');
-  }
+  if (target.title) lendTitle(target);
   tip.el = target;
   tip.timer = setTimeout(() => showTip(target), 380);
-});
+}
+
+document.addEventListener('mouseover', (e) => aimTip(e.target.closest('[title], [data-tip]')));
 
 document.addEventListener('mouseout', (e) => {
   if (tip.el && !tip.el.contains(e.relatedTarget)) hideTip();
 });
+/* The keyboard gets the same hint the pointer does. Only for focus the
+   keyboard moved — a click focuses a button too, and a tip popping up under
+   the pointer that just pressed it is noise. */
+document.addEventListener('focusin', (e) => {
+  const t = e.target;
+  if (t instanceof Element && t.matches(':focus-visible') && (t.title || t.dataset.tip)) aimTip(t);
+});
+document.addEventListener('focusout', (e) => { if (tip.el === e.target) hideTip(); });
 document.addEventListener('mousedown', hideTip, true);
 window.addEventListener('blur', hideTip);
 
@@ -765,7 +855,7 @@ function contextMenu(event, items) {
         : '';
       // A keyboard shortcut sits to the right, so the label column stays even.
       const accel = it.accel ? `<span class="ctx-accel">${esc(it.accel)}</span>` : '';
-      return `<li${it.disabled ? '' : ` data-i="${i}"`}` +
+      return `<li${it.disabled ? '' : ` data-i="${i}" tabindex="-1"`}` +
         `${cls || accel ? ` class="${[cls, accel ? 'has-accel' : ''].filter(Boolean).join(' ')}"` : ''}` +
         `${it.hint ? ` title="${esc(it.hint)}"` : ''}>${tick}${esc(it.label)}${accel}</li>`;
     })
@@ -776,19 +866,51 @@ function contextMenu(event, items) {
   menu.style.left = Math.min(event.clientX, w - rect.width - 8) + 'px';
   menu.style.top = Math.min(event.clientY, h - rect.height - 8) + 'px';
 
+  /* Down first, then run: an entry that asks a question opens a dialog, and
+     the dialog should hand the focus back to the row the menu came from, not
+     to an entry of a menu that is gone. */
   const onClick = (e) => {
     const li = e.target.closest('li[data-i]');
-    if (li) items[Number(li.dataset.i)].run();
     dismiss();
+    if (li) items[Number(li.dataset.i)].run();
+  };
+  /* Opened from the keyboard (a right click reports button 2), the menu takes
+     the focus and answers the arrows, Enter and Space; Esc is the window's
+     chain, and the focus goes back where it came from. */
+  const back = document.activeElement;
+  const entries = () => [...menu.querySelectorAll('li[data-i]')];
+  const onKey = (e) => {
+    const list = entries();
+    const at = list.indexOf(document.activeElement);
+    const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: list.length - 1 }[e.key];
+    if (to !== undefined && list.length) {
+      e.preventDefault();
+      list[(to + list.length) % list.length].focus();
+    } else if ((e.key === 'Enter' || e.key === ' ') && at >= 0) {
+      e.preventDefault();
+      list[at].click();
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      dismiss();
+    }
   };
   const dismiss = () => {
+    const had = menu.contains(document.activeElement);
     menu.hidden = true;
     menu.removeEventListener('click', onClick);
+    menu.removeEventListener('keydown', onKey);
     document.removeEventListener('mousedown', onDoc, true);
     if (dismissMenu === dismiss) dismissMenu = null;
+    /* A history row may have been drawn again while the menu was up; its
+       successor, the row for the same commit, takes the focus instead. */
+    const to = back?.isConnected ? back
+      : back?.dataset?.hash ? document.querySelector(`.commit-row[data-hash="${back.dataset.hash}"]`) : null;
+    if (had) to?.focus({ preventScroll: true });
   };
   const onDoc = (e) => { if (!menu.contains(e.target)) dismiss(); };
   menu.addEventListener('click', onClick);
+  menu.addEventListener('keydown', onKey);
+  if (event.button !== 2) entries()[0]?.focus({ preventScroll: true });
   dismissMenu = dismiss;
   setTimeout(() => document.addEventListener('mousedown', onDoc, true), 0);
 }
@@ -1819,15 +1941,40 @@ function refPills(commit, lane) {
 function highlight(text, query) {
   const src = String(text ?? '');
   if (!query) return esc(src);
-  const hay = src.toLowerCase();
   const needle = query.toLowerCase();
+  if (!needle) return esc(src);
+  let hay = src.toLowerCase();
+  /* Positions found in the lowered copy are positions in the original only
+     while lowering keeps every length. It does not for all of them: İ lowers
+     to i plus a combining dot, so every mark after one landed a character
+     late — "İİİ fix" marked " fi" of nothing. Then each lowered unit is
+     traced back to the character it came from. */
+  let from = null;
+  let to = null;
+  if (hay.length !== src.length) {
+    hay = '';
+    from = [];
+    to = [];
+    for (let i = 0; i < src.length;) {
+      const ch = String.fromCodePoint(src.codePointAt(i));
+      const low = ch.toLowerCase();
+      for (let k = 0; k < low.length; k += 1) { from.push(i); to.push(i + ch.length); }
+      hay += low;
+      i += ch.length;
+    }
+  }
   let out = '';
   let i = 0;
+  let j = 0;
   for (;;) {
-    const at = hay.indexOf(needle, i);
+    const at = hay.indexOf(needle, j);
     if (at < 0) return out + esc(src.slice(i));
-    out += esc(src.slice(i, at)) + '<mark>' + esc(src.slice(at, at + needle.length)) + '</mark>';
-    i = at + needle.length;
+    const start = Math.max(i, from ? from[at] : at);   // never back over a mark
+    const end = to ? to[at + needle.length - 1] : at + needle.length;
+    j = at + needle.length;
+    if (end <= start) continue;           // wholly inside a character already marked
+    out += esc(src.slice(i, start)) + '<mark>' + esc(src.slice(start, end)) + '</mark>';
+    i = end;
   }
 }
 
@@ -1902,14 +2049,25 @@ function paintSelection() {
       ? list.querySelector(`.commit-row[data-hash="${sel.hash}"]`)
       : null;
   want?.classList.add('selected');
+  /* One tab stop for the whole history: the selected row, or the first row
+     drawn when the selection is off screen or there is none. The rest stay
+     reachable by script (-1), which is what the arrow keys use. */
+  const stop = want || list.querySelector('.commit-row');
+  for (const r of list.querySelectorAll('.commit-row[tabindex="0"], .commit-row[aria-selected="true"]')) {
+    if (r === stop && r === want) continue;
+    if (r !== stop) r.tabIndex = -1;
+    r.removeAttribute('aria-selected');
+  }
+  if (stop) stop.tabIndex = 0;
+  if (want) want.setAttribute('aria-selected', 'true');
 }
 
-async function selectCommit(hash) {
+async function selectCommit(hash, { nearest = false } = {}) {
   state.file = null;
   state.mergeSide = 'in';        // a side chosen on one merge means nothing on another
   state.selection = { kind: 'commit', hash };
   paintSelection();
-  scrollToCommit(hash);
+  scrollToCommit(hash, { nearest });
   await renderDetail();
 }
 
@@ -1964,13 +2122,23 @@ function requiredRange(total) {
 
 /* Puts the row for a commit on screen without depending on the row existing —
    at any moment most of them do not. */
-function scrollToCommit(hash) {
+function scrollToCommit(hash, { nearest = false } = {}) {
   const i = state.rowIndex?.get(hash);
   if (i === undefined) return;
+  scrollToRow(i, { nearest });
+}
+
+/* `nearest` moves the view only as far as the row needs, the way stepping
+   through a list does; without it the row is centred, which is right for a
+   jump from somewhere else and dizzying one row at a time. */
+function scrollToRow(i, { nearest = false } = {}) {
   const sc = $('history-scroll');
   const rowH = window.Graph.ROW_H;
-  const y = $('history-head').offsetHeight + i * rowH;
-  sc.scrollTop = Math.max(0, y - (sc.clientHeight - rowH) / 2);
+  const head = $('history-head').offsetHeight;
+  const y = head + i * rowH;
+  if (!nearest) sc.scrollTop = Math.max(0, y - (sc.clientHeight - rowH) / 2);
+  else if (y - head < sc.scrollTop) sc.scrollTop = Math.max(0, y - head);
+  else if (y + rowH > sc.scrollTop + sc.clientHeight) sc.scrollTop = y + rowH - sc.clientHeight;
   renderRows();
 }
 
@@ -2031,7 +2199,7 @@ function rowHtml(row, find) {
     const n = state.status.staged.length + state.status.unstaged.length +
               state.status.untracked.length + state.status.conflicted.length;
     return (
-      '<li class="commit-row pending" data-wip="1" style="--lane:var(--pending)">' +
+      '<li class="commit-row pending" data-wip="1" role="option" tabindex="-1" style="--lane:var(--pending)">' +
       rowCells({
         msg: '<span class="c-msg"><span class="c-msg-text">Uncommitted changes</span>' +
           `<span class="c-msg-body">${n} file${n === 1 ? '' : 's'}</span></span>`,
@@ -2063,7 +2231,7 @@ function rowHtml(row, find) {
     ? clipForTip(c.body ? `${c.subject}\n\n${c.body}` : c.subject)
     : '';
   return (
-    `<li class="commit-row${cls}" data-hash="${c.hash}" ` +
+    `<li class="commit-row${cls}" data-hash="${c.hash}" role="option" tabindex="-1" ` +
     `style="--lane:${lane}" title="${esc(full)}">` +
     rowCells({
       refs: `<span class="c-refs">${pills}${ghost}</span>`,
@@ -2120,6 +2288,10 @@ function renderRows() {
     : window.Graph.render(layout, state.rowIndex, { avatarFor, first, last });
 
   const list = $('commit-list');
+  /* The row with the keyboard focus can be rebuilt under it — a refresh lays
+     the history out again and every row is new — and the focus would fall to
+     <body>, where the arrow keys do nothing. Noted here, put back below. */
+  const focused = list.contains(document.activeElement) ? document.activeElement : null;
   /* The spacer holds the height, and only changes when the history does. The
      rows ride a transform, which the browser can do without laying anything out
      again — measured, changing paddingTop instead cost 10.10 ms a step because
@@ -2167,6 +2339,13 @@ function renderRows() {
      everything in range was placed. Swept anyway: a stray row is a row showing
      another commit's message. */
   while (node) { const next = node.nextElementSibling; node.remove(); node = next; }
+
+  if (focused && !focused.isConnected) {
+    const again = focused.dataset.wip
+      ? list.querySelector('.commit-row[data-wip]')
+      : list.querySelector(`.commit-row[data-hash="${focused.dataset.hash}"]`);
+    (again || list.querySelector('.commit-row'))?.focus({ preventScroll: true });
+  }
 
   // The class rowHtml deliberately does not carry.
   paintSelection();
@@ -2449,7 +2628,17 @@ async function renderCommitPanel(hash) {
   $('c-body').hidden = !c.body;
 
   $('c-author').textContent = c.author;
-  $('c-date').textContent = `authored ${absoluteTime(c.commitDate)}`;
+  /* The author's date beside the author's name. It read the commit date,
+     which a rebase, an amend or a cherry-pick moves to the moment of the
+     rewrite. When the two differ the commit date is still there, one hover
+     away, with whoever made it if that was someone else. */
+  const when = $('c-date');
+  when.textContent = `authored ${absoluteTime(c.authorDate)}`;
+  const committed = absoluteTime(c.commitDate);
+  const by = c.committer && c.committer !== c.author ? ` by ${c.committer}` : '';
+  delete when.dataset.tip;
+  if (committed !== absoluteTime(c.authorDate) || by) when.title = `committed ${committed}${by}`;
+  else when.removeAttribute('title');
   /* The one large avatar in the window, so it shows whatever is best: the
      photograph when one was found, initials otherwise. It does not follow the
      placement setting — that exists to thin out a list of thousands of rows,
@@ -2606,10 +2795,10 @@ $('c-edit-cancel').addEventListener('click', exitReword);
 $('c-edit-save').addEventListener('click', saveReword);
 $('c-edit-subject').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); saveReword(); }
-  if (e.key === 'Escape') exitReword();
+  if (e.key === 'Escape') { e.preventDefault(); exitReword(); }
 });
 $('c-edit-body').addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') exitReword();
+  if (e.key === 'Escape') { e.preventDefault(); exitReword(); }
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveReword();
 });
 
@@ -4258,7 +4447,7 @@ $('btn-tabsearch').addEventListener('click', () =>
 );
 $('tabmenu-input').addEventListener('input', (e) => renderTabMenu(e.target.value));
 $('tabmenu-input').addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeTabMenu();
+  if (e.key === 'Escape') { e.preventDefault(); closeTabMenu(); }
   if (e.key === 'Enter') {
     const first = el('#tabmenu-list li[data-tab]');
     if (first) { closeTabMenu(); activateTab(first.dataset.tab); }
@@ -5791,7 +5980,7 @@ function openGitOutputLive(verb) {
    two elements answering to `gitout-live` at once is the kind of thing that
    works until the day it does not. */
 function appendGitOutputCommand(text) {
-  if (!gitOutLive) return;
+  if (!gitOutLive || gitOutDismissed) return;
   const body = $('gitout-body');
   const previous = $('gitout-live');
   if (previous) {
@@ -5849,25 +6038,60 @@ const outHtml = (text) => String(text).split('\n').map(outLineHtml).join('\n');
 /* "remote: Compressing objects:  58% (36/62)" and the line before it are the
    same line rewritten, and a terminal shows one of them. Comparing what is left
    after the counter tells the two apart from a genuinely new line. */
-const counterHead = (line) => line.replace(/\s*\d+%.*$/, '').trim();
+/* A scan, not a pattern: `\s*\d+%.*$` restarted at every character, and a
+   run of whitespace from the server cost the square of its length — 40,000
+   spaces held the window for most of a second. The first digits that touch a
+   percent sign begin the counter; everything before them is the head. */
+function counterHead(line) {
+  for (let at = line.indexOf('%'); at !== -1; at = line.indexOf('%', at + 1)) {
+    let from = at;
+    while (from > 0) {
+      const c = line.charCodeAt(from - 1);
+      if (c < 48 || c > 57) break;
+      from -= 1;
+    }
+    if (from < at) return line.slice(0, from).trim();
+  }
+  return line.trim();
+}
 
 let liveHead = null;
 
+/* One physical line onto the live pane, as nodes added at its end. The pane
+   used to be read back as text and drawn again whole for every line, so a
+   fetch announcing a few thousand new tags rebuilt a few thousand lines a few
+   thousand times. The markup per line is the same outLineHtml, separated by
+   the same newline, so the pane ends up holding what the whole redraw made.
+   `live._tail` holds the last line's nodes, the one a climbing counter
+   rewrites; `live._any` is whether the pane holds any text yet, which is what
+   the redraw's `lines.length` used to ask. */
+const liveMaker = document.createElement('template');
+
+function paintLiveLine(live, text, prevHead) {
+  const head = counterHead(text);
+  if (head && head !== text && head === prevHead && live._any) {
+    for (const n of live._tail || []) n.remove();
+  } else if (live._any) {
+    live.append('\n');
+  }
+  liveMaker.innerHTML = outLineHtml(text);
+  const nodes = [...liveMaker.content.childNodes];
+  live.append(...nodes);
+  live._tail = nodes;
+  live._any = Boolean(live._any || text);
+  return head;
+}
+
 function appendGitOutputLine(text) {
-  if (!gitOutLive) return;
+  // Closed by hand, it stays closed, and nothing is drawn into it unseen.
+  if (!gitOutLive || gitOutDismissed) return;
   const live = $('gitout-live');
   if (!live) return;
-  const head = counterHead(text);
-  const lines = live.textContent ? live.textContent.split('\n') : [];
-  // textContent, never innerHTML: the markup is paint, the text is the record.
   /* Replace rather than append while a counter climbs, so the pane reads the
      way the terminal did instead of scrolling a hundred near-identical lines
      past — and so the running view matches the finished one, which collapses
      the same rewrites. */
-  if (head && head !== text && head === liveHead && lines.length) lines[lines.length - 1] = text;
-  else lines.push(text);
-  liveHead = head;
-  live.innerHTML = lines.map(outLineHtml).join('\n');
+  for (const one of String(text).split('\n')) liveHead = paintLiveLine(live, one, liveHead);
   const body = $('gitout-body');
   body.scrollTop = body.scrollHeight;
 }
@@ -7240,6 +7464,56 @@ $('commit-list').addEventListener('click', (e) => {
   renderDetail();
 });
 
+/* The history from the keyboard. Rows come and go as the window scrolls, so
+   where to go next is worked out from the layout — the row index — and never
+   from the elements; the row is drawn by scrolling to it and focused after. */
+const rowIndexOf = (row) => (row?.dataset.wip ? 0 : state.rowIndex?.get(row?.dataset.hash));
+
+function stepHistory(to) {
+  const rows = state.layout?.rows;
+  if (!rows?.length) return;
+  const i = Math.max(0, Math.min(rows.length - 1, to));
+  const c = rows[i].commit;
+  if (c.pending) {
+    state.file = null;
+    state.selection = { kind: 'wip' };
+    paintSelection();
+    scrollToRow(i, { nearest: true });
+    renderDetail();
+  } else {
+    selectCommit(c.hash, { nearest: true });
+  }
+  $('commit-list').querySelector('.commit-row.selected')?.focus({ preventScroll: true });
+}
+
+/* A row's menu from the keyboard: the Menu key or Shift+F10, opened where the
+   row is rather than where a pointer would have been. */
+function openRowMenu(row) {
+  const r = row.getBoundingClientRect();
+  row.dispatchEvent(new MouseEvent('contextmenu', {
+    bubbles: true, cancelable: true, button: 0,
+    clientX: Math.round(r.left + Math.min(r.width / 2, 160)), clientY: Math.round(r.bottom),
+  }));
+}
+
+$('commit-list').addEventListener('keydown', (e) => {
+  if (!$('modal').hidden || e.ctrlKey || e.metaKey || e.altKey) return;
+  const row = e.target.closest('.commit-row');
+  if (!row) return;
+  if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+    e.preventDefault();
+    openRowMenu(row);
+    return;
+  }
+  if (e.shiftKey) return;
+  const at = rowIndexOf(row) ?? -1;
+  const page = Math.max(1, Math.floor($('history-scroll').clientHeight / window.Graph.ROW_H) - 1);
+  const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: Infinity,
+    PageDown: at + page, PageUp: at - page }[e.key];
+  if (to !== undefined) { e.preventDefault(); stepHistory(to); return; }
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.click(); }
+});
+
 /** The stash@{n} a commit in the history belongs to, if it is one at all. */
 const stashRefFor = (hash) =>
   (state.stashes || []).find((s) => s.hash === hash)?.ref || null;
@@ -7329,11 +7603,12 @@ async function resetTo(hash, mode) {
 /* Scrolling changes which rows exist, so it has to redraw — but only once per
    frame, and only when the band has actually moved off what is on screen. */
 let rowsQueued = false;
-$('history-scroll').addEventListener('scroll', () => {
+function queueRows() {
   if (!state.layout || rowsQueued) return;
   rowsQueued = true;
   requestAnimationFrame(() => {
     rowsQueued = false;
+    if (!state.layout) return;
     const shown = state.rowsShown;
     const need = requiredRange(state.layout.rows.length);
     // Still covered by what is on the page: the cheapest frame is the one that
@@ -7341,7 +7616,12 @@ $('history-scroll').addEventListener('scroll', () => {
     if (need.first >= shown.first && need.last <= shown.last) return;
     renderRows();
   });
-}, { passive: true });
+}
+$('history-scroll').addEventListener('scroll', queueRows, { passive: true });
+/* A taller pane shows rows nobody drew. Maximising a small window, or zooming
+   out, grew the view past the overscan without a single scroll event, and the
+   bottom of the history stayed blank until the wheel moved. */
+new ResizeObserver(queueRows).observe($('history-scroll'));
 
 /* The next page only. Raising the limit and refreshing re-read every commit
    already on screen — and the status, refs and stashes with them — to add
@@ -7736,6 +8016,9 @@ for (const id of FILE_LISTS) {
   $(id).setAttribute('tabindex', '0');
   $(id).addEventListener('keydown', (e) => {
     if (e.target.closest('input, textarea')) return;
+    /* Never behind a dialog. The list kept the focus under "Discard 2 files",
+       so the Enter that answered it staged the same files first. */
+    if (!$('modal').hidden) return;
     const kind = picked.kind;
     if (!kind || id !== pickedList() || !picked.paths.size) return;
     const paths = rowsOf(id).filter((p) => picked.paths.has(p));
@@ -7914,6 +8197,10 @@ const KEY_BLOCKERS = ['modal', 'ctxmenu', 'gitout', 'logs', 'prefs', 'about', 'n
 /* keyboard — Ctrl+O/N/I, the zoom keys, F5 and the panel toggles are all
    menu accelerators now, handled in the main process. */
 document.addEventListener('keydown', (e) => {
+  /* A key some widget already answered is spent. Esc in the tab search, in
+     the reword box or on a list clearing its selection used to run on down
+     this chain as well, and closed the file being read along with it. */
+  if (e.defaultPrevented) return;
   // Esc backs out of whatever is covering the history, in front-to-back order.
   if (e.key === 'Escape' && $('modal').hidden) {
     if (!$('ctxmenu').hidden) { closeContextMenu(); return; }
@@ -7926,6 +8213,8 @@ document.addEventListener('keydown', (e) => {
     if ($('app').classList.contains('managing')) { closeRepoManager(); return; }
     if ($('app').classList.contains('viewing-file')) { closeFile(); return; }
   }
+  // A dialog owns the keyboard; its own handler answers Enter, Esc and Tab.
+  if (!$('modal').hidden) return;
   if ((e.ctrlKey || e.metaKey) && (e.key === '`' || e.key === '~')) {
     e.preventDefault(); toggleTerm(); return;
   }
@@ -7952,10 +8241,14 @@ document.addEventListener('keydown', (e) => {
   if (KEY_BLOCKERS.some((id) => !$(id).hidden)) return;
   if ($('app').classList.contains('managing')) return;
 
-  if (e.key === 'f') $('btn-fetch').click();
-  else if (e.key === 'p') $('btn-pull').click();
-  else if (e.key === 'P') $('btn-push').click();
-  else if (e.key === 'b') newBranch(null);
+  /* Shift is read from the key event, not from the letter's case: with Caps
+     Lock on a plain p arrives as "P", and pull turned into a push. The other
+     two keys stay unshifted only, as before — under Caps Lock they now work
+     instead of doing nothing. */
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (key === 'f' && !e.shiftKey) $('btn-fetch').click();
+  else if (key === 'p') $(e.shiftKey ? 'btn-push' : 'btn-pull').click();
+  else if (key === 'b' && !e.shiftKey) newBranch(null);
 });
 
 /* pane resizing */

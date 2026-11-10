@@ -69,7 +69,7 @@
     <div class="tabs" id="tabs"></div>
     <!-- Digambar, bukan karakter: tebal dan ukurannya sama persis dengan
          silang tutup di dalam tab. -->
-    <button id="btn-newtab" class="tab-btn" title="Open another repository (Ctrl+O)">
+    <button id="btn-newtab" class="tab-btn" title="New tab (Ctrl+T)">
       <svg class="tb-i" viewBox="0 0 12 12" aria-hidden="true">
         <path d="M6 2.3V9.7M2.3 6H9.7" fill="none" stroke="currentColor"
               stroke-width="1.8" stroke-linecap="round"/>
@@ -560,7 +560,7 @@
              place with a transform, which costs no layout; padding on the list
              did the same job and cost 10 ms of reflow on every scroll step. -->
         <div class="history-spacer" id="history-spacer"></div>
-        <ul class="commit-list" id="commit-list"></ul>
+        <ul class="commit-list" id="commit-list" role="listbox" aria-label="Commit history"></ul>
         <button id="btn-more" class="btn btn-quiet load-more" hidden>Load more commits</button>
       </div>
     </section>
@@ -1063,7 +1063,7 @@
 
 <!-- modal -->
 <div id="modal" class="modal" hidden>
-  <div class="modal-card" role="dialog" aria-modal="true">
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-desc">
     <h3 id="modal-title"></h3>
     <p id="modal-desc" class="modal-desc"></p>
     <div id="modal-fields"></div>
