@@ -1505,6 +1505,8 @@ function matchRefs(items, name = (x) => x.name) {
 
 function renderSidebar() {
   const { branches, remotes, tags } = state.refs;
+  // A redraw replaces every row, the focused one too; this puts focus back.
+  const hadFocus = Boolean(document.activeElement?.closest?.('#sidebar .side-list > li'));
 
   const branchLeaf = (b, label, depth) => {
     const track = b.track ? esc(b.track.replace(/[[\]]/g, '')) : '';
@@ -1576,6 +1578,7 @@ function renderSidebar() {
   $('app').classList.toggle('ref-filtering', Boolean(refFilter));
   if (!refFilter) {
     for (const g of document.querySelectorAll('.side-group')) g.classList.remove('no-match');
+    paintSideFocus(hadFocus);
     return;
   }
   for (const g of document.querySelectorAll('.side-group')) {
@@ -1584,6 +1587,56 @@ function renderSidebar() {
     g.classList.toggle('no-match', hits[key] === 0);
     g.classList.toggle('collapsed', hits[key] === 0);
   }
+  paintSideFocus(hadFocus);
+}
+
+/* The sidebar from the keyboard, as a tree: one tab stop for all its rows, the
+   arrows to move, open and shut. Rows are rebuilt on every refresh, so where
+   focus is is remembered by what the row names, not by the element. */
+let sideFocusKey = null;
+const SIDE_ROW = '.side-list > li[data-ref], .side-list > li[data-folder]';
+const sideKey = (li) => (li.dataset.folder !== undefined
+  ? `folder:${li.dataset.kind}:${li.dataset.folder}`
+  : `${li.dataset.kind}:${li.dataset.ref}`);
+const sideDepth = (li) => parseInt(li.style.getPropertyValue('--d'), 10) || 0;
+/** The rows a reader can see: not inside a folded group. */
+const sideRows = () => [...document.querySelectorAll(
+  '#sidebar .side-group:not(.collapsed) .side-list > li[data-ref],' +
+  '#sidebar .side-group:not(.collapsed) .side-list > li[data-folder]')];
+
+function paintSideFocus(refocus = false) {
+  for (const li of document.querySelectorAll('#sidebar .side-list > li')) {
+    if (!li.matches(SIDE_ROW)) { li.setAttribute('role', 'none'); continue; }
+    li.tabIndex = -1;
+    li.setAttribute('role', 'treeitem');
+    li.setAttribute('aria-level', String(sideDepth(li) + 1));
+    if (li.dataset.folder !== undefined) {
+      li.setAttribute('aria-expanded', String(!li.classList.contains('shut')));
+    }
+  }
+  const rows = sideRows();
+  const at = rows.find((li) => sideKey(li) === sideFocusKey)
+    || rows.find((li) => li.classList.contains('current'))
+    || rows[0];
+  if (!at) return;
+  at.tabIndex = 0;
+  if (refocus) at.focus({ preventScroll: true });
+}
+
+function focusSideRow(li) {
+  sideFocusKey = sideKey(li);
+  paintSideFocus();
+  li.focus({ preventScroll: true });
+  li.scrollIntoView({ block: 'nearest' });
+}
+
+for (const ul of document.querySelectorAll('#sidebar .side-list')) {
+  ul.setAttribute('role', 'tree');
+  const head = ul.closest('.side-group')?.querySelector('.side-head');
+  // The head's own words, without the chevron and the count beside them.
+  const words = head && [...head.childNodes].filter((n) => n.nodeType === 3)
+    .map((n) => n.textContent).join(' ').trim();
+  if (words) ul.setAttribute('aria-label', words);
 }
 
 /* ═════ history columns ═════════════════════════════════════════ */
@@ -7251,8 +7304,11 @@ $('sidebar').addEventListener('click', (e) => {
       else groupsBeforeFilter.delete(key);
     }
     saveGroups();
+    paintSideFocus();
     return;
   }
+  const row = e.target.closest(SIDE_ROW);
+  if (row) sideFocusKey = sideKey(row);
   const folder = e.target.closest('li[data-folder]');
   if (folder) {
     toggleFolder(folder.dataset.kind, folder.dataset.folder);
@@ -7277,6 +7333,49 @@ $('sidebar').addEventListener('dblclick', (e) => {
     const r = state.refs.remotes.find((x) => x.name === ref);
     checkout(r?.branch || ref, fullRefName(kind, ref));
   }
+});
+
+$('sidebar').addEventListener('keydown', (e) => {
+  if (!$('modal').hidden || e.ctrlKey || e.metaKey || e.altKey) return;
+  const li = e.target.closest(SIDE_ROW);
+  if (!li) return;
+  if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+    e.preventDefault();
+    openRowMenu(li);
+    return;
+  }
+  if (e.shiftKey) return;
+  const rows = sideRows();
+  const i = rows.indexOf(li);
+  const isFolder = li.dataset.folder !== undefined;
+  const shut = li.classList.contains('shut');
+  let to = null;
+  switch (e.key) {
+    case 'ArrowDown': to = i + 1; break;
+    case 'ArrowUp': to = i - 1; break;
+    case 'Home': to = 0; break;
+    case 'End': to = rows.length - 1; break;
+    case 'ArrowRight':
+      if (isFolder && shut) { e.preventDefault(); li.click(); return; }
+      if (isFolder) to = i + 1;
+      break;
+    case 'ArrowLeft': {
+      if (isFolder && !shut) { e.preventDefault(); li.click(); return; }
+      // To the folder holding this row: the nearest row above that sits higher.
+      const d = sideDepth(li);
+      for (let j = i - 1; j >= 0; j--) if (sideDepth(rows[j]) < d) { to = j; break; }
+      break;
+    }
+    /* Enter does what one click does: a folder opens or shuts, a ref is shown
+       in the history. Checking out stays a double click or a menu choice — the
+       keyboard should not change the repository on the key that means "go". */
+    case 'Enter': case ' ': e.preventDefault(); li.click(); return;
+    default: return;
+  }
+  e.preventDefault();
+  if (to === null) return;
+  const next = rows[Math.max(0, Math.min(rows.length - 1, to))];
+  if (next) focusSideRow(next);
 });
 
 /* ═════ branch commands ═════════════════════════════════════════ */
