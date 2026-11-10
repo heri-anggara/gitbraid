@@ -57,12 +57,18 @@ try {
     lift('const shortRefName =', ';\n'),
     lift('function pushPlan(b, refs) {', '\n}\n'),
     lift('const leaseExpect =', ";\n"),
+    lift('async function askPushTarget(b, plan) {', '\n}\n'),
   ].join('\n') + '\nthis.fullRefName = fullRefName; this.shortRefName = shortRefName;'
-    + ' this.pushPlan = pushPlan; this.leaseExpect = leaseExpect;', R);
+    + ' this.pushPlan = pushPlan; this.leaseExpect = leaseExpect;'
+    + ' this.askPushTarget = typeof askPushTarget === "function" ? askPushTarget : undefined;', R);
 } catch (e) {
   console.log('  (renderer helpers could not be lifted: ' + e.message + ')');
 }
 const has = (fn) => typeof R[fn] === 'function';
+/* The dialog, answered by the test: it records what it was asked and replies
+   with whatever R.answer holds at the time. */
+R.asked = [];
+R.modal = async (opts) => { R.asked.push(opts); return R.answer; };
 
 (async () => {
   /* ── 1 ── */
@@ -190,8 +196,16 @@ const has = (fn) => typeof R[fn] === 'function';
     check('the refs say where the upstream really is',
       feat && feat.upstreamRemote === 'origin' && feat.upstreamMerge === 'refs/heads/feature-x'
       && feat.upstreamRef === 'refs/remotes/origin/feature-x', feat);
-    const plan = has('pushPlan') ? R.pushPlan(feat, refs) : {};
-    check('and the plan pushes to that branch, not one named after this',
+    const asked = has('pushPlan') ? R.pushPlan(feat, refs) : {};
+    check('a branch tracking one of another name is not pushed anywhere without asking',
+      asked.remote === 'origin' && asked.remoteRef === null && asked.renamed
+      && asked.renamed.tracked === 'refs/heads/feature-x', asked);
+    R.answer = { to: 'tracked' };
+    const plan = has('askPushTarget') ? await R.askPushTarget(feat, asked) : {};
+    check('the question names both branches, its own first',
+      /origin\/feature-x/.test(R.asked.at(-1)?.description || '')
+      && R.asked.at(-1)?.fields?.[0]?.value === 'own', R.asked.at(-1));
+    check('answered "the branch it tracks", the plan pushes to feature-x',
       plan.remote === 'origin' && plan.remoteRef === 'refs/heads/feature-x' && plan.setUpstream === false, plan);
 
     const res = await call('repo:push', r.dir, { branch: 'feat', ...plan });
@@ -215,6 +229,55 @@ const has = (fn) => typeof R[fn] === 'function';
     });
     check('fetching into feat asks the server for feature-x and moves feat along',
       fi.ok && /fast-forwarded/.test(fi.data) && tryGit(r.dir, ['rev-parse', 'refs/heads/feat']) === three, fi);
+    r.rm();
+  }
+
+  section('a branch made from origin/main is not pushed onto main');
+  {
+    /* git sets the new branch to track origin/main by itself (autoSetupMerge),
+       so following the upstream blindly put a feature's commits on main, and a
+       forced push leased against main's commit and replaced it. */
+    const remote = bare();
+    const r = scratchRepo();
+    const one = r.commit('a.txt', '1\n', 'one');
+    r.g(['remote', 'add', 'origin', remote]);
+    r.g(['push', '-q', 'origin', 'main']);
+    r.g(['fetch', '-q', 'origin']);
+    r.g(['checkout', '-q', '-b', 'feature', 'origin/main']);
+    const wip = r.commit('w.txt', 'w\n', 'wip on feature');
+    const refs = (await call('repo:refs', r.dir)).data;
+    const feature = refs.branches.find((b) => b.name === 'feature');
+    check('git has made it track origin/main', feature?.upstreamMerge === 'refs/heads/main', feature);
+    const asked = has('pushPlan') ? R.pushPlan(feature, refs) : {};
+    check('the plan does not aim at main', asked.remoteRef !== 'refs/heads/main' && Boolean(asked.renamed), asked);
+    check('and a forced push has nothing of main to lease against',
+      has('leaseExpect') && R.leaseExpect(asked, refs) === '', has('leaseExpect') && R.leaseExpect(asked, refs));
+
+    R.answer = { to: 'own' };
+    const plan = has('askPushTarget') ? await R.askPushTarget(feature, asked) : {};
+    check('answered "its own branch", it goes to origin/feature and tracks it from then on',
+      plan.remoteRef === 'refs/heads/feature' && plan.setUpstream === true
+      && plan.tracking === 'refs/remotes/origin/feature', plan);
+    const res = await call('repo:push', r.dir, { branch: 'feature', ...plan });
+    const there = lsRemote(remote);
+    check('main on the remote is untouched', res.ok && there['refs/heads/main'] === one, { res, there });
+    check('and origin/feature holds the work', there['refs/heads/feature'] === wip, there);
+    check('and the branch now tracks origin/feature',
+      tryGit(r.dir, ['config', 'branch.feature.merge']) === 'refs/heads/feature',
+      tryGit(r.dir, ['config', 'branch.feature.merge']));
+
+    R.answer = null;
+    const none = has('askPushTarget') ? await R.askPushTarget(feature, asked) : 'missing';
+    check('cancelling the question pushes nothing', none === null, none);
+
+    r.g(['config', 'push.default', 'upstream']);
+    const refs2 = (await call('repo:refs', r.dir)).data;
+    r.g(['checkout', '-q', '-b', 'second', 'origin/main']);
+    const refs3 = (await call('repo:refs', r.dir)).data;
+    const second = refs3.branches.find((b) => b.name === 'second');
+    const follow = has('pushPlan') ? R.pushPlan(second, refs3) : {};
+    check('with push.default=upstream the reader asked for exactly that, and it is followed',
+      refs2.pushDefault === 'upstream' && follow.remoteRef === 'refs/heads/main' && !follow.renamed, follow);
     r.rm();
   }
 
@@ -457,6 +520,21 @@ const has = (fn) => typeof R[fn] === 'function';
     check('with --no-ff merges named the usual way',
       tryGit(r.dir, ['log', '-1', '--format=%s', 'main']) === "Merge branch 'release/1.0'",
       tryGit(r.dir, ['log', '-1', '--format=%s', 'main']));
+    r.rm();
+  }
+
+  section('a full ref name is shortened only when it is that ref');
+  {
+    /* for-each-ref refs/heads/release lists refs/heads/release/1.0 as well, so
+       a merge of a branch that had gone merged a different one. */
+    const r = scratchRepo();
+    const base = r.commit('a.txt', '1\n', 'one');
+    r.g(['checkout', '-q', '-b', 'release/1.0']);
+    r.commit('b.txt', '2\n', 'release work');
+    r.g(['checkout', '-q', 'main']);
+    const res = await m.call('repo:merge', r.dir, 'refs/heads/release', 'ff');
+    check('merging a branch that is not there fails, rather than merging release/1.0',
+      res.ok === false && r.g(['rev-parse', 'HEAD']).trim() === base, { res });
     r.rm();
   }
 
