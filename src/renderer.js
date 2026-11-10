@@ -2183,12 +2183,24 @@ async function renderDetail() {
   if (sel?.kind === 'commit') return renderCommitPanel(sel.hash);
 }
 
+/* What the two sides of a conflict are called right now. Which git stage is
+   whose — a rebase turns --ours and --theirs round — is decided in main.js,
+   which sends these labels with the operation state; with no operation on
+   record (a stash that did not apply cleanly) the plain words stand. */
+function sideLabels(op) {
+  const s = op && op.sides;
+  return {
+    mine: (s && s.mine && s.mine.label) || 'your version',
+    incoming: (s && s.incoming && s.incoming.label) || 'their version',
+  };
+}
+
 const F_ICON = {
-  // "ours" and "theirs" point at the two sides; the tick settles the file.
-  ours: '<svg class="tb-i" viewBox="0 0 12 12" aria-hidden="true">' +
+  // "mine" and "incoming" point at the two sides; the tick settles the file.
+  mine: '<svg class="tb-i" viewBox="0 0 12 12" aria-hidden="true">' +
     '<path d="M7.4 2.6 4 6l3.4 3.4" fill="none" stroke="currentColor" ' +
     'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  theirs: '<svg class="tb-i" viewBox="0 0 12 12" aria-hidden="true">' +
+  incoming: '<svg class="tb-i" viewBox="0 0 12 12" aria-hidden="true">' +
     '<path d="M4.6 2.6 8 6l-3.4 3.4" fill="none" stroke="currentColor" ' +
     'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   mark: '<svg class="tb-i" viewBox="0 0 12 12" aria-hidden="true">' +
@@ -2215,10 +2227,11 @@ function fileRow(f, kind, depth = 0, mode = 'path') {
   const act = (name, label, danger) =>
     `<button class="f-act${danger ? ' danger' : ''}" data-act="${name}" ` +
     `title="${label}">${F_ICON[name]}</button>`;
+  const sides = kind === 'conflict' ? sideLabels(state.op) : null;
   const actions =
     kind === 'conflict'
-      ? act('ours', 'Keep your version of this file') +
-        act('theirs', 'Keep their version of this file') +
+      ? act('mine', esc(`Keep ${sides.mine} of this file`)) +
+        act('incoming', esc(`Keep ${sides.incoming} of this file`)) +
         act('mark', 'Mark resolved — keep the file as it is on disk now')
     : kind === 'staged' ? act('unstage', 'Unstage this file')
     : kind === 'unstaged'
@@ -3498,7 +3511,8 @@ function dropOpenFile(paths) {
 async function discard(path, untracked) {
   const ok = await confirmAction(
     'Discard changes',
-    `Changes to ${path} will be lost and cannot be recovered.`,
+    untracked ? `${path} has never been committed, so discarding it deletes it. This cannot be undone.`
+      : `Changes to ${path} will be lost and cannot be recovered.`,
     'Discard'
   );
   if (!ok) return;
@@ -3530,8 +3544,8 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
    keeps no copy of anywhere. */
 async function discardMany(paths) {
   if (!paths.length) return;
-  const gone = paths.filter((p) => isUntracked(p));
-  const kept = paths.filter((p) => !isUntracked(p));
+  const gone = paths.filter((p) => isNewFile(p));
+  const kept = paths.filter((p) => !isNewFile(p));
   if (paths.length === 1) return discard(paths[0], gone.length === 1);
 
   const ok = await confirmAction(
@@ -3549,11 +3563,55 @@ async function discardMany(paths) {
   if (done) setStatus(`Discarded ${plural(paths.length, 'file')}`, 'ok');
 }
 
+/* Each file is its own git command, and any of them can fail. The count is
+   of the ones that went through: this used to say "3 files resolved" after
+   git had refused one of them, over the top of git's own error. */
 async function resolveMany(paths, how) {
-  for (const p of paths) await call('repo:resolve', repoPath(), p, how);
+  if (how === 'mark' && !(await confirmMarkers(paths))) return;
+  const failed = [];
+  for (const p of paths) {
+    if (await call('repo:resolve', repoPath(), p, how) === null) {
+      failed.push({ path: p, error: firstLine(lastFailure) });
+    }
+  }
   clearPicked();
   await refresh();
-  setStatus(`${plural(paths.length, 'file')} resolved`, 'ok');
+  const r = resolveReport(paths.length, failed);
+  setStatus(r.text, r.kind);
+}
+
+/** What the status bar says after resolving `total` files, `failed` of which
+    git refused ({ path, error }). */
+function resolveReport(total, failed) {
+  if (!failed.length) return { text: `${plural(total, 'file')} resolved`, kind: 'ok' };
+  const first = failed[0];
+  const reason = first.error ? `: ${first.error}` : '';
+  if (failed.length === total) {
+    return { text: total === 1 ? `Could not resolve ${first.path}${reason}`
+      : `Could not resolve any of ${total} files — ${first.path}${reason}`, kind: 'error' };
+  }
+  return {
+    text: `${plural(total - failed.length, 'file')} resolved, ${failed.length} not — ${first.path}${reason}`,
+    kind: 'error',
+  };
+}
+
+/* Marking a file resolved stages it exactly as it is, conflict markers and all,
+   and git does not object. Asked once for however many files were picked,
+   naming the ones that still hold markers; true when it is fine to go on. */
+async function confirmMarkers(paths) {
+  const marked = await call('repo:conflictMarkers', repoPath(), paths);
+  if (marked === null) return false;
+  if (!marked.length) return true;
+  return confirmAction('Conflict markers left', markerWarning(marked), 'Mark resolved', true);
+}
+
+function markerWarning(files) {
+  const shown = files.slice(0, 5).join(', ');
+  const more = files.length > 5 ? ` and ${files.length - 5} more` : '';
+  return `${files.length === 1 ? 'This file still holds' : `${files.length} files still hold`} ` +
+    `<<<<<<< / >>>>>>> conflict markers: ${shown}${more}. Marking ` +
+    `${files.length === 1 ? 'it' : 'them'} resolved stages the markers as they are.`;
 }
 
 /* Stashing part of the working tree. Untracked files need -u or git leaves them
@@ -3864,15 +3922,33 @@ async function rebaseOnto(ref) {
   if (ok === false && activeId === startedOn) await refresh({ keepSelection: false });
 }
 
-async function applyStash(ref, drop) {
+/* `hash` is the stash's commit as the list showed it: main.js checks that the
+   stash@{n} still names it before touching anything. */
+async function applyStash(ref, drop, hash) {
+  const startedOn = activeId;
   // Pop reports on the Pop button, plain apply on Stash — whichever the reader
   // is most likely to be looking at.
-  await gitAction(drop ? 'btn-pop' : 'btn-stash', drop ? 'Popping' : 'Applying',
-    () => call('repo:stashApply', repoPath(), ref, drop),
+  const ok = await gitAction(drop ? 'btn-pop' : 'btn-stash', drop ? 'Popping' : 'Applying',
+    () => call('repo:stashApply', repoPath(), ref, drop, hash),
     async () => {
       await refresh({ keepSelection: false });
       setStatus(drop ? 'Popped stash' : 'Applied stash', 'ok');
     });
+  /* A stash that conflicts is applied half-way and leaves conflicted files —
+     the one outcome the working tree most needs redrawn for, as after a merge. */
+  if (ok === false && activeId === startedOn) await refresh({ keepSelection: false });
+}
+
+/** Drop one stash, after asking. Shared by the sidebar and the history row. */
+async function dropStash(ref, hash) {
+  const ok = await confirmAction('Drop stash',
+    'It leaves the list, and nothing in GitBraid brings it back. The work '
+    + 'survives in the repository under its own hash until git next collects '
+    + 'what nothing points at — copy the SHA first if you want that way back.',
+    'Drop');
+  if (!ok) return;
+  const res = await call('repo:stashDrop', repoPath(), ref, hash);
+  if (res !== null) { await refresh(); setStatus('Dropped stash', 'ok'); }
 }
 
 async function push(force = false) {
@@ -5000,6 +5076,9 @@ function renderOpState() {
     ? `Finish the ${op.kind} with what is staged`
     : `Resolve the remaining ${left} file${left === 1 ? '' : 's'} first`;
   $('op-abort').title = `Undo the ${op.kind} and put the repository back as it was`;
+  // main.js says which operations have a --skip; a merge has nothing to skip to.
+  $('op-skip').hidden = !op.canSkip;
+  $('op-skip').title = 'Leave this commit out and carry on with the next one';
 }
 
 const conflictCount = () => state.status?.conflicted.length || 0;
@@ -5030,16 +5109,37 @@ $('op-continue').addEventListener('click', async () => {
   if (!ok) await refresh({ keepSelection: false });
 });
 
+/* A commit that conflicts can be left out instead of resolved — and has to be,
+   when resolving it left nothing to commit: git then refuses --continue for a
+   cherry-pick or revert, and Abort was the only other way out. */
+$('op-skip').addEventListener('click', async () => {
+  const op = state.op;
+  if (!op || !op.canSkip) return;
+  const ok = await confirmAction(`Skip this commit`,
+    `The ${op.kind} carries on without this commit: its changes, and anything ` +
+    'done while resolving it, are dropped.', 'Skip', true);
+  if (!ok) return;
+  const done = await gitAction(null, `Skipping a commit in the ${op.kind}`,
+    () => call('repo:skip', repoPath(), op.kind),
+    async () => {
+      await refresh({ keepSelection: false });
+      setStatus(state.op ? `${op.label} continues` : `${op.label} finished`, 'ok');
+    });
+  if (!done) await refresh({ keepSelection: false });
+});
+
 /** Take one side whole, or declare the file settled as it stands on disk. */
 async function resolveConflict(filePath, side) {
-  const what = side === 'ours' ? 'Taking your version'
-    : side === 'theirs' ? 'Taking their version'
-    : 'Marking resolved';
+  if (side === 'mark' && !(await confirmMarkers([filePath]))) return;
+  const sides = sideLabels(state.op);
+  const what = side === 'mark' ? 'Marking resolved' : `Taking ${sides[side]}`;
+  let res = null;
   await gitAction(null, `${what} of ${baseName(filePath)}`,
-    () => call('repo:resolve', repoPath(), filePath, side),
+    async () => (res = await call('repo:resolve', repoPath(), filePath, side)),
     async () => {
       await refresh();
-      setStatus(`${baseName(filePath)}: ${side === 'mark' ? 'marked resolved' : side} kept`, 'ok');
+      setStatus(`${baseName(filePath)}: ${side === 'mark' ? 'marked resolved'
+        : res && res.removed ? `deleted, as ${sides[side]} has it` : `${sides[side]} kept`}`, 'ok');
     }, { quiet: true });
 }
 
@@ -6401,7 +6501,7 @@ async function renderNotes() {
    path-filtered log drops the commits between the ones that touched the file,
    so the parents the graph draws its lanes from are no longer all present —
    lanes that lie are worse than no lanes at all. */
-const fhist = { path: '', commits: [], names: {}, at: -1,
+const fhist = { path: '', commits: [], names: {}, origs: {}, at: -1,
                 home: null, next: null, was: null,
                 seq: 0 };   // bumped by every open and close: answers check it
 
@@ -6435,6 +6535,7 @@ async function openFileHistory(file) {
   fhist.path = file;
   fhist.commits = [];
   fhist.names = {};
+  fhist.origs = {};
   fhist.at = -1;
   const seq = ++fhist.seq;
 
@@ -6454,6 +6555,7 @@ async function openFileHistory(file) {
   if (out === null) { closeFileHistory(); return; }
   fhist.commits = out.commits;
   fhist.names = out.names || {};
+  fhist.origs = out.origs || {};
 
   if (!fhist.commits.length) {
     $('fh-list').innerHTML =
@@ -6499,8 +6601,11 @@ async function pickFileCommit(i) {
      is: that path already fetches with repo:diffCommitFile and already puts the
      staging buttons away, because there is nothing to stage in the past. */
   state.selection = { kind: 'commit', hash: c.hash };
+  /* The name before, on the commit that renamed it: without it the rename
+     was diffed as the new name alone and read as the whole file added. */
   state.file = { path: fhist.names[c.hash] || fhist.path, kind: 'commit',
-                 status: 'M', untracked: false };
+                 status: fhist.origs?.[c.hash] ? 'R' : 'M', untracked: false,
+                 orig: fhist.origs?.[c.hash] || '' };
   await showFileDiff();
 }
 
@@ -6516,6 +6621,7 @@ function closeFileHistory() {
   $('fhist').hidden = true;
   fhist.commits = [];
   fhist.names = {};
+  fhist.origs = {};
   fhist.at = -1;
   $('fh-list').innerHTML = '';
   // Put back whatever the middle pane was showing before this opened.
@@ -6871,7 +6977,7 @@ $('btn-branch').addEventListener('click', () => newBranch(null));
 
 $('btn-pop').addEventListener('click', () => {
   if (!state.stashes[0]) return;   // aria-disabled does not block clicks by itself
-  applyStash(state.stashes[0].ref, true);
+  applyStash(state.stashes[0].ref, true, state.stashes[0].hash);
 });
 
 $('btn-stash').addEventListener('click', async () => {
@@ -7161,20 +7267,13 @@ $('sidebar').addEventListener('contextmenu', (e) => {
         } },
     ]);
   } else if (kind === 'stash') {
+    // Taken now, with the ref: the list can be redrawn while a dialog is up.
+    const hash = (state.stashes || []).find((s) => s.ref === ref)?.hash || '';
     contextMenu(e, [
-      { label: 'Apply and keep', run: () => applyStash(ref, false) },
-      { label: 'Apply and drop', run: () => applyStash(ref, true) },
+      { label: 'Apply and keep', run: () => applyStash(ref, false, hash) },
+      { label: 'Apply and drop', run: () => applyStash(ref, true, hash) },
       '-',
-      { label: 'Drop stash', danger: true, run: async () => {
-          const ok = await confirmAction('Drop stash',
-            'It leaves the list, and nothing in GitBraid brings it back. The work '
-            + 'survives in the repository under its own hash until git next collects '
-            + 'what nothing points at — copy the SHA first if you want that way back.',
-            'Drop');
-          if (!ok) return;
-          const res = await call('repo:stashDrop', repoPath(), ref);
-          if (res !== null) { await refresh(); setStatus('Dropped stash', 'ok'); }
-        } },
+      { label: 'Drop stash', danger: true, run: () => dropStash(ref, hash) },
     ]);
   } else if (kind === 'remote') {
     const remote = ref.slice(0, ref.indexOf('/'));
@@ -7259,19 +7358,10 @@ $('commit-list').addEventListener('contextmenu', (e) => {
   const stashRef = stashRefFor(hash);
   if (stashRef) {
     contextMenu(e, [
-      { label: 'Apply and keep', run: () => applyStash(stashRef, false) },
-      { label: 'Apply and drop', run: () => applyStash(stashRef, true) },
+      { label: 'Apply and keep', run: () => applyStash(stashRef, false, hash) },
+      { label: 'Apply and drop', run: () => applyStash(stashRef, true, hash) },
       '-',
-      { label: 'Drop stash', danger: true, run: async () => {
-          const ok = await confirmAction('Drop stash',
-            'It leaves the list, and nothing in GitBraid brings it back. The work '
-            + 'survives in the repository under its own hash until git next collects '
-            + 'what nothing points at — copy the SHA first if you want that way back.',
-            'Drop');
-          if (!ok) return;
-          const res = await call('repo:stashDrop', repoPath(), stashRef);
-          if (res !== null) { await refresh(); setStatus('Dropped stash', 'ok'); }
-        } },
+      { label: 'Drop stash', danger: true, run: () => dropStash(stashRef, hash) },
       '-',
       { label: 'Copy SHA', run: () => {
           navigator.clipboard.writeText(hash);
@@ -7476,8 +7566,8 @@ function wireFileList(id) {
       const what = act.dataset.act;
       if (what === 'stage') return stage([path]);
       if (what === 'unstage') return unstage([path]);
-      if (what === 'discard') return discard(path, li.dataset.untracked === '1');
-      if (what === 'ours' || what === 'theirs' || what === 'mark') {
+      if (what === 'discard') return discard(path, isNewFile(path));
+      if (what === 'mine' || what === 'incoming' || what === 'mark') {
         return resolveConflict(path, what);
       }
     }
@@ -7627,10 +7717,11 @@ for (const id of FILE_LISTS) {
 
     const items = [];
     if (kind === 'conflict') {
-      items.push({ label: many ? `Keep your version of ${n} files` : 'Keep your version',
-        run: () => resolveMany(paths, 'ours') });
-      items.push({ label: many ? `Keep their version of ${n} files` : 'Keep their version',
-        run: () => resolveMany(paths, 'theirs') });
+      const sides = sideLabels(state.op);
+      items.push({ label: many ? `Keep ${sides.mine} — ${n} files` : `Keep ${sides.mine}`,
+        run: () => resolveMany(paths, 'mine') });
+      items.push({ label: many ? `Keep ${sides.incoming} — ${n} files` : `Keep ${sides.incoming}`,
+        run: () => resolveMany(paths, 'incoming') });
       items.push({ label: many ? `Mark ${n} files resolved` : 'Mark resolved',
         run: () => resolveMany(paths, 'mark') });
       items.push('-');
@@ -7860,6 +7951,13 @@ async function untrackAndIgnore(paths) {
 function isUntracked(path) {
   const s = state.status;
   return Boolean(s && s.untracked.some((f) => f.path === path));
+}
+
+/* Untracked, or added with `git add -N`: either way there is no committed
+   state to go back to, so discarding it deletes it (main.js does the same). */
+function isNewFile(path) {
+  const s = state.status;
+  return isUntracked(path) || Boolean(s && s.unstaged.some((f) => f.path === path && f.intentToAdd));
 }
 
 /** Deleted in the working tree or staged as deleted — either way, not there. */
