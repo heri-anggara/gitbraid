@@ -11,7 +11,7 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --linux",
-    "test": "node test/parsers.test.js",
+    "test": "node test/run.js",
     "dist:win": "electron-builder --win nsis portable",
     "dist:mac": "electron-builder --mac dmg zip"
   },
