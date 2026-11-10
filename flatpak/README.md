@@ -72,6 +72,19 @@ git with all their hooks, helpers and configuration intact. It needs
 sandbox, and Flathub reviewers treat it as one. Bundling git is the version that
 gets accepted without an argument, so it is the version here.
 
+The same grant decides **Open in terminal**. The runtime ships no terminal
+emulator, so the sandbox has none of its own; GitBraid asks the host for one
+through `flatpak-spawn --host`, and without the grant it says so instead of
+claiming no terminal is installed. Granting it is your call, for your
+installation only:
+
+```bash
+flatpak override --user --talk-name=org.freedesktop.Flatpak io.github.heri_anggara.GitBraid
+```
+
+Updates come from Flathub or `flatpak update`. The in-app updater knows it is
+running in a Flatpak and points there rather than downloading an AppImage.
+
 ## What the linter says
 
 ```bash

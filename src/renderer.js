@@ -78,7 +78,7 @@ function newTab(repo) {
     repo,
     status: null,
     commits: [],
-    refs: { branches: [], remotes: [], tags: [] },
+    refs: { branches: [], remotes: [], tags: [], remoteNames: [] },
     remoteRefNames: new Set(),  // "origin/main", … — to tell remotes from locals
     stashes: [],
     limit: prefs.commitLimit,
@@ -483,112 +483,178 @@ function fieldHtml(f) {
  * from another, `api.note` for the line under the form, and `api.invalid` to
  * block the confirm button beyond the automatic `required` check.
  */
-function modal({
+/* #modal is one element, so a second dialog asked for while one is up waits
+   its turn instead of being painted over the first. Painted over, the first
+   one's listeners stayed bound to the same OK button: one click answered both
+   questions, the second with values collected from the first one's fields. */
+const modalQueue = [];
+let modalOpen = false;
+/* Where the keyboard was before the first dialog of a run took it, so closing
+   the last one gives it back rather than leaving it on <body>. */
+let modalReturn = null;
+
+function modal(opts) {
+  return new Promise((resolve) => {
+    modalQueue.push({ opts, resolve });
+    if (!modalOpen) nextModal();
+  });
+}
+
+function nextModal() {
+  const turn = modalQueue.shift();
+  if (!turn) {
+    modalOpen = false;
+    const back = modalReturn;
+    modalReturn = null;
+    if (back && back.isConnected && back !== document.body) back.focus({ preventScroll: true });
+    return;
+  }
+  modalOpen = true;
+  if (!modalReturn) modalReturn = document.activeElement;
+  showModal(turn.opts, (value) => {
+    turn.resolve(value);
+    nextModal();
+  });
+}
+
+/* What Tab may land on inside the card. A field revealed later (a checkbox
+   that waits on a slow answer) is skipped while it is still hidden. */
+const MODAL_FOCUSABLE = 'button, input, select, textarea, [tabindex]:not([tabindex="-1"])';
+const modalStops = () => [...$('modal').querySelector('.modal-card').querySelectorAll(MODAL_FOCUSABLE)]
+  .filter((n) => !n.disabled && !n.hidden && n.getClientRects().length > 0);
+
+function showModal({
   title, description = '', fields = [], confirmLabel = 'Confirm',
   danger = false, onChange = null, html = '', hideCancel = false,
   cancelLabel = 'Cancel',
-}) {
-  return new Promise((resolve) => {
-    $('modal-title').textContent = title;
-    $('modal-desc').textContent = description;
-    $('modal-desc').hidden = !description;
+}, resolve) {
+  $('modal-title').textContent = title;
+  $('modal-desc').textContent = description;
+  $('modal-desc').hidden = !description;
 
-    const wrap = $('modal-fields');
-    wrap.innerHTML = html || fields.map(fieldHtml).join('');
+  const wrap = $('modal-fields');
+  wrap.innerHTML = html || fields.map(fieldHtml).join('');
 
-    const ok = $('modal-ok');
-    ok.textContent = confirmLabel;
-    ok.classList.toggle('btn-danger', danger);
-    $('modal-cancel').hidden = hideCancel;
-    /* Naming it matters when both buttons are real choices: "Later" is a
-       decision, "Cancel" sounds like backing out of one. */
-    $('modal-cancel').textContent = cancelLabel;
-    $('modal-note').hidden = true;
-    $('modal-note').textContent = '';
-    $('modal').hidden = false;
+  const ok = $('modal-ok');
+  ok.textContent = confirmLabel;
+  ok.classList.toggle('btn-danger', danger);
+  $('modal-cancel').hidden = hideCancel;
+  /* Naming it matters when both buttons are real choices: "Later" is a
+     decision, "Cancel" sounds like backing out of one. */
+  $('modal-cancel').textContent = cancelLabel;
+  $('modal-note').hidden = true;
+  $('modal-note').textContent = '';
+  $('modal').hidden = false;
 
-    const collect = () => {
-      const out = {};
-      wrap.querySelectorAll('[data-field]').forEach((i) => {
-        if (i.type === 'radio') { if (i.checked) out[i.dataset.field] = i.value; return; }
-        if (i.type === 'checkbox') { out[i.dataset.field] = i.checked; return; }
-        /* Everything else here is an identifier, and a stray space in one is a
-           typo. A secret is not: a passphrase may legitimately begin or end
-           with a space, and trimming it would refuse a correct answer. */
-        out[i.dataset.field] = i.type === 'password' ? i.value : i.value.trim();
-      });
-      return out;
-    };
+  const collect = () => {
+    const out = {};
+    wrap.querySelectorAll('[data-field]').forEach((i) => {
+      if (i.type === 'radio') { if (i.checked) out[i.dataset.field] = i.value; return; }
+      if (i.type === 'checkbox') { out[i.dataset.field] = i.checked; return; }
+      /* Everything else here is an identifier, and a stray space in one is a
+         typo. A secret is not: a passphrase may legitimately begin or end
+         with a space, and trimming it would refuse a correct answer. */
+      out[i.dataset.field] = i.type === 'password' ? i.value : i.value.trim();
+    });
+    return out;
+  };
 
-    let blocked = false;
-    const api = {
-      set(name, value) {
-        const input = wrap.querySelector(`[data-field="${name}"]`);
-        if (input && input.value !== value) input.value = value;
-      },
-      note(text, isError = false) {
-        const n = $('modal-note');
-        n.textContent = text || '';
-        n.hidden = !text;
-        n.classList.toggle('error', !!isError);
-      },
-      invalid(reason) {
-        blocked = true;
-        if (reason) api.note(reason, true);
-      },
-    };
+  let blocked = false;
+  const api = {
+    set(name, value) {
+      const input = wrap.querySelector(`[data-field="${name}"]`);
+      if (input && input.value !== value) input.value = value;
+    },
+    note(text, isError = false) {
+      const n = $('modal-note');
+      n.textContent = text || '';
+      n.hidden = !text;
+      n.classList.toggle('error', !!isError);
+    },
+    invalid(reason) {
+      blocked = true;
+      if (reason) api.note(reason, true);
+    },
+  };
 
-    const validate = () => {
-      blocked = false;
-      if (onChange) onChange(collect(), api);
-      const v = collect();
-      const missing = fields.some((f) => f.required && !String(v[f.name] ?? '').trim());
-      ok.disabled = missing || blocked;
-    };
+  const validate = () => {
+    blocked = false;
+    if (onChange) onChange(collect(), api);
+    const v = collect();
+    const missing = fields.some((f) => f.required && !String(v[f.name] ?? '').trim());
+    ok.disabled = missing || blocked;
+  };
 
-    const onEdit = () => validate();
-    const onBrowse = async (e) => {
-      const btn = e.target.closest('[data-browse]');
-      if (!btn) return;
-      const target = wrap.querySelector(`[data-field="${btn.dataset.browse}"]`);
-      const dir = await call('repo:pickDirectory', target?.value || '');
-      if (dir) { target.value = dir; validate(); }
-    };
+  const onEdit = () => validate();
+  const onBrowse = async (e) => {
+    const btn = e.target.closest('[data-browse]');
+    if (!btn) return;
+    const target = wrap.querySelector(`[data-field="${btn.dataset.browse}"]`);
+    const dir = await call('repo:pickDirectory', target?.value || '');
+    if (dir) { target.value = dir; validate(); }
+  };
 
-    wrap.addEventListener('input', onEdit);
-    wrap.addEventListener('change', onEdit);
-    wrap.addEventListener('click', onBrowse);
-    validate();
+  wrap.addEventListener('input', onEdit);
+  wrap.addEventListener('change', onEdit);
+  wrap.addEventListener('click', onBrowse);
+  validate();
 
-    const firstEmpty =
-      [...wrap.querySelectorAll('input[type="text"],input[type="password"]')]
-        .find((i) => !i.value) ||
-      el('input[type="text"],input[type="password"]', wrap);
-    if (firstEmpty) { firstEmpty.focus(); firstEmpty.select(); }
+  const firstEmpty =
+    [...wrap.querySelectorAll('input[type="text"],input[type="password"]')]
+      .find((i) => !i.value) ||
+    el('input[type="text"],input[type="password"]', wrap);
+  /* The keyboard goes into the card, always. Left where it was, keys meant
+     for the dialog reached whatever sat behind the scrim: Enter on a file
+     list stood still under "Discard 2 files" staged those files while the
+     dialog discarded them. A field to type in comes first; otherwise the
+     safe answer — Cancel on a dialog that destroys something, so a stray
+     Enter backs out, and the confirm button everywhere else. */
+  if (firstEmpty) { firstEmpty.focus(); firstEmpty.select(); }
+  else if (danger && !hideCancel) $('modal-cancel').focus();
+  else ok.focus();
 
-    const close = (value) => {
-      $('modal').hidden = true;
-      ok.disabled = false;
-      $('modal-cancel').hidden = false;
-      wrap.removeEventListener('input', onEdit);
-      wrap.removeEventListener('change', onEdit);
-      wrap.removeEventListener('click', onBrowse);
-      ok.removeEventListener('click', onOk);
-      $('modal-cancel').removeEventListener('click', onCancel);
-      document.removeEventListener('keydown', onKey);
-      resolve(value);
-    };
-    const onOk = () => { if (!ok.disabled) close(collect()); };
-    const onCancel = () => close(null);
-    const onKey = (e) => {
-      if (e.key === 'Escape') onCancel();
-      if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') onOk();
-    };
+  const close = (value) => {
+    $('modal').hidden = true;
+    ok.disabled = false;
+    $('modal-cancel').hidden = false;
+    wrap.removeEventListener('input', onEdit);
+    wrap.removeEventListener('change', onEdit);
+    wrap.removeEventListener('click', onBrowse);
+    ok.removeEventListener('click', onOk);
+    $('modal-cancel').removeEventListener('click', onCancel);
+    document.removeEventListener('keydown', onKey);
+    resolve(value);
+  };
+  const onOk = () => { if (!ok.disabled) close(collect()); };
+  const onCancel = () => close(null);
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); onCancel(); return; }
+    if (e.key === 'Tab') {
+      /* Kept inside the card: Tab used to walk on into the history and the
+         toolbar behind the scrim, where the next key did something else. */
+      const stops = modalStops();
+      if (!stops.length) return;
+      const at = stops.indexOf(document.activeElement);
+      const to = at < 0 ? (e.shiftKey ? stops.length - 1 : 0)
+        : e.shiftKey ? (at === 0 ? stops.length - 1 : -1)
+          : (at === stops.length - 1 ? 0 : -1);
+      if (to >= 0) { e.preventDefault(); stops[to].focus(); }
+      return;
+    }
+    /* Enter on a button is that button's own: Cancel focused and Enter
+       pressed used to confirm, because this ran first and answered OK. A
+       textarea keeps its newline. Anywhere else Enter is the confirm, and
+       the key is spent here — left alive, its keypress went on to click
+       whatever got the focus back when the dialog closed. */
+    if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA' && !e.target.closest('button')) {
+      e.preventDefault();
+      onOk();
+    }
+  };
 
-    ok.addEventListener('click', onOk);
-    $('modal-cancel').addEventListener('click', onCancel);
-    document.addEventListener('keydown', onKey);
-  });
+  ok.addEventListener('click', onOk);
+  $('modal-cancel').addEventListener('click', onCancel);
+  document.addEventListener('keydown', onKey);
 }
 
 /* ═════ credentials ═════════════════════════════════════════════ */
@@ -704,22 +770,46 @@ function hideTip() {
   $('tooltip').hidden = true;
 }
 
-document.addEventListener('mouseover', (e) => {
-  const target = e.target.closest('[title], [data-tip]');
+/* Taking the `title` away also took the only name an icon-only button had:
+   after one hover a screen reader announced "button" and nothing else. The
+   text moves to aria-label on a control with no words of its own, and to
+   aria-description on anything else, so it is still read wherever it went.
+   Only labels this put there are rewritten — one written in the markup is the
+   author's and stays. */
+function lendTitle(target) {
+  const text = target.title;
+  target.dataset.tip = text;
+  target.removeAttribute('title');
+  const iconOnly = target.matches('button, [role="button"]') && !target.textContent.trim();
+  const attr = iconOnly ? 'aria-label' : 'aria-description';
+  if (!target.hasAttribute(attr) || target.dataset.tipAria === attr) {
+    target.setAttribute(attr, text);
+    target.dataset.tipAria = attr;
+  }
+}
+
+function aimTip(target) {
   if (!target || target === tip.el) return;
   hideTip();
   // A live `title` always wins, so labels that change stay truthful.
-  if (target.title) {
-    target.dataset.tip = target.title;
-    target.removeAttribute('title');
-  }
+  if (target.title) lendTitle(target);
   tip.el = target;
   tip.timer = setTimeout(() => showTip(target), 380);
-});
+}
+
+document.addEventListener('mouseover', (e) => aimTip(e.target.closest('[title], [data-tip]')));
 
 document.addEventListener('mouseout', (e) => {
   if (tip.el && !tip.el.contains(e.relatedTarget)) hideTip();
 });
+/* The keyboard gets the same hint the pointer does. Only for focus the
+   keyboard moved — a click focuses a button too, and a tip popping up under
+   the pointer that just pressed it is noise. */
+document.addEventListener('focusin', (e) => {
+  const t = e.target;
+  if (t instanceof Element && t.matches(':focus-visible') && (t.title || t.dataset.tip)) aimTip(t);
+});
+document.addEventListener('focusout', (e) => { if (tip.el === e.target) hideTip(); });
 document.addEventListener('mousedown', hideTip, true);
 window.addEventListener('blur', hideTip);
 
@@ -765,7 +855,7 @@ function contextMenu(event, items) {
         : '';
       // A keyboard shortcut sits to the right, so the label column stays even.
       const accel = it.accel ? `<span class="ctx-accel">${esc(it.accel)}</span>` : '';
-      return `<li${it.disabled ? '' : ` data-i="${i}"`}` +
+      return `<li${it.disabled ? '' : ` data-i="${i}" tabindex="-1"`}` +
         `${cls || accel ? ` class="${[cls, accel ? 'has-accel' : ''].filter(Boolean).join(' ')}"` : ''}` +
         `${it.hint ? ` title="${esc(it.hint)}"` : ''}>${tick}${esc(it.label)}${accel}</li>`;
     })
@@ -776,19 +866,51 @@ function contextMenu(event, items) {
   menu.style.left = Math.min(event.clientX, w - rect.width - 8) + 'px';
   menu.style.top = Math.min(event.clientY, h - rect.height - 8) + 'px';
 
+  /* Down first, then run: an entry that asks a question opens a dialog, and
+     the dialog should hand the focus back to the row the menu came from, not
+     to an entry of a menu that is gone. */
   const onClick = (e) => {
     const li = e.target.closest('li[data-i]');
-    if (li) items[Number(li.dataset.i)].run();
     dismiss();
+    if (li) items[Number(li.dataset.i)].run();
+  };
+  /* Opened from the keyboard (a right click reports button 2), the menu takes
+     the focus and answers the arrows, Enter and Space; Esc is the window's
+     chain, and the focus goes back where it came from. */
+  const back = document.activeElement;
+  const entries = () => [...menu.querySelectorAll('li[data-i]')];
+  const onKey = (e) => {
+    const list = entries();
+    const at = list.indexOf(document.activeElement);
+    const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: list.length - 1 }[e.key];
+    if (to !== undefined && list.length) {
+      e.preventDefault();
+      list[(to + list.length) % list.length].focus();
+    } else if ((e.key === 'Enter' || e.key === ' ') && at >= 0) {
+      e.preventDefault();
+      list[at].click();
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      dismiss();
+    }
   };
   const dismiss = () => {
+    const had = menu.contains(document.activeElement);
     menu.hidden = true;
     menu.removeEventListener('click', onClick);
+    menu.removeEventListener('keydown', onKey);
     document.removeEventListener('mousedown', onDoc, true);
     if (dismissMenu === dismiss) dismissMenu = null;
+    /* A history row may have been drawn again while the menu was up; its
+       successor, the row for the same commit, takes the focus instead. */
+    const to = back?.isConnected ? back
+      : back?.dataset?.hash ? document.querySelector(`.commit-row[data-hash="${back.dataset.hash}"]`) : null;
+    if (had) to?.focus({ preventScroll: true });
   };
   const onDoc = (e) => { if (!menu.contains(e.target)) dismiss(); };
   menu.addEventListener('click', onClick);
+  menu.addEventListener('keydown', onKey);
+  if (event.button !== 2) entries()[0]?.focus({ preventScroll: true });
   dismissMenu = dismiss;
   setTimeout(() => document.addEventListener('mousedown', onDoc, true), 0);
 }
@@ -1383,6 +1505,8 @@ function matchRefs(items, name = (x) => x.name) {
 
 function renderSidebar() {
   const { branches, remotes, tags } = state.refs;
+  // A redraw replaces every row, the focused one too; this puts focus back.
+  const hadFocus = Boolean(document.activeElement?.closest?.('#sidebar .side-list > li'));
 
   const branchLeaf = (b, label, depth) => {
     const track = b.track ? esc(b.track.replace(/[[\]]/g, '')) : '';
@@ -1454,6 +1578,7 @@ function renderSidebar() {
   $('app').classList.toggle('ref-filtering', Boolean(refFilter));
   if (!refFilter) {
     for (const g of document.querySelectorAll('.side-group')) g.classList.remove('no-match');
+    paintSideFocus(hadFocus);
     return;
   }
   for (const g of document.querySelectorAll('.side-group')) {
@@ -1462,6 +1587,56 @@ function renderSidebar() {
     g.classList.toggle('no-match', hits[key] === 0);
     g.classList.toggle('collapsed', hits[key] === 0);
   }
+  paintSideFocus(hadFocus);
+}
+
+/* The sidebar from the keyboard, as a tree: one tab stop for all its rows, the
+   arrows to move, open and shut. Rows are rebuilt on every refresh, so where
+   focus is is remembered by what the row names, not by the element. */
+let sideFocusKey = null;
+const SIDE_ROW = '.side-list > li[data-ref], .side-list > li[data-folder]';
+const sideKey = (li) => (li.dataset.folder !== undefined
+  ? `folder:${li.dataset.kind}:${li.dataset.folder}`
+  : `${li.dataset.kind}:${li.dataset.ref}`);
+const sideDepth = (li) => parseInt(li.style.getPropertyValue('--d'), 10) || 0;
+/** The rows a reader can see: not inside a folded group. */
+const sideRows = () => [...document.querySelectorAll(
+  '#sidebar .side-group:not(.collapsed) .side-list > li[data-ref],' +
+  '#sidebar .side-group:not(.collapsed) .side-list > li[data-folder]')];
+
+function paintSideFocus(refocus = false) {
+  for (const li of document.querySelectorAll('#sidebar .side-list > li')) {
+    if (!li.matches(SIDE_ROW)) { li.setAttribute('role', 'none'); continue; }
+    li.tabIndex = -1;
+    li.setAttribute('role', 'treeitem');
+    li.setAttribute('aria-level', String(sideDepth(li) + 1));
+    if (li.dataset.folder !== undefined) {
+      li.setAttribute('aria-expanded', String(!li.classList.contains('shut')));
+    }
+  }
+  const rows = sideRows();
+  const at = rows.find((li) => sideKey(li) === sideFocusKey)
+    || rows.find((li) => li.classList.contains('current'))
+    || rows[0];
+  if (!at) return;
+  at.tabIndex = 0;
+  if (refocus) at.focus({ preventScroll: true });
+}
+
+function focusSideRow(li) {
+  sideFocusKey = sideKey(li);
+  paintSideFocus();
+  li.focus({ preventScroll: true });
+  li.scrollIntoView({ block: 'nearest' });
+}
+
+for (const ul of document.querySelectorAll('#sidebar .side-list')) {
+  ul.setAttribute('role', 'tree');
+  const head = ul.closest('.side-group')?.querySelector('.side-head');
+  // The head's own words, without the chevron and the count beside them.
+  const words = head && [...head.childNodes].filter((n) => n.nodeType === 3)
+    .map((n) => n.textContent).join(' ').trim();
+  if (words) ul.setAttribute('aria-label', words);
 }
 
 /* ═════ history columns ═════════════════════════════════════════ */
@@ -1819,15 +1994,40 @@ function refPills(commit, lane) {
 function highlight(text, query) {
   const src = String(text ?? '');
   if (!query) return esc(src);
-  const hay = src.toLowerCase();
   const needle = query.toLowerCase();
+  if (!needle) return esc(src);
+  let hay = src.toLowerCase();
+  /* Positions found in the lowered copy are positions in the original only
+     while lowering keeps every length. It does not for all of them: İ lowers
+     to i plus a combining dot, so every mark after one landed a character
+     late — "İİİ fix" marked " fi" of nothing. Then each lowered unit is
+     traced back to the character it came from. */
+  let from = null;
+  let to = null;
+  if (hay.length !== src.length) {
+    hay = '';
+    from = [];
+    to = [];
+    for (let i = 0; i < src.length;) {
+      const ch = String.fromCodePoint(src.codePointAt(i));
+      const low = ch.toLowerCase();
+      for (let k = 0; k < low.length; k += 1) { from.push(i); to.push(i + ch.length); }
+      hay += low;
+      i += ch.length;
+    }
+  }
   let out = '';
   let i = 0;
+  let j = 0;
   for (;;) {
-    const at = hay.indexOf(needle, i);
+    const at = hay.indexOf(needle, j);
     if (at < 0) return out + esc(src.slice(i));
-    out += esc(src.slice(i, at)) + '<mark>' + esc(src.slice(at, at + needle.length)) + '</mark>';
-    i = at + needle.length;
+    const start = Math.max(i, from ? from[at] : at);   // never back over a mark
+    const end = to ? to[at + needle.length - 1] : at + needle.length;
+    j = at + needle.length;
+    if (end <= start) continue;           // wholly inside a character already marked
+    out += esc(src.slice(i, start)) + '<mark>' + esc(src.slice(start, end)) + '</mark>';
+    i = end;
   }
 }
 
@@ -1902,14 +2102,25 @@ function paintSelection() {
       ? list.querySelector(`.commit-row[data-hash="${sel.hash}"]`)
       : null;
   want?.classList.add('selected');
+  /* One tab stop for the whole history: the selected row, or the first row
+     drawn when the selection is off screen or there is none. The rest stay
+     reachable by script (-1), which is what the arrow keys use. */
+  const stop = want || list.querySelector('.commit-row');
+  for (const r of list.querySelectorAll('.commit-row[tabindex="0"], .commit-row[aria-selected="true"]')) {
+    if (r === stop && r === want) continue;
+    if (r !== stop) r.tabIndex = -1;
+    r.removeAttribute('aria-selected');
+  }
+  if (stop) stop.tabIndex = 0;
+  if (want) want.setAttribute('aria-selected', 'true');
 }
 
-async function selectCommit(hash) {
+async function selectCommit(hash, { nearest = false } = {}) {
   state.file = null;
   state.mergeSide = 'in';        // a side chosen on one merge means nothing on another
   state.selection = { kind: 'commit', hash };
   paintSelection();
-  scrollToCommit(hash);
+  scrollToCommit(hash, { nearest });
   await renderDetail();
 }
 
@@ -1964,13 +2175,23 @@ function requiredRange(total) {
 
 /* Puts the row for a commit on screen without depending on the row existing —
    at any moment most of them do not. */
-function scrollToCommit(hash) {
+function scrollToCommit(hash, { nearest = false } = {}) {
   const i = state.rowIndex?.get(hash);
   if (i === undefined) return;
+  scrollToRow(i, { nearest });
+}
+
+/* `nearest` moves the view only as far as the row needs, the way stepping
+   through a list does; without it the row is centred, which is right for a
+   jump from somewhere else and dizzying one row at a time. */
+function scrollToRow(i, { nearest = false } = {}) {
   const sc = $('history-scroll');
   const rowH = window.Graph.ROW_H;
-  const y = $('history-head').offsetHeight + i * rowH;
-  sc.scrollTop = Math.max(0, y - (sc.clientHeight - rowH) / 2);
+  const head = $('history-head').offsetHeight;
+  const y = head + i * rowH;
+  if (!nearest) sc.scrollTop = Math.max(0, y - (sc.clientHeight - rowH) / 2);
+  else if (y - head < sc.scrollTop) sc.scrollTop = Math.max(0, y - head);
+  else if (y + rowH > sc.scrollTop + sc.clientHeight) sc.scrollTop = y + rowH - sc.clientHeight;
   renderRows();
 }
 
@@ -2031,7 +2252,7 @@ function rowHtml(row, find) {
     const n = state.status.staged.length + state.status.unstaged.length +
               state.status.untracked.length + state.status.conflicted.length;
     return (
-      '<li class="commit-row pending" data-wip="1" style="--lane:var(--pending)">' +
+      '<li class="commit-row pending" data-wip="1" role="option" tabindex="-1" style="--lane:var(--pending)">' +
       rowCells({
         msg: '<span class="c-msg"><span class="c-msg-text">Uncommitted changes</span>' +
           `<span class="c-msg-body">${n} file${n === 1 ? '' : 's'}</span></span>`,
@@ -2063,7 +2284,7 @@ function rowHtml(row, find) {
     ? clipForTip(c.body ? `${c.subject}\n\n${c.body}` : c.subject)
     : '';
   return (
-    `<li class="commit-row${cls}" data-hash="${c.hash}" ` +
+    `<li class="commit-row${cls}" data-hash="${c.hash}" role="option" tabindex="-1" ` +
     `style="--lane:${lane}" title="${esc(full)}">` +
     rowCells({
       refs: `<span class="c-refs">${pills}${ghost}</span>`,
@@ -2120,6 +2341,10 @@ function renderRows() {
     : window.Graph.render(layout, state.rowIndex, { avatarFor, first, last });
 
   const list = $('commit-list');
+  /* The row with the keyboard focus can be rebuilt under it — a refresh lays
+     the history out again and every row is new — and the focus would fall to
+     <body>, where the arrow keys do nothing. Noted here, put back below. */
+  const focused = list.contains(document.activeElement) ? document.activeElement : null;
   /* The spacer holds the height, and only changes when the history does. The
      rows ride a transform, which the browser can do without laying anything out
      again — measured, changing paddingTop instead cost 10.10 ms a step because
@@ -2168,6 +2393,13 @@ function renderRows() {
      another commit's message. */
   while (node) { const next = node.nextElementSibling; node.remove(); node = next; }
 
+  if (focused && !focused.isConnected) {
+    const again = focused.dataset.wip
+      ? list.querySelector('.commit-row[data-wip]')
+      : list.querySelector(`.commit-row[data-hash="${focused.dataset.hash}"]`);
+    (again || list.querySelector('.commit-row'))?.focus({ preventScroll: true });
+  }
+
   // The class rowHtml deliberately does not carry.
   paintSelection();
 }
@@ -2183,12 +2415,24 @@ async function renderDetail() {
   if (sel?.kind === 'commit') return renderCommitPanel(sel.hash);
 }
 
+/* What the two sides of a conflict are called right now. Which git stage is
+   whose — a rebase turns --ours and --theirs round — is decided in main.js,
+   which sends these labels with the operation state; with no operation on
+   record (a stash that did not apply cleanly) the plain words stand. */
+function sideLabels(op) {
+  const s = op && op.sides;
+  return {
+    mine: (s && s.mine && s.mine.label) || 'your version',
+    incoming: (s && s.incoming && s.incoming.label) || 'their version',
+  };
+}
+
 const F_ICON = {
-  // "ours" and "theirs" point at the two sides; the tick settles the file.
-  ours: '<svg class="tb-i" viewBox="0 0 12 12" aria-hidden="true">' +
+  // "mine" and "incoming" point at the two sides; the tick settles the file.
+  mine: '<svg class="tb-i" viewBox="0 0 12 12" aria-hidden="true">' +
     '<path d="M7.4 2.6 4 6l3.4 3.4" fill="none" stroke="currentColor" ' +
     'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  theirs: '<svg class="tb-i" viewBox="0 0 12 12" aria-hidden="true">' +
+  incoming: '<svg class="tb-i" viewBox="0 0 12 12" aria-hidden="true">' +
     '<path d="M4.6 2.6 8 6l-3.4 3.4" fill="none" stroke="currentColor" ' +
     'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   mark: '<svg class="tb-i" viewBox="0 0 12 12" aria-hidden="true">' +
@@ -2215,10 +2459,11 @@ function fileRow(f, kind, depth = 0, mode = 'path') {
   const act = (name, label, danger) =>
     `<button class="f-act${danger ? ' danger' : ''}" data-act="${name}" ` +
     `title="${label}">${F_ICON[name]}</button>`;
+  const sides = kind === 'conflict' ? sideLabels(state.op) : null;
   const actions =
     kind === 'conflict'
-      ? act('ours', 'Keep your version of this file') +
-        act('theirs', 'Keep their version of this file') +
+      ? act('mine', esc(`Keep ${sides.mine} of this file`)) +
+        act('incoming', esc(`Keep ${sides.incoming} of this file`)) +
         act('mark', 'Mark resolved — keep the file as it is on disk now')
     : kind === 'staged' ? act('unstage', 'Unstage this file')
     : kind === 'unstaged'
@@ -2449,7 +2694,17 @@ async function renderCommitPanel(hash) {
   $('c-body').hidden = !c.body;
 
   $('c-author').textContent = c.author;
-  $('c-date').textContent = `authored ${absoluteTime(c.commitDate)}`;
+  /* The author's date beside the author's name. It read the commit date,
+     which a rebase, an amend or a cherry-pick moves to the moment of the
+     rewrite. When the two differ the commit date is still there, one hover
+     away, with whoever made it if that was someone else. */
+  const when = $('c-date');
+  when.textContent = `authored ${absoluteTime(c.authorDate)}`;
+  const committed = absoluteTime(c.commitDate);
+  const by = c.committer && c.committer !== c.author ? ` by ${c.committer}` : '';
+  delete when.dataset.tip;
+  if (committed !== absoluteTime(c.authorDate) || by) when.title = `committed ${committed}${by}`;
+  else when.removeAttribute('title');
   /* The one large avatar in the window, so it shows whatever is best: the
      photograph when one was found, initials otherwise. It does not follow the
      placement setting — that exists to thin out a list of thousands of rows,
@@ -2606,10 +2861,10 @@ $('c-edit-cancel').addEventListener('click', exitReword);
 $('c-edit-save').addEventListener('click', saveReword);
 $('c-edit-subject').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); saveReword(); }
-  if (e.key === 'Escape') exitReword();
+  if (e.key === 'Escape') { e.preventDefault(); exitReword(); }
 });
 $('c-edit-body').addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') exitReword();
+  if (e.key === 'Escape') { e.preventDefault(); exitReword(); }
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveReword();
 });
 
@@ -3498,7 +3753,8 @@ function dropOpenFile(paths) {
 async function discard(path, untracked) {
   const ok = await confirmAction(
     'Discard changes',
-    `Changes to ${path} will be lost and cannot be recovered.`,
+    untracked ? `${path} has never been committed, so discarding it deletes it. This cannot be undone.`
+      : `Changes to ${path} will be lost and cannot be recovered.`,
     'Discard'
   );
   if (!ok) return;
@@ -3530,8 +3786,8 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
    keeps no copy of anywhere. */
 async function discardMany(paths) {
   if (!paths.length) return;
-  const gone = paths.filter((p) => isUntracked(p));
-  const kept = paths.filter((p) => !isUntracked(p));
+  const gone = paths.filter((p) => isNewFile(p));
+  const kept = paths.filter((p) => !isNewFile(p));
   if (paths.length === 1) return discard(paths[0], gone.length === 1);
 
   const ok = await confirmAction(
@@ -3549,11 +3805,55 @@ async function discardMany(paths) {
   if (done) setStatus(`Discarded ${plural(paths.length, 'file')}`, 'ok');
 }
 
+/* Each file is its own git command, and any of them can fail. The count is
+   of the ones that went through: this used to say "3 files resolved" after
+   git had refused one of them, over the top of git's own error. */
 async function resolveMany(paths, how) {
-  for (const p of paths) await call('repo:resolve', repoPath(), p, how);
+  if (how === 'mark' && !(await confirmMarkers(paths))) return;
+  const failed = [];
+  for (const p of paths) {
+    if (await call('repo:resolve', repoPath(), p, how) === null) {
+      failed.push({ path: p, error: firstLine(lastFailure) });
+    }
+  }
   clearPicked();
   await refresh();
-  setStatus(`${plural(paths.length, 'file')} resolved`, 'ok');
+  const r = resolveReport(paths.length, failed);
+  setStatus(r.text, r.kind);
+}
+
+/** What the status bar says after resolving `total` files, `failed` of which
+    git refused ({ path, error }). */
+function resolveReport(total, failed) {
+  if (!failed.length) return { text: `${plural(total, 'file')} resolved`, kind: 'ok' };
+  const first = failed[0];
+  const reason = first.error ? `: ${first.error}` : '';
+  if (failed.length === total) {
+    return { text: total === 1 ? `Could not resolve ${first.path}${reason}`
+      : `Could not resolve any of ${total} files — ${first.path}${reason}`, kind: 'error' };
+  }
+  return {
+    text: `${plural(total - failed.length, 'file')} resolved, ${failed.length} not — ${first.path}${reason}`,
+    kind: 'error',
+  };
+}
+
+/* Marking a file resolved stages it exactly as it is, conflict markers and all,
+   and git does not object. Asked once for however many files were picked,
+   naming the ones that still hold markers; true when it is fine to go on. */
+async function confirmMarkers(paths) {
+  const marked = await call('repo:conflictMarkers', repoPath(), paths);
+  if (marked === null) return false;
+  if (!marked.length) return true;
+  return confirmAction('Conflict markers left', markerWarning(marked), 'Mark resolved', true);
+}
+
+function markerWarning(files) {
+  const shown = files.slice(0, 5).join(', ');
+  const more = files.length > 5 ? ` and ${files.length - 5} more` : '';
+  return `${files.length === 1 ? 'This file still holds' : `${files.length} files still hold`} ` +
+    `<<<<<<< / >>>>>>> conflict markers: ${shown}${more}. Marking ` +
+    `${files.length === 1 ? 'it' : 'them'} resolved stages the markers as they are.`;
 }
 
 /* Stashing part of the working tree. Untracked files need -u or git leaves them
@@ -3697,14 +3997,16 @@ async function askAboutLocalChanges(ref) {
   return r ? r.mode : null;
 }
 
-async function checkout(ref) {
+/* `ref` is what the reader sees; `target` what git is handed — the full ref
+   name from the sidebar, or a commit hash. */
+async function checkout(ref, target = ref) {
   const mode = await askAboutLocalChanges(ref);
   if (mode === null) return;
 
   // gitAction hands nothing to its follow-up, so the outcome rides a closure.
   let res = null;
   await gitAction(null, `Checking out ${ref}`,
-    async () => (res = await call('repo:checkoutWith', repoPath(), ref, mode)),
+    async () => (res = await call('repo:checkoutWith', repoPath(), target, mode)),
     async () => {
       await refresh({ keepSelection: false });
       if (res?.stash === 'conflict') {
@@ -3751,12 +4053,13 @@ async function revealRef(ref, kind) {
 }
 
 async function newBranch(startPoint) {
+  const shown = shortRefName(startPoint);
   const r = await modal({
     title: 'New branch',
     // A start point is either a commit hash, which is shortened, or a ref name,
     // which must be shown whole.
     description: startPoint
-      ? `Starting from ${/^[0-9a-f]{7,40}$/.test(startPoint) ? startPoint.slice(0, 7) : startPoint}`
+      ? `Starting from ${/^[0-9a-f]{7,40}$/.test(shown) ? shown.slice(0, 7) : shown}`
       : 'Starting from the current HEAD',
     fields: [
       { name: 'name', label: 'Branch name', placeholder: 'feature/rename-lanes' },
@@ -3813,8 +4116,8 @@ async function askAboutMerge(ref, info) {
   return r ? r.mode : null;
 }
 
-async function mergeBranch(ref) {
-  const info = await call('repo:mergeInfo', repoPath(), ref);
+async function mergeBranch(ref, target = ref) {
+  const info = await call('repo:mergeInfo', repoPath(), target);
   if (info === null) return;
   /* git succeeds and changes nothing when the branch is already contained.
      Saying "Merged" there would claim something that did not happen — and
@@ -3830,7 +4133,7 @@ async function mergeBranch(ref) {
   let out = '';
   const startedOn = activeId;
   const ok = await gitAction(null, `Merging ${ref}`,
-    async () => (out = await call('repo:merge', repoPath(), ref, mode)),
+    async () => (out = await call('repo:merge', repoPath(), target, mode)),
     async () => {
       await refresh({ keepSelection: false });
       setStatus(nothingHappened(out)
@@ -3850,11 +4153,11 @@ async function mergeBranch(ref) {
 const nothingHappened = (out) =>
   /already up to date|is up to date|current branch .* is up to date/i.test(String(out || ''));
 
-async function rebaseOnto(ref) {
+async function rebaseOnto(ref, target = ref) {
   let out = '';
   const startedOn = activeId;
   const ok = await gitAction(null, `Rebasing onto ${ref}`,
-    async () => (out = await call('repo:rebase', repoPath(), ref)),
+    async () => (out = await call('repo:rebase', repoPath(), target)),
     async () => {
       await refresh({ keepSelection: false });
       setStatus(nothingHappened(out)
@@ -3864,30 +4167,46 @@ async function rebaseOnto(ref) {
   if (ok === false && activeId === startedOn) await refresh({ keepSelection: false });
 }
 
-async function applyStash(ref, drop) {
+/* `hash` is the stash's commit as the list showed it: main.js checks that the
+   stash@{n} still names it before touching anything. */
+async function applyStash(ref, drop, hash) {
+  const startedOn = activeId;
   // Pop reports on the Pop button, plain apply on Stash — whichever the reader
   // is most likely to be looking at.
-  await gitAction(drop ? 'btn-pop' : 'btn-stash', drop ? 'Popping' : 'Applying',
-    () => call('repo:stashApply', repoPath(), ref, drop),
+  const ok = await gitAction(drop ? 'btn-pop' : 'btn-stash', drop ? 'Popping' : 'Applying',
+    () => call('repo:stashApply', repoPath(), ref, drop, hash),
     async () => {
       await refresh({ keepSelection: false });
       setStatus(drop ? 'Popped stash' : 'Applied stash', 'ok');
     });
+  /* A stash that conflicts is applied half-way and leaves conflicted files —
+     the one outcome the working tree most needs redrawn for, as after a merge. */
+  if (ok === false && activeId === startedOn) await refresh({ keepSelection: false });
 }
 
+/** Drop one stash, after asking. Shared by the sidebar and the history row. */
+async function dropStash(ref, hash) {
+  const ok = await confirmAction('Drop stash',
+    'It leaves the list, and nothing in GitBraid brings it back. The work '
+    + 'survives in the repository under its own hash until git next collects '
+    + 'what nothing points at — copy the SHA first if you want that way back.',
+    'Drop');
+  if (!ok) return;
+  const res = await call('repo:stashDrop', repoPath(), ref, hash);
+  if (res !== null) { await refresh(); setStatus('Dropped stash', 'ok'); }
+}
+
+/* The toolbar pushes the checked-out branch exactly as the sidebar would push
+   it: to the remote and branch it tracks, and only after asking when forced. */
 async function push(force = false) {
   const s = state.status;
   if (!s?.branch) {
     setStatus('You are on a detached HEAD. Check out a branch before pushing.', 'error');
     return;
   }
-  await gitAction('btn-push', force ? 'Force pushing' : 'Pushing',
-    () => call('repo:push', repoPath(), {
-      branch: s.branch,
-      setUpstream: !s.upstream,
-      force,
-    }),
-    async () => { await refresh(); setStatus(`Pushed ${s.branch}`, 'ok'); });
+  // A branch with no commit yet has no ref, so nothing to read an upstream from.
+  const b = state.refs.branches.find((x) => x.name === s.branch) || { name: s.branch };
+  await pushBranch(b, force, 'repo:push');
 }
 
 /* ═════ wiring ══════════════════════════════════════════════════ */
@@ -4258,7 +4577,7 @@ $('btn-tabsearch').addEventListener('click', () =>
 );
 $('tabmenu-input').addEventListener('input', (e) => renderTabMenu(e.target.value));
 $('tabmenu-input').addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeTabMenu();
+  if (e.key === 'Escape') { e.preventDefault(); closeTabMenu(); }
   if (e.key === 'Enter') {
     const first = el('#tabmenu-list li[data-tab]');
     if (first) { closeTabMenu(); activateTab(first.dataset.tab); }
@@ -4367,11 +4686,15 @@ async function askRemoteLater(remote, branch) {
 async function finishFlow(flow) {
   const cfg = state.flow;
   const tagged = flow.kind !== 'feature';
-  const b = state.refs.branches.find((x) => x.name === flow.branch);
-  const remote = b?.upstream
-    ? b.upstream.slice(0, b.upstream.indexOf('/'))
-    : (state.refs.remotes[0]?.name.split('/')[0] || 'origin');
-  const hasRemote = state.refs.remotes.length > 0;
+  const b = state.refs.branches.find((x) => x.name === flow.branch) || { name: flow.branch };
+  const hasRemote = (state.refs.remoteNames || []).length > 0;
+  // The same choice a push of this branch makes, asked first when it is open.
+  let remote = 'origin';
+  if (hasRemote) {
+    const plan = await resolvePush(b, { remoteOnly: true });
+    if (!plan) return;
+    remote = plan.remote;
+  }
   const landing = tagged ? `${cfg.master} and ${cfg.develop}` : cfg.develop;
 
   /* Only worth offering when the branch was actually published; a feature that
@@ -4979,6 +5302,10 @@ window.gitbraid.on('repo:progress', (p) => {
    stays suspended until you finish or abandon it. That state is invisible in
    git's own output once the message scrolls away, so it gets a strip of its
    own that cannot be missed. */
+/* What an operation is called in a sentence. git's own word does for most;
+   "the am" is not English. */
+const opName = (op) => (op.kind === 'am' ? 'patch series' : op.kind);
+
 function renderOpState() {
   const op = state.op;
   const bar = $('opstate');
@@ -4997,9 +5324,12 @@ function renderOpState() {
   const done = left === 0;
   $('op-continue').disabled = !done;
   $('op-continue').title = done
-    ? `Finish the ${op.kind} with what is staged`
+    ? `Finish the ${opName(op)} with what is staged`
     : `Resolve the remaining ${left} file${left === 1 ? '' : 's'} first`;
-  $('op-abort').title = `Undo the ${op.kind} and put the repository back as it was`;
+  $('op-abort').title = `Undo the ${opName(op)} and put the repository back as it was`;
+  // main.js says which operations have a --skip; a merge has nothing to skip to.
+  $('op-skip').hidden = !op.canSkip;
+  $('op-skip').title = 'Leave this commit out and carry on with the next one';
 }
 
 const conflictCount = () => state.status?.conflicted.length || 0;
@@ -5007,12 +5337,12 @@ const conflictCount = () => state.status?.conflicted.length || 0;
 $('op-abort').addEventListener('click', async () => {
   const op = state.op;
   if (!op) return;
-  const ok = await confirmAction(`Abort the ${op.kind}`,
-    `The repository goes back to how it was before the ${op.kind} started. ` +
+  const ok = await confirmAction(`Abort the ${opName(op)}`,
+    `The repository goes back to how it was before the ${opName(op)} started. ` +
     'Work you have already committed is untouched; changes made while resolving are lost.',
     'Abort', true);
   if (!ok) return;
-  await gitAction(null, `Aborting the ${op.kind}`,
+  await gitAction(null, `Aborting the ${opName(op)}`,
     () => call('repo:abort', repoPath(), op.kind),
     async () => { await refresh({ keepSelection: false }); setStatus(`${op.label} aborted`, 'ok'); });
 });
@@ -5020,7 +5350,7 @@ $('op-abort').addEventListener('click', async () => {
 $('op-continue').addEventListener('click', async () => {
   const op = state.op;
   if (!op) return;
-  const ok = await gitAction(null, `Continuing the ${op.kind}`,
+  const ok = await gitAction(null, `Continuing the ${opName(op)}`,
     () => call('repo:continue', repoPath(), op.kind),
     async () => {
       await refresh({ keepSelection: false });
@@ -5030,16 +5360,37 @@ $('op-continue').addEventListener('click', async () => {
   if (!ok) await refresh({ keepSelection: false });
 });
 
+/* A commit that conflicts can be left out instead of resolved — and has to be,
+   when resolving it left nothing to commit: git then refuses --continue for a
+   cherry-pick or revert, and Abort was the only other way out. */
+$('op-skip').addEventListener('click', async () => {
+  const op = state.op;
+  if (!op || !op.canSkip) return;
+  const ok = await confirmAction(`Skip this commit`,
+    `The ${opName(op)} carries on without this commit: its changes, and anything ` +
+    'done while resolving it, are dropped.', 'Skip', true);
+  if (!ok) return;
+  const done = await gitAction(null, `Skipping a commit in the ${opName(op)}`,
+    () => call('repo:skip', repoPath(), op.kind),
+    async () => {
+      await refresh({ keepSelection: false });
+      setStatus(state.op ? `${op.label} continues` : `${op.label} finished`, 'ok');
+    });
+  if (!done) await refresh({ keepSelection: false });
+});
+
 /** Take one side whole, or declare the file settled as it stands on disk. */
 async function resolveConflict(filePath, side) {
-  const what = side === 'ours' ? 'Taking your version'
-    : side === 'theirs' ? 'Taking their version'
-    : 'Marking resolved';
+  if (side === 'mark' && !(await confirmMarkers([filePath]))) return;
+  const sides = sideLabels(state.op);
+  const what = side === 'mark' ? 'Marking resolved' : `Taking ${sides[side]}`;
+  let res = null;
   await gitAction(null, `${what} of ${baseName(filePath)}`,
-    () => call('repo:resolve', repoPath(), filePath, side),
+    async () => (res = await call('repo:resolve', repoPath(), filePath, side)),
     async () => {
       await refresh();
-      setStatus(`${baseName(filePath)}: ${side === 'mark' ? 'marked resolved' : side} kept`, 'ok');
+      setStatus(`${baseName(filePath)}: ${side === 'mark' ? 'marked resolved'
+        : res && res.removed ? `deleted, as ${sides[side]} has it` : `${sides[side]} kept`}`, 'ok');
     }, { quiet: true });
 }
 
@@ -5400,22 +5751,25 @@ function renderPrefGroup(g) {
 }
 
 function prefRow(f, i) {
+  /* The row's label is a span beside the control, so the control is named
+     outright; a screen reader otherwise announced "checkbox, checked". */
+  const named = ` aria-label="${esc(f.label)}"`;
   let control = '';
   if (f.kind === 'toggle') {
-    control = `<label class="pf-switch"><input type="checkbox" data-f="${i}"` +
+    control = `<label class="pf-switch"><input type="checkbox" data-f="${i}"${named}` +
       `${f.get() ? ' checked' : ''}><span class="pf-track"></span></label>`;
   } else if (f.kind === 'number') {
-    control = `<span class="pf-numwrap"><input class="pf-num" type="number" data-f="${i}"` +
+    control = `<span class="pf-numwrap"><input class="pf-num" type="number" data-f="${i}"${named}` +
       ` min="${f.min}" max="${f.max}"${f.step ? ` step="${f.step}"` : ''}` +
       ` value="${esc(String(f.get()))}">` +
       (f.unit ? `<span class="pf-unit">${esc(f.unit)}</span>` : '') + '</span>';
   } else if (f.kind === 'select') {
     const now = String(f.get());
-    control = `<select class="pf-select" data-f="${i}">` + f.options.map(([v, label]) =>
+    control = `<select class="pf-select" data-f="${i}"${named}>` + f.options.map(([v, label]) =>
       `<option value="${esc(v)}"${v === now ? ' selected' : ''}>${esc(label)}</option>`).join('') +
       '</select>';
   } else if (f.kind === 'gitconfig') {
-    control = `<input class="pf-text" type="text" data-f="${i}" data-key="${esc(f.key)}"` +
+    control = `<input class="pf-text" type="text" data-f="${i}" data-key="${esc(f.key)}"${named}` +
       ` spellcheck="false" placeholder="${esc(f.placeholder || '')}" value="">`;
   } else if (f.kind === 'action') {
     control = `<button class="btn" data-f="${i}">${esc(f.button)}</button>`;
@@ -5791,7 +6145,7 @@ function openGitOutputLive(verb) {
    two elements answering to `gitout-live` at once is the kind of thing that
    works until the day it does not. */
 function appendGitOutputCommand(text) {
-  if (!gitOutLive) return;
+  if (!gitOutLive || gitOutDismissed) return;
   const body = $('gitout-body');
   const previous = $('gitout-live');
   if (previous) {
@@ -5849,25 +6203,60 @@ const outHtml = (text) => String(text).split('\n').map(outLineHtml).join('\n');
 /* "remote: Compressing objects:  58% (36/62)" and the line before it are the
    same line rewritten, and a terminal shows one of them. Comparing what is left
    after the counter tells the two apart from a genuinely new line. */
-const counterHead = (line) => line.replace(/\s*\d+%.*$/, '').trim();
+/* A scan, not a pattern: `\s*\d+%.*$` restarted at every character, and a
+   run of whitespace from the server cost the square of its length — 40,000
+   spaces held the window for most of a second. The first digits that touch a
+   percent sign begin the counter; everything before them is the head. */
+function counterHead(line) {
+  for (let at = line.indexOf('%'); at !== -1; at = line.indexOf('%', at + 1)) {
+    let from = at;
+    while (from > 0) {
+      const c = line.charCodeAt(from - 1);
+      if (c < 48 || c > 57) break;
+      from -= 1;
+    }
+    if (from < at) return line.slice(0, from).trim();
+  }
+  return line.trim();
+}
 
 let liveHead = null;
 
+/* One physical line onto the live pane, as nodes added at its end. The pane
+   used to be read back as text and drawn again whole for every line, so a
+   fetch announcing a few thousand new tags rebuilt a few thousand lines a few
+   thousand times. The markup per line is the same outLineHtml, separated by
+   the same newline, so the pane ends up holding what the whole redraw made.
+   `live._tail` holds the last line's nodes, the one a climbing counter
+   rewrites; `live._any` is whether the pane holds any text yet, which is what
+   the redraw's `lines.length` used to ask. */
+const liveMaker = document.createElement('template');
+
+function paintLiveLine(live, text, prevHead) {
+  const head = counterHead(text);
+  if (head && head !== text && head === prevHead && live._any) {
+    for (const n of live._tail || []) n.remove();
+  } else if (live._any) {
+    live.append('\n');
+  }
+  liveMaker.innerHTML = outLineHtml(text);
+  const nodes = [...liveMaker.content.childNodes];
+  live.append(...nodes);
+  live._tail = nodes;
+  live._any = Boolean(live._any || text);
+  return head;
+}
+
 function appendGitOutputLine(text) {
-  if (!gitOutLive) return;
+  // Closed by hand, it stays closed, and nothing is drawn into it unseen.
+  if (!gitOutLive || gitOutDismissed) return;
   const live = $('gitout-live');
   if (!live) return;
-  const head = counterHead(text);
-  const lines = live.textContent ? live.textContent.split('\n') : [];
-  // textContent, never innerHTML: the markup is paint, the text is the record.
   /* Replace rather than append while a counter climbs, so the pane reads the
      way the terminal did instead of scrolling a hundred near-identical lines
      past — and so the running view matches the finished one, which collapses
      the same rewrites. */
-  if (head && head !== text && head === liveHead && lines.length) lines[lines.length - 1] = text;
-  else lines.push(text);
-  liveHead = head;
-  live.innerHTML = lines.map(outLineHtml).join('\n');
+  for (const one of String(text).split('\n')) liveHead = paintLiveLine(live, one, liveHead);
   const body = $('gitout-body');
   body.scrollTop = body.scrollHeight;
 }
@@ -6152,7 +6541,10 @@ async function offerUpdate() {
       ? 'GitBraid will hand the package to your system installer, which asks for '
         + 'your password — installing system packages needs rights this app does '
         + 'not have and should not ask for.'
-      : 'This build cannot update itself; the release page has the files.';
+      : kind === 'flatpak'
+        ? 'Flatpak keeps this copy up to date: update it from your software centre, '
+          + 'or run flatpak update io.github.heri_anggara.GitBraid.'
+        : 'This build cannot update itself; the release page has the files.';
 
   const r = await modal({
     title: `GitBraid ${update.latest} is available`,
@@ -6160,9 +6552,10 @@ async function offerUpdate() {
     html: '<div class="modal-field up-notes">' +
       `<div class="up-title">${esc(update.title || `Version ${update.latest}`)}</div>` +
       `<div class="up-body">${notesHtml(update.notes)}</div></div>`,
-    confirmLabel: kind === 'other' ? 'Open the release page' : 'Download and install',
+    confirmLabel: kind === 'other' ? 'Open the release page'
+      : kind === 'flatpak' ? 'OK' : 'Download and install',
   });
-  if (!r) return;
+  if (!r || kind === 'flatpak') return;
 
   if (kind === 'other') { call('shell:openExternal', update.page); return; }
 
@@ -6401,7 +6794,7 @@ async function renderNotes() {
    path-filtered log drops the commits between the ones that touched the file,
    so the parents the graph draws its lanes from are no longer all present —
    lanes that lie are worse than no lanes at all. */
-const fhist = { path: '', commits: [], names: {}, at: -1,
+const fhist = { path: '', commits: [], names: {}, origs: {}, at: -1,
                 home: null, next: null, was: null,
                 seq: 0 };   // bumped by every open and close: answers check it
 
@@ -6435,6 +6828,7 @@ async function openFileHistory(file) {
   fhist.path = file;
   fhist.commits = [];
   fhist.names = {};
+  fhist.origs = {};
   fhist.at = -1;
   const seq = ++fhist.seq;
 
@@ -6454,6 +6848,7 @@ async function openFileHistory(file) {
   if (out === null) { closeFileHistory(); return; }
   fhist.commits = out.commits;
   fhist.names = out.names || {};
+  fhist.origs = out.origs || {};
 
   if (!fhist.commits.length) {
     $('fh-list').innerHTML =
@@ -6499,8 +6894,11 @@ async function pickFileCommit(i) {
      is: that path already fetches with repo:diffCommitFile and already puts the
      staging buttons away, because there is nothing to stage in the past. */
   state.selection = { kind: 'commit', hash: c.hash };
+  /* The name before, on the commit that renamed it: without it the rename
+     was diffed as the new name alone and read as the whole file added. */
   state.file = { path: fhist.names[c.hash] || fhist.path, kind: 'commit',
-                 status: 'M', untracked: false };
+                 status: fhist.origs?.[c.hash] ? 'R' : 'M', untracked: false,
+                 orig: fhist.origs?.[c.hash] || '' };
   await showFileDiff();
 }
 
@@ -6516,6 +6914,7 @@ function closeFileHistory() {
   $('fhist').hidden = true;
   fhist.commits = [];
   fhist.names = {};
+  fhist.origs = {};
   fhist.at = -1;
   $('fh-list').innerHTML = '';
   // Put back whatever the middle pane was showing before this opened.
@@ -6807,6 +7206,7 @@ $('btn-pull').addEventListener('click', () => pull());
    yours — the shape of your history is not something to settle silently. */
 async function pull(mode = 'ff') {
   let out = '';
+  const startedOn = activeId;
   const ok = await gitAction('btn-pull', 'Pulling',
     async () => (out = await call('repo:pull', repoPath(), { mode })),
     async () => {
@@ -6825,6 +7225,12 @@ async function pull(mode = 'ff') {
     if (!ok) await refresh({ keepSelection: false });
     return;
   }
+  /* The pull fetched before it refused, so the counts on screen are from before
+     it learnt anything: a branch only ahead until then read as not diverged,
+     and the dialog never came. Read them again first. */
+  if (activeId !== startedOn) return;
+  await refresh();
+  if (activeId !== startedOn) return;
   if (!diverged()) return;         // it failed for some other reason, already reported
   await askHowToPull();
 }
@@ -6871,7 +7277,7 @@ $('btn-branch').addEventListener('click', () => newBranch(null));
 
 $('btn-pop').addEventListener('click', () => {
   if (!state.stashes[0]) return;   // aria-disabled does not block clicks by itself
-  applyStash(state.stashes[0].ref, true);
+  applyStash(state.stashes[0].ref, true, state.stashes[0].hash);
 });
 
 $('btn-stash').addEventListener('click', async () => {
@@ -6905,8 +7311,11 @@ $('sidebar').addEventListener('click', (e) => {
       else groupsBeforeFilter.delete(key);
     }
     saveGroups();
+    paintSideFocus();
     return;
   }
+  const row = e.target.closest(SIDE_ROW);
+  if (row) sideFocusKey = sideKey(row);
   const folder = e.target.closest('li[data-folder]');
   if (folder) {
     toggleFolder(folder.dataset.kind, folder.dataset.folder);
@@ -6924,19 +7333,75 @@ $('sidebar').addEventListener('dblclick', (e) => {
   const li = e.target.closest('li[data-ref]');
   if (!li) return;
   const { ref, kind } = li.dataset;
-  if (kind === 'branch' || kind === 'tag') checkout(ref);
+  if (kind === 'branch' || kind === 'tag') checkout(ref, fullRefName(kind, ref));
   else if (kind === 'remote') {
     // Checking out a remote branch means working on the local one that follows
-    // it; git creates that branch on the spot if it does not exist yet.
-    checkout(ref.split('/').slice(1).join('/'));
+    // it; that branch is created on the spot if it does not exist yet.
+    const r = state.refs.remotes.find((x) => x.name === ref);
+    checkout(r?.branch || ref, fullRefName(kind, ref));
   }
+});
+
+$('sidebar').addEventListener('keydown', (e) => {
+  if (!$('modal').hidden || e.ctrlKey || e.metaKey || e.altKey) return;
+  const li = e.target.closest(SIDE_ROW);
+  if (!li) return;
+  if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+    e.preventDefault();
+    openRowMenu(li);
+    return;
+  }
+  if (e.shiftKey) return;
+  const rows = sideRows();
+  const i = rows.indexOf(li);
+  const isFolder = li.dataset.folder !== undefined;
+  const shut = li.classList.contains('shut');
+  let to = null;
+  switch (e.key) {
+    case 'ArrowDown': to = i + 1; break;
+    case 'ArrowUp': to = i - 1; break;
+    case 'Home': to = 0; break;
+    case 'End': to = rows.length - 1; break;
+    case 'ArrowRight':
+      if (isFolder && shut) { e.preventDefault(); li.click(); return; }
+      if (isFolder) to = i + 1;
+      break;
+    case 'ArrowLeft': {
+      if (isFolder && !shut) { e.preventDefault(); li.click(); return; }
+      // To the folder holding this row: the nearest row above that sits higher.
+      const d = sideDepth(li);
+      for (let j = i - 1; j >= 0; j--) if (sideDepth(rows[j]) < d) { to = j; break; }
+      break;
+    }
+    /* Enter does what one click does: a folder opens or shuts, a ref is shown
+       in the history. Checking out stays a double click or a menu choice — the
+       keyboard should not change the repository on the key that means "go". */
+    case 'Enter': case ' ': e.preventDefault(); li.click(); return;
+    default: return;
+  }
+  e.preventDefault();
+  if (to === null) return;
+  const next = rows[Math.max(0, Math.min(rows.length - 1, to))];
+  if (next) focusSideRow(next);
 });
 
 /* ═════ branch commands ═════════════════════════════════════════ */
 
+/* The full name of a ref the sidebar shows by its short one. git reads a bare
+   "x" as the tag x before the branch x, and "origin/main" as a local branch of
+   that name before the remote one — so the short name is for people only. */
+function fullRefName(kind, name, refs = state.refs) {
+  const list = kind === 'tag' ? refs.tags : kind === 'remote' ? refs.remotes : refs.branches;
+  return list.find((r) => r.name === name)?.refname || name;
+}
+
+/** refs/heads/x → x, for anything said to the reader. A hash is left alone. */
+const shortRefName = (ref) => String(ref || '').replace(/^refs\/(heads|remotes|tags)\//, '');
+
 /** Tag anything that resolves: a commit hash, a branch, another tag. */
 async function tagAt(target) {
-  const short = /^[0-9a-f]{7,40}$/.test(target) ? target.slice(0, 7) : target;
+  const shown = shortRefName(target);
+  const short = /^[0-9a-f]{7,40}$/.test(shown) ? shown.slice(0, 7) : shown;
   const r = await modal({
     title: 'New tag',
     description: `Tagging ${short}`,
@@ -7035,8 +7500,9 @@ async function showCompare() {
   $('fileview').hidden = false;
   $('fv-status').textContent = '↔';
   $('fv-status').className = 'fv-status';
-  $('fv-path').textContent = `HEAD → ${ref}`;
-  $('fv-path').title = `What ${ref} has that HEAD does not`;
+  const shown = shortRefName(ref);
+  $('fv-path').textContent = `HEAD → ${shown}`;
+  $('fv-path').title = `What ${shown} has that HEAD does not`;
 
   const totals = state.diffFiles.reduce(
     (a, d) => ({ add: a.add + d.additions, del: a.del + d.deletions }), { add: 0, del: 0 });
@@ -7050,7 +7516,7 @@ async function showCompare() {
   if (!state.diffFiles.length) {
     diffView = null;
     $('fv-body').innerHTML =
-      `<div class="empty-note">${esc(ref)} has nothing that HEAD does not already have.</div>`;
+      `<div class="empty-note">${esc(shown)} has nothing that HEAD does not already have.</div>`;
   } else {
     diffView = {
       actions: [],
@@ -7068,13 +7534,13 @@ async function showCompare() {
     paintDiff();
   }
   indexBlocks();
-  setStatus(`Comparing HEAD with ${ref}`, 'ok');
+  setStatus(`Comparing HEAD with ${shown}`, 'ok');
 }
 
 async function fastForward(b) {
   await gitAction(null, `Fast-forwarding ${b.name}`,
     () => call('repo:fastForward', repoPath(),
-      { branch: b.name, upstream: b.upstream, current: b.current }),
+      { branch: b.name, upstream: b.upstreamRef, current: b.current }),
     async () => { await refresh(); setStatus(`${b.name} fast-forwarded to ${b.upstream}`, 'ok'); });
 }
 
@@ -7082,42 +7548,158 @@ async function fetchInto(b) {
   let out = '';
   await gitAction('btn-fetch', `Fetching ${b.upstream}`,
     async () => (out = await call('repo:fetchInto', repoPath(), {
-      remote: b.upstream.slice(0, b.upstream.indexOf('/')),
-      branch: b.name, upstream: b.upstream, current: b.current,
+      remote: b.upstreamRemote, remoteRef: b.upstreamMerge,
+      branch: b.name, upstream: b.upstreamRef, current: b.current,
     })),
     async () => { await refresh(); setStatus(`${b.name}: ${out}`, 'ok'); });
 }
 
-async function pushBranch(b, force = false) {
-  const remote = b.upstream
-    ? b.upstream.slice(0, b.upstream.indexOf('/'))
-    : (state.refs.remotes[0]?.name.split('/')[0] || 'origin');
+/* Where a push of branch `b` goes, from what the refs say. Pure, so it can be
+   checked without a window.
+
+   The branch it tracks, when that is on a remote this repository still has —
+   by that branch's own name there, which need not be this one's. Otherwise
+   origin, or the only remote there is; with several and no origin the answer
+   is the reader's (`choices`). It used to be whichever remote happened to hold
+   the newest commit, which could publish a new branch to someone else's
+   repository. A branch following another local branch keeps following it. */
+function pushPlan(b, refs) {
+  const names = refs.remoteNames || [];
+  if (b.upstreamRemote && b.upstreamRemote !== '.' && names.includes(b.upstreamRemote)) {
+    const own = `refs/heads/${b.name}`;
+    const tracked = b.upstreamMerge || own;
+    /* A branch made from origin/main tracks origin/main — git sets that up on
+       its own — so "push to what it tracks" would put a feature onto main, and
+       a forced push would overwrite it. git's default refuses a push to a
+       differently named upstream; here the reader is asked which they meant,
+       unless push.default says to follow the upstream. */
+    const follow = tracked === own || ['upstream', 'tracking'].includes(refs.pushDefault);
+    if (!follow) {
+      return {
+        remote: b.upstreamRemote,
+        remoteRef: null,
+        setUpstream: false,
+        tracking: null,
+        choices: null,
+        renamed: {
+          own, tracked, trackedRef: b.upstreamRef || null,
+          ownRef: `refs/remotes/${b.upstreamRemote}/${b.name}`,
+        },
+      };
+    }
+    return {
+      remote: b.upstreamRemote,
+      remoteRef: tracked,
+      setUpstream: false,
+      tracking: b.upstreamRef || null,
+      choices: null,
+    };
+  }
+  const remote = names.includes('origin') ? 'origin' : names.length === 1 ? names[0] : null;
+  return {
+    remote,
+    remoteRef: `refs/heads/${b.name}`,
+    setUpstream: b.upstreamRemote !== '.',
+    tracking: remote ? `refs/remotes/${remote}/${b.name}` : null,
+    choices: remote ? null : names.slice(),
+  };
+}
+
+/* The remote commit a forced push may replace: the one the refs on screen hold
+   for the branch there. Empty when there is none, which tells git the branch
+   must not exist there yet. */
+const leaseExpect = (plan, refs) =>
+  refs.remotes.find((r) => r.refname === plan.tracking)?.oid || '';
+
+/* The plan, with the remote asked for when the refs cannot settle it. */
+/* `remoteOnly` is for callers that need just the remote (a flow finish pushes
+   its own branches by name), so the question about the branch there is not
+   asked of them. */
+async function resolvePush(b, { remoteOnly = false } = {}) {
+  const plan = pushPlan(b, state.refs);
+  if (plan.renamed && !remoteOnly) return askPushTarget(b, plan);
+  if (plan.remote) return plan;
+  if (!plan.choices.length) {
+    setStatus('This repository has no remote', 'error');
+    return null;
+  }
+  const r = await modal({
+    title: `Which remote is ${b.name} for?`,
+    description: `${b.name} does not track a branch on any remote, and there is no `
+      + 'remote called origin to assume.'
+      + (plan.setUpstream ? ' The one chosen here becomes what it tracks.' : ''),
+    fields: [{
+      name: 'remote', type: 'choice', value: plan.choices[0],
+      options: plan.choices.map((n) => ({ value: n, label: n })),
+    }],
+    confirmLabel: 'Use this remote',
+  });
+  if (!r || !r.remote) return null;
+  return { ...plan, remote: r.remote, tracking: `refs/remotes/${r.remote}/${b.name}`, choices: null };
+}
+
+/** A branch tracking one of another name: which of the two the push is for. */
+async function askPushTarget(b, plan) {
+  const { own, tracked, trackedRef, ownRef } = plan.renamed;
+  const theirs = shortRefName(tracked);
+  const r = await modal({
+    title: `Push ${b.name} where?`,
+    description: `${b.name} tracks ${plan.remote}/${theirs}, which has a different name. `
+      + 'Pushing there puts these commits on that branch.',
+    fields: [{
+      name: 'to', type: 'choice', value: 'own',
+      options: [
+        { value: 'own', label: `${plan.remote}/${b.name} — its own branch, which ${b.name} then tracks` },
+        { value: 'tracked', label: `${plan.remote}/${theirs} — the branch it tracks now` },
+      ],
+    }],
+    confirmLabel: 'Push',
+  });
+  if (!r || !r.to) return null;
+  return r.to === 'tracked'
+    ? { ...plan, renamed: null, remoteRef: tracked, setUpstream: false, tracking: trackedRef }
+    : { ...plan, renamed: null, remoteRef: own, setUpstream: true, tracking: ownRef };
+}
+
+async function pushBranch(b, force = false, channel = 'repo:pushBranch') {
+  const plan = await resolvePush(b);
+  if (!plan) return;
+  const there = `${plan.remote}/${shortRefName(plan.remoteRef)}`;
   if (force) {
     const ok = await confirmAction('Force push',
-      `${b.name} will overwrite ${remote}/${b.name}. Commits on the remote that you do ` +
+      `${b.name} will overwrite ${there}. Commits on the remote that you do ` +
       'not have will be lost.', 'Force push');
     if (!ok) return;
   }
   await gitAction('btn-push', force ? `Force pushing ${b.name}` : `Pushing ${b.name}`,
-    () => call('repo:pushBranch', repoPath(),
-      { branch: b.name, remote, setUpstream: !b.upstream, force }),
-    async () => { await refresh(); setStatus(`Pushed ${b.name} to ${remote}`, 'ok'); });
+    () => call(channel, repoPath(), {
+      branch: b.name,
+      remote: plan.remote,
+      remoteRef: plan.remoteRef,
+      setUpstream: plan.setUpstream,
+      force,
+      // Read when the reader said yes, from the refs they were looking at.
+      expect: force ? leaseExpect(plan, state.refs) : undefined,
+    }),
+    async () => { await refresh(); setStatus(`Pushed ${b.name} to ${there}`, 'ok'); });
 }
 
 $('sidebar').addEventListener('contextmenu', (e) => {
   const li = e.target.closest('li[data-ref]');
   if (!li) return;
   const { ref, kind } = li.dataset;
+  // What git is handed, so a tag and a branch both called x stay two things.
+  const full = fullRefName(kind, ref);
 
   if (kind === 'branch') {
     const b = state.refs.branches.find((x) => x.name === ref) || { name: ref };
     const head = state.status?.branch;
     const behind = /behind/.test(b.track || '');
-    const hasRemote = state.refs.remotes.length > 0;
+    const hasRemote = (state.refs.remoteNames || []).length > 0;
 
     contextMenu(e, [
       { label: `Check out ${ref}`, disabled: b.current,
-        hint: b.current ? 'Already checked out' : '', run: () => checkout(ref) },
+        hint: b.current ? 'Already checked out' : '', run: () => checkout(ref, full) },
       { label: b.upstream ? `Fast-forward to ${b.upstream}` : 'Fast-forward to upstream',
         disabled: !b.upstream || !behind,
         hint: !b.upstream ? 'This branch tracks nothing'
@@ -7137,16 +7719,16 @@ $('sidebar').addEventListener('contextmenu', (e) => {
           + (alreadyIn(ref) ? ' — already merged' : ''), disabled: b.current,
         hint: b.current ? 'A branch cannot be merged into itself'
           : alreadyIn(ref) ? `${head} already contains every commit of ${ref}` : '',
-        run: () => mergeBranch(ref) },
+        run: () => mergeBranch(ref, full) },
       { label: `Rebase ${head || 'current'} onto ${ref}`, disabled: b.current,
         hint: b.current ? 'A branch cannot be rebased onto itself'
           : alreadyIn(ref) ? `${head} is already on top of ${ref}` : '',
-        run: () => rebaseOnto(ref) },
+        run: () => rebaseOnto(ref, full) },
       { label: 'Compare with HEAD', disabled: b.current,
-        hint: b.current ? 'This is HEAD' : '', run: () => compareWithHead(ref) },
+        hint: b.current ? 'This is HEAD' : '', run: () => compareWithHead(full) },
       '-',
-      { label: `New branch from ${ref}…`, run: () => newBranch(ref) },
-      { label: `New tag at ${ref}…`, run: () => tagAt(ref) },
+      { label: `New branch from ${ref}…`, run: () => newBranch(full) },
+      { label: `New tag at ${ref}…`, run: () => tagAt(full) },
       { label: 'Set tracking branch…', run: () => setUpstream(ref, b.upstream) },
       { label: 'Edit description…', run: () => editDescription(ref) },
       '-',
@@ -7161,34 +7743,29 @@ $('sidebar').addEventListener('contextmenu', (e) => {
         } },
     ]);
   } else if (kind === 'stash') {
+    // Taken now, with the ref: the list can be redrawn while a dialog is up.
+    const hash = (state.stashes || []).find((s) => s.ref === ref)?.hash || '';
     contextMenu(e, [
-      { label: 'Apply and keep', run: () => applyStash(ref, false) },
-      { label: 'Apply and drop', run: () => applyStash(ref, true) },
+      { label: 'Apply and keep', run: () => applyStash(ref, false, hash) },
+      { label: 'Apply and drop', run: () => applyStash(ref, true, hash) },
       '-',
-      { label: 'Drop stash', danger: true, run: async () => {
-          const ok = await confirmAction('Drop stash',
-            'It leaves the list, and nothing in GitBraid brings it back. The work '
-            + 'survives in the repository under its own hash until git next collects '
-            + 'what nothing points at — copy the SHA first if you want that way back.',
-            'Drop');
-          if (!ok) return;
-          const res = await call('repo:stashDrop', repoPath(), ref);
-          if (res !== null) { await refresh(); setStatus('Dropped stash', 'ok'); }
-        } },
+      { label: 'Drop stash', danger: true, run: () => dropStash(ref, hash) },
     ]);
   } else if (kind === 'remote') {
-    const remote = ref.slice(0, ref.indexOf('/'));
-    const local = ref.slice(ref.indexOf('/') + 1);
+    // Read from the refs: a remote may have a slash in its own name.
+    const item = state.refs.remotes.find((x) => x.name === ref);
+    const remote = item?.remote || ref.slice(0, ref.indexOf('/'));
+    const local = item?.branch || ref.slice(ref.indexOf('/') + 1);
     const head = state.status?.branch;
     contextMenu(e, [
-      { label: `Check out ${local}`, run: () => checkout(local) },
+      { label: `Check out ${local}`, run: () => checkout(local, full) },
       '-',
-      { label: `Merge ${ref} into ${head || 'current'}`, run: () => mergeBranch(ref) },
-      { label: `Rebase ${head || 'current'} onto ${ref}`, run: () => rebaseOnto(ref) },
-      { label: 'Compare with HEAD', run: () => compareWithHead(ref) },
+      { label: `Merge ${ref} into ${head || 'current'}`, run: () => mergeBranch(ref, full) },
+      { label: `Rebase ${head || 'current'} onto ${ref}`, run: () => rebaseOnto(ref, full) },
+      { label: 'Compare with HEAD', run: () => compareWithHead(full) },
       '-',
-      { label: `New branch from ${ref}…`, run: () => newBranch(ref) },
-      { label: `New tag at ${ref}…`, run: () => tagAt(ref) },
+      { label: `New branch from ${ref}…`, run: () => newBranch(full) },
+      { label: `New tag at ${ref}…`, run: () => tagAt(full) },
       '-',
       { label: `Delete ${ref} on ${remote}`, danger: true, run: async () => {
           const ok = await confirmAction('Delete remote branch',
@@ -7207,10 +7784,10 @@ $('sidebar').addEventListener('contextmenu', (e) => {
     ]);
   } else if (kind === 'tag') {
     contextMenu(e, [
-      { label: `Check out ${ref}`, run: () => checkout(ref) },
-      { label: 'Compare with HEAD', run: () => compareWithHead(ref) },
+      { label: `Check out ${ref}`, run: () => checkout(ref, full) },
+      { label: 'Compare with HEAD', run: () => compareWithHead(full) },
       '-',
-      { label: `New branch from ${ref}…`, run: () => newBranch(ref) },
+      { label: `New branch from ${ref}…`, run: () => newBranch(full) },
       '-',
       { label: `Delete tag ${ref}`, danger: true, run: async () => {
           const ok = await confirmAction('Delete tag',
@@ -7240,6 +7817,56 @@ $('commit-list').addEventListener('click', (e) => {
   renderDetail();
 });
 
+/* The history from the keyboard. Rows come and go as the window scrolls, so
+   where to go next is worked out from the layout — the row index — and never
+   from the elements; the row is drawn by scrolling to it and focused after. */
+const rowIndexOf = (row) => (row?.dataset.wip ? 0 : state.rowIndex?.get(row?.dataset.hash));
+
+function stepHistory(to) {
+  const rows = state.layout?.rows;
+  if (!rows?.length) return;
+  const i = Math.max(0, Math.min(rows.length - 1, to));
+  const c = rows[i].commit;
+  if (c.pending) {
+    state.file = null;
+    state.selection = { kind: 'wip' };
+    paintSelection();
+    scrollToRow(i, { nearest: true });
+    renderDetail();
+  } else {
+    selectCommit(c.hash, { nearest: true });
+  }
+  $('commit-list').querySelector('.commit-row.selected')?.focus({ preventScroll: true });
+}
+
+/* A row's menu from the keyboard: the Menu key or Shift+F10, opened where the
+   row is rather than where a pointer would have been. */
+function openRowMenu(row) {
+  const r = row.getBoundingClientRect();
+  row.dispatchEvent(new MouseEvent('contextmenu', {
+    bubbles: true, cancelable: true, button: 0,
+    clientX: Math.round(r.left + Math.min(r.width / 2, 160)), clientY: Math.round(r.bottom),
+  }));
+}
+
+$('commit-list').addEventListener('keydown', (e) => {
+  if (!$('modal').hidden || e.ctrlKey || e.metaKey || e.altKey) return;
+  const row = e.target.closest('.commit-row');
+  if (!row) return;
+  if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+    e.preventDefault();
+    openRowMenu(row);
+    return;
+  }
+  if (e.shiftKey) return;
+  const at = rowIndexOf(row) ?? -1;
+  const page = Math.max(1, Math.floor($('history-scroll').clientHeight / window.Graph.ROW_H) - 1);
+  const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: Infinity,
+    PageDown: at + page, PageUp: at - page }[e.key];
+  if (to !== undefined) { e.preventDefault(); stepHistory(to); return; }
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); row.click(); }
+});
+
 /** The stash@{n} a commit in the history belongs to, if it is one at all. */
 const stashRefFor = (hash) =>
   (state.stashes || []).find((s) => s.hash === hash)?.ref || null;
@@ -7259,19 +7886,10 @@ $('commit-list').addEventListener('contextmenu', (e) => {
   const stashRef = stashRefFor(hash);
   if (stashRef) {
     contextMenu(e, [
-      { label: 'Apply and keep', run: () => applyStash(stashRef, false) },
-      { label: 'Apply and drop', run: () => applyStash(stashRef, true) },
+      { label: 'Apply and keep', run: () => applyStash(stashRef, false, hash) },
+      { label: 'Apply and drop', run: () => applyStash(stashRef, true, hash) },
       '-',
-      { label: 'Drop stash', danger: true, run: async () => {
-          const ok = await confirmAction('Drop stash',
-            'It leaves the list, and nothing in GitBraid brings it back. The work '
-            + 'survives in the repository under its own hash until git next collects '
-            + 'what nothing points at — copy the SHA first if you want that way back.',
-            'Drop');
-          if (!ok) return;
-          const res = await call('repo:stashDrop', repoPath(), stashRef);
-          if (res !== null) { await refresh(); setStatus('Dropped stash', 'ok'); }
-        } },
+      { label: 'Drop stash', danger: true, run: () => dropStash(stashRef, hash) },
       '-',
       { label: 'Copy SHA', run: () => {
           navigator.clipboard.writeText(hash);
@@ -7329,11 +7947,12 @@ async function resetTo(hash, mode) {
 /* Scrolling changes which rows exist, so it has to redraw — but only once per
    frame, and only when the band has actually moved off what is on screen. */
 let rowsQueued = false;
-$('history-scroll').addEventListener('scroll', () => {
+function queueRows() {
   if (!state.layout || rowsQueued) return;
   rowsQueued = true;
   requestAnimationFrame(() => {
     rowsQueued = false;
+    if (!state.layout) return;
     const shown = state.rowsShown;
     const need = requiredRange(state.layout.rows.length);
     // Still covered by what is on the page: the cheapest frame is the one that
@@ -7341,7 +7960,12 @@ $('history-scroll').addEventListener('scroll', () => {
     if (need.first >= shown.first && need.last <= shown.last) return;
     renderRows();
   });
-}, { passive: true });
+}
+$('history-scroll').addEventListener('scroll', queueRows, { passive: true });
+/* A taller pane shows rows nobody drew. Maximising a small window, or zooming
+   out, grew the view past the overscan without a single scroll event, and the
+   bottom of the history stayed blank until the wheel moved. */
+new ResizeObserver(queueRows).observe($('history-scroll'));
 
 /* The next page only. Raising the limit and refreshing re-read every commit
    already on screen — and the status, refs and stashes with them — to add
@@ -7476,8 +8100,8 @@ function wireFileList(id) {
       const what = act.dataset.act;
       if (what === 'stage') return stage([path]);
       if (what === 'unstage') return unstage([path]);
-      if (what === 'discard') return discard(path, li.dataset.untracked === '1');
-      if (what === 'ours' || what === 'theirs' || what === 'mark') {
+      if (what === 'discard') return discard(path, isNewFile(path));
+      if (what === 'mine' || what === 'incoming' || what === 'mark') {
         return resolveConflict(path, what);
       }
     }
@@ -7627,10 +8251,11 @@ for (const id of FILE_LISTS) {
 
     const items = [];
     if (kind === 'conflict') {
-      items.push({ label: many ? `Keep your version of ${n} files` : 'Keep your version',
-        run: () => resolveMany(paths, 'ours') });
-      items.push({ label: many ? `Keep their version of ${n} files` : 'Keep their version',
-        run: () => resolveMany(paths, 'theirs') });
+      const sides = sideLabels(state.op);
+      items.push({ label: many ? `Keep ${sides.mine} — ${n} files` : `Keep ${sides.mine}`,
+        run: () => resolveMany(paths, 'mine') });
+      items.push({ label: many ? `Keep ${sides.incoming} — ${n} files` : `Keep ${sides.incoming}`,
+        run: () => resolveMany(paths, 'incoming') });
       items.push({ label: many ? `Mark ${n} files resolved` : 'Mark resolved',
         run: () => resolveMany(paths, 'mark') });
       items.push('-');
@@ -7736,6 +8361,9 @@ for (const id of FILE_LISTS) {
   $(id).setAttribute('tabindex', '0');
   $(id).addEventListener('keydown', (e) => {
     if (e.target.closest('input, textarea')) return;
+    /* Never behind a dialog. The list kept the focus under "Discard 2 files",
+       so the Enter that answered it staged the same files first. */
+    if (!$('modal').hidden) return;
     const kind = picked.kind;
     if (!kind || id !== pickedList() || !picked.paths.size) return;
     const paths = rowsOf(id).filter((p) => picked.paths.has(p));
@@ -7862,6 +8490,13 @@ function isUntracked(path) {
   return Boolean(s && s.untracked.some((f) => f.path === path));
 }
 
+/* Untracked, or added with `git add -N`: either way there is no committed
+   state to go back to, so discarding it deletes it (main.js does the same). */
+function isNewFile(path) {
+  const s = state.status;
+  return isUntracked(path) || Boolean(s && s.unstaged.some((f) => f.path === path && f.intentToAdd));
+}
+
 /** Deleted in the working tree or staged as deleted — either way, not there. */
 function isDeleted(path) {
   const s = state.status;
@@ -7914,6 +8549,10 @@ const KEY_BLOCKERS = ['modal', 'ctxmenu', 'gitout', 'logs', 'prefs', 'about', 'n
 /* keyboard — Ctrl+O/N/I, the zoom keys, F5 and the panel toggles are all
    menu accelerators now, handled in the main process. */
 document.addEventListener('keydown', (e) => {
+  /* A key some widget already answered is spent. Esc in the tab search, in
+     the reword box or on a list clearing its selection used to run on down
+     this chain as well, and closed the file being read along with it. */
+  if (e.defaultPrevented) return;
   // Esc backs out of whatever is covering the history, in front-to-back order.
   if (e.key === 'Escape' && $('modal').hidden) {
     if (!$('ctxmenu').hidden) { closeContextMenu(); return; }
@@ -7926,6 +8565,8 @@ document.addEventListener('keydown', (e) => {
     if ($('app').classList.contains('managing')) { closeRepoManager(); return; }
     if ($('app').classList.contains('viewing-file')) { closeFile(); return; }
   }
+  // A dialog owns the keyboard; its own handler answers Enter, Esc and Tab.
+  if (!$('modal').hidden) return;
   if ((e.ctrlKey || e.metaKey) && (e.key === '`' || e.key === '~')) {
     e.preventDefault(); toggleTerm(); return;
   }
@@ -7952,10 +8593,14 @@ document.addEventListener('keydown', (e) => {
   if (KEY_BLOCKERS.some((id) => !$(id).hidden)) return;
   if ($('app').classList.contains('managing')) return;
 
-  if (e.key === 'f') $('btn-fetch').click();
-  else if (e.key === 'p') $('btn-pull').click();
-  else if (e.key === 'P') $('btn-push').click();
-  else if (e.key === 'b') newBranch(null);
+  /* Shift is read from the key event, not from the letter's case: with Caps
+     Lock on a plain p arrives as "P", and pull turned into a push. The other
+     two keys stay unshifted only, as before — under Caps Lock they now work
+     instead of doing nothing. */
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (key === 'f' && !e.shiftKey) $('btn-fetch').click();
+  else if (key === 'p') $(e.shiftKey ? 'btn-push' : 'btn-pull').click();
+  else if (key === 'b' && !e.shiftKey) newBranch(null);
 });
 
 /* pane resizing */

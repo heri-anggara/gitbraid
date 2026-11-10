@@ -97,6 +97,22 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.12.0" date="2026-11-10">
+      <description>
+        <p>
+          A correctness audit run area by area. Keeping your version of a
+          conflict during a rebase keeps your commit, a push goes to the branch
+          you mean and asks when a branch tracks one of another name, and a
+          stash is dropped by what you clicked rather than by its number.
+        </p>
+        <p>
+          Dialogs take the keyboard, so Enter can no longer reach the list
+          behind a confirmation; the commit list and the sidebar can be walked
+          with the arrow keys. The AppImage no longer hands its launcher's
+          relative paths to the programs it starts.
+        </p>
+      </description>
+    </release>
     <release version="0.11.1" date="2026-11-09">
       <description>
         <p>

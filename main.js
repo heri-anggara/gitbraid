@@ -13,6 +13,58 @@ const IS_MAC = process.platform === 'darwin';
 /** `git diff --no-index` needs an empty file to compare a new one against. */
 const NULL_DEVICE = IS_WIN ? 'NUL' : '/dev/null';
 
+/* Inside a Flatpak sandbox: this one, or one GitBraid was started from. Flatpak
+   writes /.flatpak-info into every sandbox and sets FLATPAK_ID for what runs in
+   it. The sandbox has no terminal emulator and no editor of the reader's. */
+const IN_FLATPAK = Boolean(process.env.FLATPAK_ID) || fs.existsSync('/.flatpak-info');
+const FLATPAK_APP_ID = 'io.github.heri_anggara.GitBraid';
+
+/* The environment every program GitBraid starts inherits — git, the terminal
+ * panel, an editor, and the xdg-open Electron runs for a folder or a link.
+ *
+ * The AppImage's launcher, electron-builder's AppRun, puts its own folders in
+ * front of PATH, LD_LIBRARY_PATH, XDG_DATA_DIRS and GSETTINGS_SCHEMA_DIR, and
+ * two of the things it adds are relative: `./share/` in XDG_DATA_DIRS, and an
+ * empty entry at the end of LD_LIBRARY_PATH whenever it was unset before, which
+ * is nearly always. Both are read against the working directory of whatever
+ * runs, and GitBraid runs things inside repositories. Measured: with that
+ * LD_LIBRARY_PATH, git in a folder tries `./libz.so.1` and `./libpcre2-8.so.0`
+ * before the system's; with that XDG_DATA_DIRS, a repository holding
+ * share/applications/mimeapps.list chose the program `gio open` ran for a
+ * folder — and Electron runs xdg-open with the parent of that folder as its
+ * working directory.
+ *
+ * Electron itself has finished with them: the loader read LD_LIBRARY_PATH when
+ * the process started, and no library it loads lives in the AppImage's
+ * usr/lib. So they are cleaned here, in process.env itself, which is also the
+ * environment Chromium hands the xdg-open it starts. */
+function cleanEnvList(name, { drop = () => false, dedupe = false } = {}) {
+  const raw = process.env[name];
+  if (raw === undefined) return;
+  const seen = new Set();
+  const kept = raw.split(':').filter((entry) => {
+    if (!entry || !path.isAbsolute(entry) || drop(entry)) return false;
+    if (!dedupe) return true;
+    const key = entry.replace(/\/+$/, '') || '/';
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if (kept.length) process.env[name] = kept.join(':');
+  else delete process.env[name];
+}
+
+if (!IS_WIN) {
+  const appDir = process.env.APPIMAGE && process.env.APPDIR
+    ? path.resolve(process.env.APPDIR) : null;
+  const inAppDir = (entry) => Boolean(appDir)
+    && (path.resolve(entry) === appDir || path.resolve(entry).startsWith(`${appDir}/`));
+  cleanEnvList('PATH', { drop: inAppDir });
+  cleanEnvList('LD_LIBRARY_PATH', { drop: inAppDir });
+  cleanEnvList('XDG_DATA_DIRS', { drop: inAppDir, dedupe: true });
+  cleanEnvList('GSETTINGS_SCHEMA_DIR', { drop: inAppDir });
+}
+
 /* git runs GIT_EDITOR and GIT_SEQUENCE_EDITOR through a shell, and the tools
  * those commands would normally reach for — sed, cp, true — are not on a
  * Windows PATH. Rather than depend on them, GitBraid hands git a tiny script
@@ -212,6 +264,15 @@ function askWindow(payload) {
     try { if (!win.isVisible()) win.show(); win.focus(); } catch { /* not fatal */ }
     win.webContents.send('askpass:ask', { id, ...payload });
   });
+}
+
+/* Every question still on screen, answered "cancelled". A window that reloads,
+   closes, or loses its renderer takes its dialogs with it, and nothing would
+   ever answer them: git sat waiting for askpass's own fifteen-minute limit. */
+function dropPendingAsks() {
+  const pending = [...askPending.values()];
+  askPending.clear();
+  for (const done of pending) done(null);
 }
 
 async function answerAsk({ op, prompt }) {
@@ -529,6 +590,16 @@ function sendOutput(payload) {
   win?.webContents.send('repo:output', payload);
 }
 
+/* Decoded as UTF-8 by the stream, not chunk by chunk. A pipe hands over 64 KiB
+   at a time with no regard for characters, and `out += chunk` decodes each
+   piece alone: measured, 'a' followed by 400,000 'é' came through with 24 of
+   them turned into U+FFFD, one at every chunk boundary. */
+function textOutput(child) {
+  child.stdout?.setEncoding('utf8');
+  child.stderr?.setEncoding('utf8');
+  return child;
+}
+
 /* The streaming half of git(). Only the commands that narrate come through
    here — a merge, a push, a git-flow finish that runs four of them — because
    `git status` runs on every refresh and its answer is data being parsed, not
@@ -539,7 +610,7 @@ function gitStreaming(cwd, args, extraEnv, started) {
     /* Answers given to this command belong to this command, and a credential is
        only worth keeping once the server has accepted it — so both ends report. */
     const op = env.GITBRAID_ASKPASS_OP;
-    const child = spawn('git', args, { cwd, env });
+    const child = textOutput(spawn('git', args, { cwd, env }));
     sendOutput({ kind: 'cmd', text: `git ${args.join(' ')}` });
 
     let out = '';
@@ -640,7 +711,7 @@ function git(cwd, args, extraEnv = null) {
 /** Run git with a patch (or any text) piped to stdin. */
 function gitStdin(cwd, args, input) {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, { cwd, env: gitEnv() });
+    const child = textOutput(spawn('git', args, { cwd, env: gitEnv() }));
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => (out += d));
@@ -664,7 +735,7 @@ function gitProgress(cwd, args, onLine) {
   return new Promise((resolve, reject) => {
     const env = gitEnv();
     const op = env.GITBRAID_ASKPASS_OP;
-    const child = spawn('git', args, { cwd, env });
+    const child = textOutput(spawn('git', args, { cwd, env }));
     let out = '';
     let err = '';
     let pending = '';
@@ -705,7 +776,12 @@ function addEntry(res, xy, filePath, orig) {
   const staged = xy[0];
   const worktree = xy[1];
   if (staged !== '.') res.staged.push({ path: filePath, orig, status: staged });
-  if (worktree !== '.') res.unstaged.push({ path: filePath, orig, status: worktree });
+  if (worktree !== '.') {
+    const entry = { path: filePath, orig, status: worktree };
+    // ".A" is `git add -N`: known to the index, with nothing in it yet.
+    if (xy === '.A') entry.intentToAdd = true;
+    res.unstaged.push(entry);
+  }
 }
 
 /** Parse `git status --porcelain=v2 --branch -z`. */
@@ -885,11 +961,32 @@ function readRecentsRaw() {
   return recentsRaw.slice();
 }
 
+/* Written beside the file and renamed over it, so the file on disk is always
+   one whole version or the other. Written in place, a write cut short left a
+   half file; the next read took that for no file at all, and the next write
+   saved the empty list over every favourite and every repository known. */
+function writeJsonAtomic(file, data) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    const fd = fs.openSync(tmp, 'w', 0o600);
+    try {
+      fs.writeFileSync(fd, JSON.stringify(data, null, 2));
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* nothing was made */ }
+    throw err;
+  }
+}
+
 function writeRecents(list) {
   recentsRaw = null;
   try {
-    fs.mkdirSync(path.dirname(recentsFile()), { recursive: true });
-    fs.writeFileSync(recentsFile(), JSON.stringify(list, null, 2));
+    writeJsonAtomic(recentsFile(), list);
   } catch {
     /* non-fatal */
   }
@@ -977,14 +1074,30 @@ function openTerminal(cwd) {
     ? [preferred, ...list.filter((t) => t.cmd !== preferred.cmd)]
     : list;
 
+  /* A Flatpak sandbox carries no terminal emulator at all — measured, the
+     freedesktop runtime has none of the ones listed — and the reader's own are
+     on the host, out of reach unless the sandbox may run host commands. When it
+     may, flatpak-spawn reaches them; when it may not, every attempt fails at
+     once, and the reader is told what the sandbox lacks and how to grant it,
+     rather than to install a terminal they already have. */
+  const launch = (term) => (IN_FLATPAK
+    ? ['flatpak-spawn', ['--host', `--directory=${cwd}`, term.cmd, ...term.dir(cwd)]]
+    : [term.cmd, term.dir(cwd)]);
+
   return new Promise((resolve, reject) => {
     const tryNext = (i) => {
       if (i >= order.length) {
-        reject(new Error('No terminal emulator found. Install one, or open the folder manually.'));
+        reject(new Error(IN_FLATPAK
+          ? 'GitBraid runs in a Flatpak sandbox, which has no terminal and may not start '
+            + 'one on your system. To allow it: flatpak override --user '
+            + `--talk-name=org.freedesktop.Flatpak ${FLATPAK_APP_ID} — or open a terminal `
+            + `in ${cwd} yourself.`
+          : 'No terminal emulator found. Install one, or open the folder manually.'));
         return;
       }
       const term = order[i];
-      const child = spawn(term.cmd, term.dir(cwd), { cwd, detached: true, stdio: 'ignore' });
+      const [cmd, args] = launch(term);
+      const child = spawn(cmd, args, { cwd, detached: true, stdio: 'ignore' });
       let settled = false;
       const next = () => { if (!settled) { settled = true; tryNext(i + 1); } };
 
@@ -1030,27 +1143,74 @@ handle('term:run', async (cwd, command) => {
   const shell = IS_WIN
     ? (process.env.ComSpec || 'cmd.exe')
     : (process.env.SHELL && fs.existsSync(process.env.SHELL) ? process.env.SHELL : '/bin/sh');
-  const child = spawn(shell, IS_WIN ? ['/d', '/s', '/c', command] : ['-c', command], {
+  /* Its own process group on POSIX, so that Stop reaches everything the shell
+     started and not the shell alone: `sleep 4; echo done` stopped after 300 ms
+     used to lose the shell at once while sleep kept the output pipe open, and
+     the panel stayed "running" — refusing every command — until sleep ended.
+     A dev server started the same way would have held it for good.
+
+     On Windows the command line is handed to cmd as it was typed. Node would
+     otherwise quote it as one argument and escape its quotes as \", which cmd
+     does not understand: `git commit -m "two words"` reached git as `"two`. */
+  const child = textOutput(spawn(shell, IS_WIN ? ['/d', '/s', '/c', command] : ['-c', command], {
     cwd,
     env: { ...process.env, GIT_PAGER: 'cat', PAGER: 'cat', TERM: 'dumb', NO_COLOR: '1' },
-  });
+    detached: !IS_WIN,
+    windowsVerbatimArguments: IS_WIN,
+    windowsHide: true,
+  }));
   running = child;
 
-  child.stdout.on('data', (d) => termSend('term:out', { text: d.toString(), stream: 'out' }));
-  child.stderr.on('data', (d) => termSend('term:out', { text: d.toString(), stream: 'err' }));
+  let ended = false;
+  child.finish = (code, signal) => {
+    if (ended) return;
+    ended = true;
+    if (running === child) running = null;
+    termSend('term:exit', { code, signal });
+  };
+  child.stdout.on('data', (d) => termSend('term:out', { text: d, stream: 'out' }));
+  child.stderr.on('data', (d) => termSend('term:out', { text: d, stream: 'err' }));
   child.on('error', (err) => {
     termSend('term:out', { text: `${err.message}\n`, stream: 'err' });
   });
-  child.on('close', (code, signal) => {
-    running = null;
-    termSend('term:exit', { code, signal });
+  child.on('close', (code, signal) => child.finish(code, signal));
+  /* Stopped, the shell's own end is the end. Anything that left the group to
+     keep the pipes open is not allowed to keep the panel too. */
+  child.on('exit', (code, signal) => {
+    if (!child.stopped) return;
+    child.stdout.destroy();
+    child.stderr.destroy();
+    child.finish(code, signal);
   });
   return { pid: child.pid, shell };
 });
 
+/** Everything a command started, not only the shell that started it. */
+function killTree(child, signal = 'SIGTERM') {
+  if (!child.pid) return;
+  if (IS_WIN) {
+    const kill = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'],
+      { stdio: 'ignore', windowsHide: true });
+    kill.on('error', () => { try { child.kill(); } catch { /* already gone */ } });
+    return;
+  }
+  try { process.kill(-child.pid, signal); }
+  catch { try { child.kill(signal); } catch { /* already gone */ } }
+}
+
 handle('term:kill', async () => {
   if (!running) return false;
-  running.kill('SIGTERM');
+  const child = running;
+  child.stopped = true;
+  killTree(child);
+  // Gone already, with something else holding the pipes: nothing will exit now.
+  if (child.exitCode !== null || child.signalCode !== null) {
+    child.stdout.destroy();
+    child.stderr.destroy();
+    child.finish(child.exitCode, child.signalCode);
+  }
+  // A program that ignores SIGTERM is not one Stop gives up on.
+  if (!IS_WIN) setTimeout(() => killTree(child, 'SIGKILL'), 2000).unref();
   return true;
 });
 
@@ -1273,13 +1433,38 @@ function getUrl(url, { onProgress = null, hops = 5, toFile = null } = {}) {
   });
 }
 
-/* "0.10.0" is newer than "0.9.0"; comparing the two as text says otherwise. */
+/* "0.10.0" is newer than "0.9.0"; comparing the two as text says otherwise.
+   Semantic versioning, prerelease tags included. Split on dots alone, as this
+   once was, "0.12.0-beta.1" read as 0.12.0.1: newer than 0.12.0 itself, so a
+   beta build was never offered the release it led up to. A prerelease comes
+   before its release; its identifiers compare numerically when both are
+   numbers, a number ranks below a word, and fewer of them rank lower. Build
+   metadata after a "+" does not count. */
 function isNewer(candidate, current) {
-  const parts = (v) => String(v).replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
-  const a = parts(candidate);
-  const b = parts(current);
-  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
-    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
+  const parse = (v) => {
+    const [, core = '', pre = ''] = /^v?([^-+]*)(?:-([^+]*))?/.exec(String(v).trim()) || [];
+    return {
+      core: core.split('.').map((n) => parseInt(n, 10) || 0),
+      pre: pre ? pre.split('.') : [],
+    };
+  };
+  const a = parse(candidate);
+  const b = parse(current);
+  for (let i = 0; i < Math.max(a.core.length, b.core.length); i += 1) {
+    if ((a.core[i] || 0) !== (b.core[i] || 0)) return (a.core[i] || 0) > (b.core[i] || 0);
+  }
+  if (!a.pre.length || !b.pre.length) return !a.pre.length && b.pre.length > 0;
+  for (let i = 0; i < Math.max(a.pre.length, b.pre.length); i += 1) {
+    if (i >= a.pre.length) return false;
+    if (i >= b.pre.length) return true;
+    const x = a.pre[i];
+    const y = b.pre[i];
+    if (x === y) continue;
+    const xNum = /^\d+$/.test(x);
+    const yNum = /^\d+$/.test(y);
+    if (xNum && yNum) return Number(x) > Number(y);
+    if (xNum !== yNum) return yNum;
+    return x > y;
   }
   return false;
 }
@@ -1288,6 +1473,9 @@ function isNewer(candidate, current) {
    AppImage is one file and can be replaced in place, a .deb is a system package
    and cannot be installed without rights this process does not have. */
 function installKind() {
+  /* Flatpak owns what it installed: an update comes through `flatpak update`
+     or the software centre, from Flathub, and nothing here may replace it. */
+  if (process.env.FLATPAK_ID === FLATPAK_APP_ID) return 'flatpak';
   if (process.env.APPIMAGE) return 'appimage';
   if (process.platform === 'linux' && process.execPath.startsWith('/opt/')) return 'deb';
   return 'other';
@@ -1320,6 +1508,10 @@ const assetFor = (assets, kind) => assets.find((a) => (kind === 'appimage'
 
 handle('update:download', async (info) => {
   const kind = installKind();
+  if (kind === 'flatpak') {
+    throw new Error('This is the Flatpak: update it from your software centre, or with '
+      + `flatpak update ${FLATPAK_APP_ID}.`);
+  }
   if (kind === 'other') throw new Error('This build cannot update itself.');
   const asset = assetFor(info.assets || [], kind);
   if (!asset) throw new Error(`That release has no ${kind === 'appimage' ? 'AppImage' : '.deb'}.`);
@@ -1399,6 +1591,17 @@ function swapAppImage(file) {
   fs.renameSync(`${here}.new`, here);
 }
 
+/* What a restart starts. Inside an AppImage, process.execPath is the binary in
+   the AppImage's own mount — $APPDIR/gitbraid, which is what AppRun execs — and
+   that mount is the image as it was when it started. Replaced on disk, the new
+   one is only at $APPIMAGE; restarting execPath brought back the old version,
+   or nothing once the old mount had gone. */
+function relaunchOptions() {
+  return process.env.APPIMAGE
+    ? { execPath: process.env.APPIMAGE, args: process.argv.slice(1) }
+    : undefined;
+}
+
 /* An update the user chose to put off. It is applied when the app closes anyway
    — the moment a restart costs nothing, because the program is stopping either
    way. Held in memory only: if the session ends some other way the download is
@@ -1427,7 +1630,7 @@ handle('update:install', async ({ path: file, kind }) => {
   if (kind === 'appimage') {
     swapAppImage(file);
     pendingUpdate = null;          // it is being applied now, not at quit
-    app.relaunch();
+    app.relaunch(relaunchOptions());
     app.quit();
     return { restarted: true };
   }
@@ -1538,7 +1741,9 @@ function buildMenu() {
       label: 'View',
       submenu: [
         { label: 'Relaunch GitBraid', accelerator: 'CmdOrCtrl+Shift+R',
-          click: () => { app.relaunch(); app.exit(0); } },
+          /* quit, not exit: exit skips will-quit, so an update put off until
+             closing time was not applied, and the askpass folder was left. */
+          click: () => { app.relaunch(relaunchOptions()); app.quit(); } },
         { role: 'togglefullscreen', label: 'Toggle Full Screen', accelerator: 'CmdOrCtrl+Shift+F' },
         // Hidden twins: still bind the key most Linux users reach for first.
         { role: 'togglefullscreen', accelerator: 'F11', visible: false },
@@ -1594,8 +1799,7 @@ function readReposStore() {
 
 function writeReposStore(store) {
   try {
-    fs.mkdirSync(path.dirname(reposFile()), { recursive: true });
-    fs.writeFileSync(reposFile(), JSON.stringify(store, null, 2));
+    writeJsonAtomic(reposFile(), store);
   } catch { /* non-fatal */ }
 }
 
@@ -1838,7 +2042,12 @@ function createWindow() {
 
   /* A renderer that never reports in must not cost the user their window. */
   showTimer = setTimeout(revealWindow, 3000);
-  win.on('closed', () => { clearTimeout(showTimer); showTimer = null; win = null; });
+  webContents.on('did-start-loading', dropPendingAsks);
+  webContents.on('render-process-gone', dropPendingAsks);
+  win.on('closed', () => {
+    clearTimeout(showTimer); showTimer = null; win = null;
+    dropPendingAsks();
+  });
 }
 
 let showTimer = null;
@@ -1859,7 +2068,10 @@ function revealWindow() {
    sit at a dependable index. The Flatpak makes that plain: it passes
    `--ozone-platform=x11` before the application path, so argv[1] is a switch
    and argv[2] is the app. */
-function repoFromArgv(argv) {
+/* `cwd` is the folder the command was typed in. For a second launch that is
+   not this process's: Electron hands it over beside the argv, and resolving
+   against our own instead opened the first launch's folder for `gitbraid .`. */
+function repoFromArgv(argv, cwd = process.cwd()) {
   const appPath = path.resolve(app.getAppPath());
   for (const raw of argv.slice(1)) {
     if (!raw || raw.startsWith('-')) continue;
@@ -1868,7 +2080,7 @@ function repoFromArgv(argv) {
     if (candidate.startsWith('file://')) {
       try { candidate = decodeURIComponent(new URL(candidate).pathname); } catch { continue; }
     }
-    const full = path.resolve(candidate);
+    const full = path.resolve(cwd, candidate);
     if (full === appPath) continue;
     try { if (fs.statSync(full).isDirectory()) return full; } catch { /* not a path */ }
   }
@@ -1887,11 +2099,12 @@ let pendingRepo = repoFromArgv(process.argv);
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', (_evt, argv) => {
-    if (!win) return;
+  app.on('second-instance', (_evt, argv, workingDirectory) => {
+    const dir = repoFromArgv(argv, workingDirectory || process.cwd());
+    // No window yet, or none any more: the next one asks for it as it boots.
+    if (!win) { if (dir) pendingRepo = dir; return; }
     if (win.isMinimized()) win.restore();
     win.focus();
-    const dir = repoFromArgv(argv);
     if (dir) send('open-recent', { path: dir });
   });
 
@@ -2123,6 +2336,11 @@ async function openRepo(target) {
 
 handle('repo:clone', async (url, parentDir, name) => {
   if (!url) throw new Error('Enter a repository URL to clone.');
+  /* git reads anything that starts with a dash as an option, wherever it sits.
+     Measured: `--config=core.sshCommand=<command>` given as the URL, with a
+     folder name shaped like host:path, ran that command. No URL starts with
+     one, so it is refused; and `--` keeps a folder name like `-x` a name. */
+  if (/^\s*-/.test(String(url))) throw new Error('A repository URL cannot start with "-".');
   if (!parentDir) throw new Error('Choose a folder to clone into.');
   if (!name || /[/\\]/.test(name)) throw new Error('Enter a valid folder name.');
   if (!fs.existsSync(parentDir)) throw new Error(`No such folder: ${parentDir}`);
@@ -2132,7 +2350,7 @@ handle('repo:clone', async (url, parentDir, name) => {
     throw new Error(`${target} already exists — choose a different folder name.`);
   }
 
-  await withProgress('clone', parentDir, ['clone', '--progress', url, name]);
+  await withProgress('clone', parentDir, ['clone', '--progress', '--', url, name]);
   pushRecent(target);
   return { path: target, name };
 });
@@ -2208,6 +2426,15 @@ handle('flow:config', async (repo) => {
 });
 
 handle('flow:init', async (repo, cfg) => {
+  /* Asked before anything is written. With no commit there is nothing to branch
+     the development line from, so the branch below failed — after the config
+     had gone in, leaving a repository that read as set up and refused every
+     Start. */
+  const born = await git(repo, ['rev-parse', '--verify', '-q', 'HEAD']).catch(() => '');
+  if (!born.trim()) {
+    throw new Error('This repository has no commits yet. Make a first commit, '
+      + 'then set up Git-Flow.');
+  }
   for (const [key, field] of Object.entries(FLOW_KEYS)) {
     await git(repo, ['config', '--local', key, cfg[field] ?? '']);
   }
@@ -2258,22 +2485,25 @@ handle('flow:finish', async (repo, { kind, branch, cfg, tag, message,
     }
   }
 
+  /* A tag spelled like the branch would otherwise be what gets merged. */
+  const source = await unambiguous(repo, `refs/heads/${branch}`);
+
   if (kind === 'feature') {
-    await step(repo, `Checking out ${cfg.develop}`, ['checkout', cfg.develop]);
-    await step(repo, `Merging ${branch} into ${cfg.develop}`, ['merge', '--no-ff', '--no-edit', branch]);
+    await step(repo, `Checking out ${cfg.develop}`, ['checkout', cfg.develop, '--']);
+    await step(repo, `Merging ${branch} into ${cfg.develop}`, ['merge', '--no-ff', '--no-edit', source]);
     done.push(`merged into ${cfg.develop}`);
   } else {
     // A release or hotfix lands on production first, is tagged there, and is
     // then carried back so development keeps the fix.
-    await step(repo, `Checking out ${cfg.master}`, ['checkout', cfg.master]);
-    await step(repo, `Merging ${branch} into ${cfg.master}`, ['merge', '--no-ff', '--no-edit', branch]);
+    await step(repo, `Checking out ${cfg.master}`, ['checkout', cfg.master, '--']);
+    await step(repo, `Merging ${branch} into ${cfg.master}`, ['merge', '--no-ff', '--no-edit', source]);
     done.push(`merged into ${cfg.master}`);
     if (tag) {
       await step(repo, `Tagging ${tag}`, ['tag', '-a', tag, '-m', message || tag]);
       done.push(`tagged ${tag}`);
     }
-    await step(repo, `Checking out ${cfg.develop}`, ['checkout', cfg.develop]);
-    await step(repo, `Merging ${branch} into ${cfg.develop}`, ['merge', '--no-ff', '--no-edit', branch]);
+    await step(repo, `Checking out ${cfg.develop}`, ['checkout', cfg.develop, '--']);
+    await step(repo, `Merging ${branch} into ${cfg.develop}`, ['merge', '--no-ff', '--no-edit', source]);
     done.push(`merged into ${cfg.develop}`);
   }
   await step(repo, `Deleting ${branch}`, ['branch', '-d', branch]);
@@ -2285,18 +2515,23 @@ handle('flow:finish', async (repo, { kind, branch, cfg, tag, message,
      work there, which is exactly what you want when the merge has not landed. */
   if (push && remote) {
     const branches = kind === 'feature' ? [cfg.develop] : [cfg.master, cfg.develop];
-    await step(repo, `Pushing ${branches.join(' and ')}`, ['push', remote, ...branches]);
+    // Spelled out in full: a short name that is also a tag is refused outright.
+    await step(repo, `Pushing ${branches.join(' and ')}`,
+      ['push', '--', remote, ...branches.map((b) => `refs/heads/${b}:refs/heads/${b}`)]);
     done.push(`pushed ${branches.join(' and ')}`);
     if (tag) {
       // A release tag that exists only on one machine is not a release.
-      await step(repo, `Pushing ${tag}`, ['push', remote, tag]);
+      await step(repo, `Pushing ${tag}`, ['push', '--', remote, `refs/tags/${tag}`]);
       done.push(`pushed ${tag}`);
     }
   }
 
   if (deleteRemote && remote) {
     try {
-      await step(repo, `Deleting ${remote}/${branch}`, ['push', remote, '--delete', branch]);
+      /* By its short name on purpose: a full refs/heads/ name that is not
+         there is "deleted" with only a warning, and this would then claim to
+         have removed something somebody else already had. */
+      await step(repo, `Deleting ${remote}/${branch}`, ['push', '--delete', '--', remote, branch]);
       done.push(`${remote}/${branch} deleted`);
     } catch (e) {
       /* Somebody else removed it first. That is the outcome asked for, so it is
@@ -2397,18 +2632,25 @@ handle('repo:log', async (repo, { limit = 400, all = true, skip = 0 } = {}) => {
 
    --follow carries the history across renames, which is the whole reason a file
    older than its current name has any history worth reading. It only accepts a
-   single path, which is why this takes one rather than a list. */
+   single path, which is why this takes one rather than a list.
+
+   --cc brings in the merges. Without it --follow leaves every merge out, and
+   with it the merge where a conflict in this file was settled by hand — often
+   the commit that made the file what it is now — was missing from the file's
+   own history. With it, --follow lists every merge, including the ones that did
+   nothing to this file; those are dropped below, by the same test git itself
+   uses: a merge whose combined diff names no file did not change this one. */
 handle('repo:fileLog', async (repo, file, { limit = 200 } = {}) => {
   if (typeof file !== 'string' || !file.trim()) throw new Error('No file was named.');
   let commits;
   try {
-    commits = parseLog(await git(repo, ['log', '--follow', '--date-order', '-z',
+    commits = parseLog(await git(repo, ['log', '--follow', '--cc', '-s', '--date-order', '-z',
       `--pretty=format:${LOG_FORMAT}`, `--max-count=${limit}`, '--', file]));
   } catch (e) {
-    if (/does not have any commits|unknown revision/i.test(e.message)) return { commits: [], names: {} };
+    if (/does not have any commits|unknown revision/i.test(e.message)) return { commits: [], names: {}, origs: {} };
     throw e;
   }
-  if (!commits.length) return { commits: [], names: {} };
+  if (!commits.length) return { commits: [], names: {}, origs: {} };
 
   /* What the file was called at each of those commits.
 
@@ -2416,25 +2658,40 @@ handle('repo:fileLog', async (repo, file, { limit = 200 } = {}) => {
      for today's path returns nothing — which read as "this commit changed
      nothing", when what it changed was a file with another name. --name-status
      reports the path as it was at each commit, and spells a rename out as
-     "R100 <old> <new>", which is the only place the old name appears at all.
+     "R100 <old> <new>", which is the only place the old name appears at all;
+     the old name is kept too, so the rename commit reads as a rename.
 
-     core.quotePath is turned off so a path with an accent or a space arrives as
-     itself rather than as escapes. */
-  const names = {};
-  const raw = await git(repo, ['-c', 'core.quotePath=false', 'log', '--follow',
-    `--max-count=${limit}`, '--format=%x00%H', '--name-status', '--', file]);
-  for (const chunk of raw.split('\0')) {
-    const lines = chunk.split('\n').map((l) => l.trim()).filter(Boolean);
-    if (!lines.length) continue;
-    const hash = lines[0];
-    const record = lines[1];
-    if (!record) continue;
-    const parts = record.split('\t');
-    // "R100 old new" names both; everything else names one.
-    names[hash] = parts.length >= 3 ? parts[2] : parts[1];
-  }
-  return { commits, names };
+     Read with -z: without it git quotes a name holding a quote, a backslash, a
+     tab or a newline, and the quoted spelling matched no file. Each commit
+     opens with \x01 and its hash; then come status, path(s), status, path(s).
+     The paths are taken by count, so a name can hold anything. */
+  const { names, origs } = parseFollowNames(await git(repo, ['log', '--follow', '--cc', '--date-order', '-z',
+    `--max-count=${limit}`, '--format=%x01%H', '--name-status', '--', file]));
+  commits = commits.filter((c) => c.parents.length < 2 || names[c.hash] !== undefined);
+  return { commits, names, origs };
 });
+
+/* The --name-status records of `git log -z --format=%x01%H`, as the name the
+   file had at each commit and, for a rename or copy, the name before it. */
+function parseFollowNames(raw) {
+  const names = {};
+  const origs = {};
+  const parts = raw.split('\0');
+  let hash = null;
+  for (let i = 0; i < parts.length; i++) {
+    const tok = parts[i].replace(/^\n/, '');
+    if (tok.startsWith('\x01')) { hash = tok.slice(1).trim(); continue; }
+    if (!hash || !tok) continue;
+    if (/^[RC]\d*$/.test(tok)) {
+      origs[hash] = parts[++i];
+      names[hash] = parts[++i];
+    } else if (/^[A-Z]+$/.test(tok)) {
+      // One letter for a commit, one per parent for a merge's combined diff.
+      names[hash] = parts[++i];
+    }
+  }
+  return { names, origs };
+}
 
 /* Adding a line to .gitignore. The file is created if it is missing, the line is
    not written twice, and a file that does not end in a newline gets one first —
@@ -2470,6 +2727,48 @@ handle('repo:untrack', async (repo, files) => {
   return git(repo, ['rm', '--cached', '-r', '--', ...list]);
 });
 
+/* Remote names may hold a slash — `git remote add team/fork …` is allowed — so
+   the remote a tracking ref belongs to cannot be read off its first segment.
+   The longest remote name that prefixes it is the one. */
+function splitRemoteRef(name, remoteNames) {
+  const owner = remoteNames
+    .filter((r) => name.startsWith(`${r}/`))
+    .sort((a, b) => b.length - a.length)[0];
+  if (owner) return { remote: owner, branch: name.slice(owner.length + 1) };
+  const at = name.indexOf('/');   // a ref left behind by a remote since removed
+  return at < 0 ? { remote: '', branch: name } : { remote: name.slice(0, at), branch: name.slice(at + 1) };
+}
+
+const remoteNamesOf = async (repo) =>
+  (await git(repo, ['remote']).catch(() => '')).split('\n').map((l) => l.trim()).filter(Boolean);
+
+/* The shortest name git itself would not misread. A branch and a tag both
+   called x are each "x" to a person, and git resolves a bare x to the tag; this
+   answers "heads/x" for the branch then, and plain "x" whenever that is safe —
+   which keeps merge messages reading "Merge branch 'x'" rather than spelling
+   out refs/heads/. Anything that is not a full ref name is passed through. */
+async function unambiguous(repo, ref) {
+  if (!/^refs\//.test(ref)) return ref;
+  /* for-each-ref matches by prefix: refs/heads/release also lists
+     refs/heads/release/1.0. Only the ref itself may be shortened; when it is
+     not there the full name goes through, and git says it does not exist. */
+  const out = await git(repo, ['for-each-ref', '--format=%(refname)%00%(refname:short)', ref])
+    .catch(() => '');
+  for (const line of out.split('\n')) {
+    const [full, short] = line.split('\0');
+    if (full === ref && short) return short;
+  }
+  return ref;
+}
+
+/* A revision the window sends: a hash, or a full ref name. Nothing that could
+   be read as an option. */
+const revision = (ref) => {
+  const r = String(ref || '').trim();
+  if (!r || r.startsWith('-')) throw new Error(`"${ref}" is not a valid revision.`);
+  return r;
+};
+
 handle('repo:refs', async (repo) => {
   /* An annotated tag is an object in its own right, so %(objectname) is the tag
      rather than the commit it marks, and %(committerdate) is empty because a tag
@@ -2478,13 +2777,25 @@ handle('repo:refs', async (repo) => {
      exactly when the plain ones are already right. */
   const fmt = ['%(refname)', '%(objectname)', '%(upstream:short)',
     '%(upstream:track)', '%(HEAD)', '%(committerdate:unix)',
-    '%(*objectname)', '%(*committerdate:unix)'].join('%1f');
-  const raw = await git(repo, ['for-each-ref', `--format=${fmt}`]);
+    '%(*objectname)', '%(*committerdate:unix)',
+    /* Where the upstream really is. Its short name cannot say: a remote may
+       have a slash in its name, the branch there may be called something else,
+       and an upstream that is another local branch has no remote at all
+       (remotename "."). */
+    '%(upstream)', '%(upstream:remotename)', '%(upstream:remoteref)'].join('%1f');
+  const [raw, remoteNames, pushDefault] = await Promise.all([
+    git(repo, ['for-each-ref', `--format=${fmt}`]),
+    remoteNamesOf(repo),
+    /* Whether a branch tracking a differently named one pushes there. Only
+       "upstream" (and its old name "tracking") says yes; git's default,
+       "simple", refuses such a push, and so does the window without asking. */
+    git(repo, ['config', '--get', 'push.default']).then((v) => v.trim()).catch(() => ''),
+  ]);
   const branches = [], remotes = [], tags = [];
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
-    const [refname, oid, upstream, track, head, date, peeledOid, peeledDate] =
-      line.split(UNIT);
+    const [refname, oid, upstream, track, head, date, peeledOid, peeledDate,
+      upstreamRef, upstreamRemote, upstreamMerge] = line.split(UNIT);
     const item = {
       refname,
       // What the ref means to the history: the commit a reader can point at.
@@ -2495,10 +2806,10 @@ handle('repo:refs', async (repo) => {
       date: Number(peeledDate || date) * 1000,
     };
     if (refname.startsWith('refs/heads/')) {
-      branches.push({ ...item, name: refname.slice(11) });
+      branches.push({ ...item, name: refname.slice(11), upstreamRef, upstreamRemote, upstreamMerge });
     } else if (refname.startsWith('refs/remotes/')) {
       const name = refname.slice(13);
-      if (!name.endsWith('/HEAD')) remotes.push({ ...item, name });
+      if (!name.endsWith('/HEAD')) remotes.push({ ...item, name, ...splitRemoteRef(name, remoteNames) });
     } else if (refname.startsWith('refs/tags/')) {
       tags.push({ ...item, name: refname.slice(10) });
     }
@@ -2508,6 +2819,8 @@ handle('repo:refs', async (repo) => {
     branches: branches.sort(sortByDate),
     remotes: remotes.sort(sortByDate),
     tags: tags.sort(sortByDate),
+    remoteNames,
+    pushDefault,
   };
 });
 
@@ -2515,9 +2828,13 @@ handle('repo:refs', async (repo) => {
 /* branch level commands                                               */
 /* ------------------------------------------------------------------ */
 
+/* A new name typed as "-M" was an option: `branch -m other -M` force-renamed
+   the current branch onto other, and other's own commits went with it. */
 handle('repo:renameBranch', async (repo, from, to) => {
-  await git(repo, ['branch', '-m', from, to]);
-  return to;
+  const old = refName(from, 'branch');
+  const name = refName(to, 'branch');
+  await git(repo, ['branch', '-m', '--', old, name]);
+  return name;
 });
 
 handle('repo:setUpstream', async (repo, branch, upstream) => {
@@ -2527,36 +2844,83 @@ handle('repo:setUpstream', async (repo, branch, upstream) => {
 });
 
 /** A branch you are standing on is advanced by merging; one you are not on can
-    be moved with a fetch whose source is this same repository. */
-handle('repo:fastForward', async (repo, { branch, upstream, current }) => {
-  if (current) return git(repo, ['merge', '--ff-only', upstream]);
-  return git(repo, ['fetch', '.', `${upstream}:${branch}`]);
-});
+    be moved with a fetch whose source is this same repository. `upstream` is
+    the tracking ref's full name, so a local branch spelled like it is not the
+    one read. */
+function fastForwardTo(repo, branch, upstream, current) {
+  const name = refName(branch, 'branch');
+  const from = revision(upstream);
+  if (current) return git(repo, ['merge', '--ff-only', from]);
+  return git(repo, ['fetch', '.', `${from}:refs/heads/${name}`]);
+}
 
-handle('repo:fetchInto', async (repo, { remote, branch, upstream, current }) => {
-  await withProgress('fetch', repo, ['fetch', '--progress', remote, branch]);
+handle('repo:fastForward', async (repo, { branch, upstream, current }) =>
+  fastForwardTo(repo, branch, upstream, current));
+
+/* The branch is fetched by its name on the remote, which need not be its name
+   here: feat tracking origin/feature-x asked the server for "feat" and failed.
+   An upstream that is another local branch (remote ".") has nothing to fetch. */
+handle('repo:fetchInto', async (repo, { remote, remoteRef, branch, upstream, current }) => {
+  const name = refName(branch, 'branch');
+  if (remote !== '.') {
+    await withProgress('fetch', repo,
+      ['fetch', '--progress', '--', refName(remote, 'remote'), revision(remoteRef)]);
+  }
   // Then carry what arrived into the local branch, if it can go without a merge.
   try {
-    if (current) await git(repo, ['merge', '--ff-only', upstream]);
-    else await git(repo, ['fetch', '.', `${upstream}:${branch}`]);
+    await fastForwardTo(repo, name, upstream, current);
     return 'fetched and fast-forwarded';
-  } catch {
-    return 'fetched — the branch has diverged, so it was left alone';
+  } catch (e) {
+    /* Only a real divergence is an outcome to report calmly. A refusal over
+       local changes, or a branch checked out in another worktree, said
+       "diverged" too, which sent the reader looking for commits that did not
+       exist; git's own reason is the answer then. */
+    const counts = await git(repo, ['rev-list', '--left-right', '--count',
+      `refs/heads/${name}...${upstream}`]).catch(() => '');
+    const [ahead, behind] = counts.trim().split(/\s+/).map(Number);
+    if (ahead > 0 && behind > 0) return 'fetched — the branch has diverged, so it was left alone';
+    throw e;
   }
 });
 
-handle('repo:pushBranch', async (repo, { branch, remote, setUpstream, force }) => {
+/* One push for the toolbar and the sidebar alike. The refspec names both ends
+   in full: the local branch, so a tag of the same name cannot make it "match
+   more than one", and the branch it tracks on the remote, which is not always
+   the one with its own name — a bare `push origin feat` created a second
+   branch beside the feature-x it was meant to update.
+
+   A forced push carries the remote commit the reader last saw as the lease.
+   A bare --force-with-lease checks against the tracking ref, and a background
+   fetch moves that ref without anyone looking — after which the lease passes
+   and overwrites commits nobody here has seen. */
+function pushArgs({ branch, remote, remoteRef, setUpstream, force, expect }) {
+  const name = refName(branch, 'branch');
+  const where = refName(remote, 'remote');
+  const dst = remoteRef || `refs/heads/${name}`;
+  if (!/^refs\/heads\/./.test(dst)) throw new Error(`"${dst}" is not a branch on ${where}.`);
   const args = ['push', '--progress'];
-  if (force) args.push('--force-with-lease');
+  if (force) {
+    if (typeof expect !== 'string' || !/^([0-9a-f]{40}|[0-9a-f]{64})?$/.test(expect)) {
+      throw new Error('A forced push needs the remote commit it expects to replace.');
+    }
+    args.push(`--force-with-lease=${dst}:${expect}`);
+  }
   if (setUpstream) args.push('--set-upstream');
-  args.push(remote, branch);
-  return withProgress('push', repo, args);
-});
+  args.push('--', where, `refs/heads/${name}:${dst}`);
+  return args;
+}
+
+handle('repo:pushBranch', async (repo, opts) =>
+  withProgress('push', repo, pushArgs(opts || {})));
 
 handle('repo:deleteRemoteBranch', async (repo, remote, branch) =>
-  git(repo, ['push', remote, '--delete', branch]));
+  git(repo, ['push', '--delete', '--', refName(remote, 'remote'),
+    `refs/heads/${refName(branch, 'branch')}`]));
 
-handle('repo:deleteTag', async (repo, tag) => git(repo, ['tag', '-d', tag]));
+/* The name comes from the repository's own refs, and a tag may begin with a
+   dash where a branch may not: without the `--` a tag named -q was read as an
+   option and could not be deleted at all. */
+handle('repo:deleteTag', async (repo, tag) => git(repo, ['tag', '-d', '--', String(tag)]));
 
 /** What is on `b` that is not yet on `a`. */
 /* The window sends five arguments and this took three, so "ignore whitespace"
@@ -2567,7 +2931,7 @@ handle('repo:deleteTag', async (repo, tag) => git(repo, ['tag', '-d', tag]));
 handle('repo:compare', async (repo, a, b, ignoreWhitespace, context) => {
   const args = diffArgs('diff', '--no-color');
   if (ignoreWhitespace) args.push('-w');
-  args.push(...contextArg(context), `${a}...${b}`);
+  args.push(...contextArg(context), `${revision(a)}...${revision(b)}`);
   return git(repo, args);
 });
 
@@ -2662,8 +3026,11 @@ handle('askpass:storage', async (repo) =>
 handle('repo:remotes', async (repo) => {
   const raw = await git(repo, ['remote', '-v']);
   const map = new Map();
+  /* Split on the tab git puts after the name. Matching the URL as \S+ dropped
+     every remote whose path holds a space — "Project Pribadi/…" — and the
+     menu then offered to add a remote the repository already had. */
   for (const line of raw.split('\n')) {
-    const m = line.match(/^(\S+)\s+(\S+)\s+\((fetch|push)\)$/);
+    const m = line.match(/^([^\t]+)\t(.*) \((fetch|push)\)$/);
     if (m && !map.has(m[1])) map.set(m[1], { name: m[1], url: m[2] });
   }
   return [...map.values()];
@@ -3004,6 +3371,18 @@ handle('repo:discard', async (repo, files, untracked) => {
   if (!list.length) throw new Error('Nothing was named to discard.');
   files = list;
 
+  /* A file added with `git add -N` is in the index with nothing in it, so
+     restoring it from the index wrote an empty file over its contents and left
+     it listed. It has no committed state to go back to: discarding it is what
+     discarding an untracked file is — it stops being known, and it goes. */
+  const fresh = await intentToAdd(repo, files);
+  if (fresh.length) {
+    await git(repo, ['rm', '--cached', '-q', '--', ...fresh]);
+    await git(repo, ['clean', '-f', '--', ...fresh]);
+    files = files.filter((f) => !fresh.includes(f));
+    if (!files.length) return '';
+  }
+
   if (untracked) return git(repo, ['clean', '-fd', '--', ...files]);
   try {
     return await git(repo, ['restore', '--worktree', '--', ...files]);
@@ -3011,6 +3390,13 @@ handle('repo:discard', async (repo, files, untracked) => {
     return git(repo, ['checkout', '--', ...files]);
   }
 });
+
+/* Which of these paths are intent-to-add: in the index, but only as a promise. */
+async function intentToAdd(repo, files) {
+  const raw = await git(repo, ['status', '--porcelain=v2', '-z', '--untracked-files=no', '--', ...files]);
+  return raw.split('\0').filter((l) => l.startsWith('1 .A ')).map((l) => l.split(' ').slice(8).join(' '))
+    .filter((p) => files.includes(p));
+}
 
 /** Apply a single hunk patch. action: stage | unstage | discard */
 handle('repo:applyPatch', async (repo, patch, action) => {
@@ -3050,23 +3436,49 @@ const CHECKOUT_MODES = new Set(['keep', 'stash', 'discard']);
 const stashTop = (repo) =>
   git(repo, ['rev-parse', '--verify', '-q', 'refs/stash']).catch(() => '');
 
+/* What `git checkout` is handed for each kind of thing the window can name.
+   Every form ends in `--`, so a name that is also a file or folder in the work
+   tree is read as the revision it was meant to be — `checkout docs` beside a
+   docs/ folder was refused as "could be both a local file and a tracking
+   branch".
+
+   - refs/heads/x    by its short name, which checkout always reads as the
+                     branch (even beside a tag x) and which leaves you on it;
+                     the full name would detach.
+   - refs/remotes/…  the local branch of that name, created to track it when
+                     there is none yet. Spelled out rather than left to git's
+                     guess, which needs the name to be unique across remotes.
+   - anything else   a tag or a commit, checked out detached. */
+async function checkoutTarget(repo, ref) {
+  const r = revision(ref);
+  if (r.startsWith('refs/heads/')) return { args: [r.slice(11), '--'], shown: r.slice(11) };
+  if (r.startsWith('refs/remotes/')) {
+    const { branch } = splitRemoteRef(r.slice(13), await remoteNamesOf(repo));
+    const local = refName(branch, 'branch');
+    const exists = await git(repo, ['show-ref', '--verify', '-q', `refs/heads/${local}`])
+      .then(() => true, () => false);
+    return { args: exists ? [local, '--'] : ['-b', local, '--track', r], shown: local };
+  }
+  return { args: [r, '--'], shown: r.replace(/^refs\/tags\//, '') };
+}
+
 handle('repo:checkoutWith', async (repo, ref, mode) => {
   if (!CHECKOUT_MODES.has(mode)) throw new Error(`Unknown checkout mode: ${mode}`);
+  const target = await checkoutTarget(repo, ref);
 
   if (mode !== 'stash') {
-    const args = mode === 'discard' ? ['checkout', '--force', ref] : ['checkout', ref];
-    await git(repo, args);
+    await git(repo, ['checkout', ...(mode === 'discard' ? ['--force'] : []), ...target.args]);
     return { stash: 'none' };
   }
 
   const before = await stashTop(repo);
-  await git(repo, ['stash', 'push', '--include-untracked', '-m', `GitBraid: switching to ${ref}`]);
+  await git(repo, ['stash', 'push', '--include-untracked', '-m', `GitBraid: switching to ${target.shown}`]);
   // `stash push` with nothing to save is a success that stashes nothing, so the
   // ref itself is the only trustworthy evidence that anything was set aside.
   const stashed = (await stashTop(repo)) !== before;
 
   try {
-    await git(repo, ['checkout', ref]);
+    await git(repo, ['checkout', ...target.args]);
   } catch (e) {
     // A refused switch must cost nothing: put the work back where it was.
     if (stashed) await git(repo, ['stash', 'pop']).catch(() => {});
@@ -3094,8 +3506,10 @@ const refName = (name, what) => {
 
 handle('repo:createBranch', async (repo, name, startPoint, checkout) => {
   const branch = refName(name, 'branch');
-  if (checkout) return git(repo, ['checkout', '-b', branch, ...(startPoint ? [startPoint] : [])]);
-  return git(repo, ['branch', branch, ...(startPoint ? [startPoint] : [])]);
+  // A full ref name keeps a tag spelled like a branch from being the start.
+  const from = startPoint ? [await unambiguous(repo, revision(startPoint))] : [];
+  if (checkout) return git(repo, ['checkout', '-b', branch, ...from]);
+  return git(repo, ['branch', branch, ...from]);
 });
 
 handle('repo:deleteBranch', async (repo, name, force) =>
@@ -3107,8 +3521,11 @@ handle('repo:deleteBranch', async (repo, name, force) =>
    straight line. Merging the wrong way round is the easy mistake, and no button
    label can show it. */
 handle('repo:mergeInfo', async (repo, ref) => {
-  const head = (await git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
-  const counts = await git(repo, ['rev-list', '--left-right', '--count', `HEAD...${ref}`]);
+  // Read as a ref rather than abbreviated: --abbrev-ref answers "heads/x" for a
+  // branch that shares its name with a tag.
+  const sym = (await git(repo, ['symbolic-ref', '-q', 'HEAD']).catch(() => '')).trim();
+  const head = sym.startsWith('refs/heads/') ? sym.slice(11) : 'HEAD';
+  const counts = await git(repo, ['rev-list', '--left-right', '--count', `HEAD...${revision(ref)}`]);
   const [outgoing, incoming] = counts.trim().split(/\s+/).map(Number);
   /* A fast-forward is possible exactly when HEAD is already an ancestor of the
      other ref — that is, when nothing here is missing from there. The counts
@@ -3126,11 +3543,15 @@ handle('repo:merge', async (repo, ref, mode = 'ff') => {
   // --squash brings the changes in and stages them; it deliberately does not
   // commit, so the reader writes the message themselves.
   if (mode === 'squash') args.push('--squash');
-  args.push(ref);
+  /* The window sends the full ref name, so a tag called x is never merged in
+     place of the branch x. Shortened again here only as far as stays
+     unambiguous, because git writes the name into the merge message. */
+  args.push(await unambiguous(repo, revision(ref)));
   return git(repo, args);
 });
 
-handle('repo:rebase', async (repo, ref) => git(repo, ['rebase', ref]));
+handle('repo:rebase', async (repo, ref) =>
+  git(repo, ['rebase', await unambiguous(repo, revision(ref))]));
 
 const RESET_MODES = new Set(['soft', 'mixed', 'hard', 'merge', 'keep']);
 
@@ -3153,7 +3574,8 @@ handle('repo:cherryPick', async (repo, hash, mainline = 0) =>
 
 handle('repo:tag', async (repo, name, hash, message) => {
   const tag = refName(name, 'tag');
-  return git(repo, message ? ['tag', '-a', tag, hash, '-m', message] : ['tag', tag, hash]);
+  const at = await unambiguous(repo, revision(hash));
+  return git(repo, message ? ['tag', '-a', tag, at, '-m', message] : ['tag', tag, at]);
 });
 
 /* --- remote ops --- */
@@ -3203,13 +3625,10 @@ handle('repo:pull', async (repo, { mode = 'ff' } = {}) => {
   return withProgress('pull', repo, ['pull', ...how, '--progress']);
 });
 
-handle('repo:push', async (repo, { branch, remote = 'origin', setUpstream, force }) => {
-  const args = ['push', '--progress'];
-  if (force) args.push('--force-with-lease');
-  if (setUpstream) args.push('-u');
-  args.push(remote, branch);
-  return withProgress('push', repo, args);
-});
+/* The toolbar's push. It used to assume a remote called origin and a branch
+   there of the same name; it now takes the same answers the sidebar does. */
+handle('repo:push', async (repo, opts) =>
+  withProgress('push', repo, pushArgs(opts || {})));
 
 
 /* ------------------------------------------------------------------ */
@@ -3244,13 +3663,23 @@ function operationState(gitDir) {
     return { kind: 'merge', label: 'Merging', target: named ? named[1] : '', step: 0, total: 0 };
   }
 
+  /* `git am` keeps its state in rebase-apply too, and marks it with an
+     `applying` file. It is not a rebase: HEAD is still the reader's branch,
+     and its skip and abort are `git am`'s own. */
+  if (gitPathExists(gitDir, 'rebase-apply', 'applying')) {
+    return { kind: 'am', label: 'Applying patches', target: '',
+      step: Number(readGitFile(gitDir, 'rebase-apply', 'next')) || 0,
+      total: Number(readGitFile(gitDir, 'rebase-apply', 'last')) || 0 };
+  }
+
   for (const dir of ['rebase-merge', 'rebase-apply']) {
     if (!gitPathExists(gitDir, dir)) continue;
     const step = Number(readGitFile(gitDir, dir, 'msgnum')) || 0;
     const total = Number(readGitFile(gitDir, dir, 'end')) || 0;
     // head-name is "refs/heads/feature/x"; onto is a bare hash.
     const head = readGitFile(gitDir, dir, 'head-name').replace(/^refs\/heads\//, '');
-    return { kind: 'rebase', label: 'Rebasing', target: head, step, total };
+    return { kind: 'rebase', label: 'Rebasing', target: head, step, total,
+      onto: readGitFile(gitDir, dir, 'onto') };
   }
 
   if (gitPathExists(gitDir, 'CHERRY_PICK_HEAD')) {
@@ -3264,14 +3693,87 @@ function operationState(gitDir) {
   return null;
 }
 
-handle('repo:state', async (repo) => {
-  const gitDir = gitDirOf(repo);
-  return gitDir ? operationState(gitDir) : null;
-});
+/* Which of git's two sides of a conflict is the reader's own, and what to call
+   each one. git names them by position — `--ours` is whatever HEAD was when the
+   conflict happened, `--theirs` is what was being brought in — and that is the
+   reader's side in a merge, a cherry-pick, a revert and a stash apply. A rebase
+   turns it round: HEAD is the branch being rebased onto, and the commit being
+   replayed, the reader's own work, is `--theirs`. "Keep your version" mapped to
+   --ours there took the upstream's file, and the rebase then dropped the
+   reader's commit as empty.
+
+   This is the only place the mapping is written down. The window asks for a
+   side as "mine" or "incoming" and repo:resolve turns that into a stage here;
+   the labels travel with the operation state so the buttons say the same. */
+function conflictSides(op) {
+  const short = (h) => String(h || '').slice(0, 7);
+  switch (op?.kind) {
+    case 'rebase':
+      return {
+        mine: { stage: 'theirs', label: 'your commit (being replayed)' },
+        incoming: { stage: 'ours', label: `the ${op.ontoName || short(op.onto) || 'upstream'} version` },
+      };
+    case 'merge':
+      return {
+        mine: { stage: 'ours', label: 'your version' },
+        incoming: { stage: 'theirs', label: op.target ? `the ${op.target} version` : 'their version' },
+      };
+    case 'cherry-pick':
+      return {
+        mine: { stage: 'ours', label: 'your version' },
+        incoming: { stage: 'theirs', label: `the picked commit's version (${op.target})` },
+      };
+    case 'revert':
+      return {
+        mine: { stage: 'ours', label: 'your version' },
+        incoming: { stage: 'theirs', label: `the reverted version (undoing ${op.target})` },
+      };
+    case 'am':
+      return {
+        mine: { stage: 'ours', label: 'your version' },
+        incoming: { stage: 'theirs', label: "the patch's version" },
+      };
+    default:
+      // No operation on record: a stash apply or pop, where --ours is the
+      // working tree it was applied to and --theirs is the stash.
+      return {
+        mine: { stage: 'ours', label: 'your version' },
+        incoming: { stage: 'theirs', label: 'the incoming version' },
+      };
+  }
+}
+
+/* The branch a rebase is going onto, by name when one points at it. git keeps
+   only the hash; a hash on a button says nothing to most readers. */
+async function ontoName(repo, onto) {
+  if (!onto) return '';
+  try {
+    const refs = (await git(repo, ['for-each-ref', `--points-at=${onto}`,
+      '--format=%(refname:short)', 'refs/heads', 'refs/remotes'])).split('\n').filter(Boolean);
+    return refs[0] || '';
+  } catch {
+    return '';
+  }
+}
 
 const ABORTABLE = {
-  merge: 'merge', rebase: 'rebase', 'cherry-pick': 'cherry-pick', revert: 'revert',
+  merge: 'merge', rebase: 'rebase', 'cherry-pick': 'cherry-pick', revert: 'revert', am: 'am',
 };
+
+/* A merge has no "skip": there is one commit being made and nothing after it. */
+const SKIPPABLE = {
+  rebase: 'rebase', 'cherry-pick': 'cherry-pick', revert: 'revert', am: 'am',
+};
+
+handle('repo:state', async (repo) => {
+  const gitDir = gitDirOf(repo);
+  const op = gitDir ? operationState(gitDir) : null;
+  if (!op) return null;
+  if (op.kind === 'rebase') op.ontoName = await ontoName(repo, op.onto);
+  op.sides = conflictSides(op);
+  op.canSkip = Boolean(SKIPPABLE[op.kind]);
+  return op;
+});
 
 handle('repo:abort', async (repo, kind) => {
   const cmd = ABORTABLE[kind];
@@ -3288,16 +3790,71 @@ handle('repo:continue', async (repo, kind) => {
   return git(repo, [cmd, '--continue'], { GIT_EDITOR: 'true' });
 });
 
-/** Take one side of a conflict wholesale, or accept the file as it now stands. */
+handle('repo:skip', async (repo, kind) => {
+  const cmd = SKIPPABLE[kind];
+  if (!cmd) throw new Error(`Nothing called "${kind}" can be skipped.`);
+  // Skipping moves on to the next commit, which may want its message accepted.
+  return git(repo, [cmd, '--skip'], { GIT_EDITOR: 'true' });
+});
+
+/* The stages git holds for one unmerged path: 1 the common ancestor, 2 ours,
+   3 theirs. A side that deleted the file has no stage at all. */
+async function unmergedStages(repo, filePath) {
+  const raw = await git(repo, ['ls-files', '-u', '-z', '--', filePath]);
+  const stages = new Set();
+  for (const rec of raw.split('\0')) {
+    const m = /^\d+ [0-9a-f]+ (\d)\t([\s\S]*)$/.exec(rec);
+    if (m && m[2] === filePath) stages.add(Number(m[1]));
+  }
+  return stages;
+}
+
+/** Take one side of a conflict wholesale, or accept the file as it now stands.
+    `side` is "mine" or "incoming" — which git stage that is depends on the
+    operation, and conflictSides() is where that is decided. */
 handle('repo:resolve', async (repo, filePath, side) => {
-  if (side === 'ours' || side === 'theirs') {
-    await git(repo, ['checkout', `--${side}`, '--', filePath]);
+  if (side === 'mine' || side === 'incoming') {
+    const gitDir = gitDirOf(repo);
+    const stage = conflictSides(gitDir ? operationState(gitDir) : null)[side].stage;
+    /* A side that deleted the file has no version to check out — git answers
+       "does not have our version" — and taking that side means the deletion.
+       Without this the side that removed a file could not be chosen at all. */
+    const stages = await unmergedStages(repo, filePath);
+    /* No stage at all is not "that side deleted it": the file is not in
+       conflict any more — settled in a terminal or an editor while the list on
+       screen was older. Taking a side then would delete or overwrite it. */
+    if (stages.size === 0) {
+      throw new Error(`${filePath} is not in conflict any more. Refresh to see where it stands.`);
+    }
+    if (!stages.has(stage === 'ours' ? 2 : 3)) {
+      await git(repo, ['rm', '-q', '-f', '--', filePath]);
+      return { removed: true };
+    }
+    await git(repo, ['checkout', `--${stage}`, '--', filePath]);
   } else if (side !== 'mark') {
     throw new Error(`Unknown resolution "${side}".`);
   }
   // Staging a conflicted path is what tells git the conflict is settled.
   await git(repo, ['add', '--', filePath]);
-  return true;
+  return { removed: false };
+});
+
+/* Which of these files still hold a conflict marker. Marking such a file
+   resolved commits the markers, and git does not object; the window asks
+   first. A line starting with seven < or > (or the | of the diff3 style),
+   then a space or the end of the line, is what git writes. A bare ======= is
+   left out: it is also how a reStructuredText heading is underlined. */
+const MARKER = /^(?:<{7}|>{7}|\|{7})(?:[ \t]|\r?$)/m;
+
+handle('repo:conflictMarkers', async (repo, files) => {
+  const list = (Array.isArray(files) ? files : [files]).filter((f) => typeof f === 'string' && f);
+  const marked = [];
+  for (const f of list) {
+    let text;
+    try { text = fs.readFileSync(path.join(repo, f), 'utf8'); } catch { continue; }
+    if (MARKER.test(text)) marked.push(f);
+  }
+  return marked;
 });
 
 /* --- stash --- */
@@ -3379,11 +3936,33 @@ handle('repo:savePatch', async (repo, files, opts) => {
   return { path: filePath, bytes: Buffer.byteLength(patch), skipped };
 });
 
-handle('repo:stashApply', async (repo, ref, pop) =>
-  git(repo, ['stash', pop ? 'pop' : 'apply', ref])
+/* A stash@{n} is a position, not a name: every stash pushed since the list was
+   drawn moves each entry down one. The window hands over the hash it saw with
+   the ref, and the ref is checked against it here, at the moment it is used —
+   dropping stash@{0} from a list drawn before someone stashed in a terminal
+   dropped the new stash instead of the one that was clicked. If the entry has
+   moved it is found again by its hash; if it is gone, nothing is done. */
+async function stashAt(repo, ref, hash) {
+  if (!/^[0-9a-f]{40,64}$/i.test(String(hash || ''))) {
+    throw new Error('Which stash was meant is not known. Refresh and try again.');
+  }
+  let at = '';
+  try { at = (await git(repo, ['rev-parse', '--verify', '-q', String(ref)])).trim(); } catch { at = ''; }
+  if (at && at === hash) return ref;
+  const list = await git(repo, ['stash', 'list', '--format=%gd %H']).catch(() => '');
+  for (const line of list.split('\n')) {
+    const [gd, h] = line.trim().split(' ');
+    if (h && h === hash) return gd;
+  }
+  throw new Error('That stash is no longer in the list — it was dropped or applied elsewhere.');
+}
+
+handle('repo:stashApply', async (repo, ref, pop, hash) =>
+  git(repo, ['stash', pop ? 'pop' : 'apply', await stashAt(repo, ref, hash)])
 );
 
-handle('repo:stashDrop', async (repo, ref) => git(repo, ['stash', 'drop', ref]));
+handle('repo:stashDrop', async (repo, ref, hash) =>
+  git(repo, ['stash', 'drop', await stashAt(repo, ref, hash)]));
 
 /* --- misc --- */
 

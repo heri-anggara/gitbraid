@@ -183,11 +183,30 @@ git config --local user.email "email-yang-Anda-pilih"
 npm test
 ```
 
-535 test yang mengecek parser status, parser log, algoritma lane pada graph,
-titik akhir setiap garis, parser diff, reword di atas riwayat yang memuat merge,
-aturan `.gitignore` yang dicocokkan dengan `git check-ignore`, dan — yang paling
-penting — apakah patch per-hunk hasil rekonstruksi benar-benar diterima oleh
-`git apply`, termasuk untuk berkas yang dibuat dan dihapus.
+781 test dalam enam berkas. `test/run.js` menjalankan setiap `*.test.js` di
+prosesnya sendiri, sehingga repo, stub, dan environment satu berkas tidak
+bocor ke berkas berikutnya.
+
+- `parsers.test.js` — parser status dan log, algoritma lane pada graph, titik
+  akhir setiap garis, parser diff, reword di atas riwayat yang memuat merge,
+  aturan `.gitignore` yang dicocokkan dengan `git check-ignore`, dan apakah
+  patch per-hunk hasil rekonstruksi benar-benar diterima `git apply`.
+- `refs.test.js`, `conflicts.test.js`, `system.test.js` — handler IPC yang
+  asli, dipanggil persis seperti jendela memanggilnya, terhadap repo git
+  sungguhan; yang dicek adalah keadaan repo sesudahnya, bukan argv-nya.
+- `ui.test.js` — fungsi renderer yang diangkat lewat vm: kontras warna di
+  setiap tema, highlighter, penyorot hasil cari, panel keluaran git.
+- `handlers.test.js` — harness-nya sendiri.
+
+`test/harness.js` memuat `main.js` yang sama dengan yang dikirim, dengan
+pengganti modul `electron` yang mencatat apa yang diminta darinya (relaunch,
+quit, shell). `loadMain()` mengembalikan `call(channel, ...args)`;
+`scratchRepo()` membuat repo percobaan dengan identitas tetap; `reporter()`
+adalah `check`/`section`/`done` yang dipakai semua berkas.
+
+Perilaku yang hanya terlihat di jendela sungguhan diuji dengan menjalankan
+Electron dan mengirim event tombol asli; driver-nya ada di `.smoke/`, yang
+tidak ikut di-commit.
 
 ---
 
@@ -1989,6 +2008,47 @@ menulis dua kunci ini; kunci lain ditolak.
   CSP mengizinkan dua sumber gambar yang tidak dipakai; launchable metainfo
   deb menunjuk desktop file Flatpak
 
+**Audit kedua: yang dilakukan berbeda dari yang dikatakan**
+- Setelah 0.11.1, empat pemeriksaan paralel per area (cabang dan remote;
+  konflik, stash, dan riwayat berkas; sistem dan updater; tampilan dan
+  keyboard). Uji naik dari 535 ke 781, dan sebagian besar memanggil handler
+  yang asli lewat harness baru. Setiap uji baru dibuktikan gagal pada kode
+  lama. Lima driver Electron (135 langkah) ditambah driver audit pertama lulus
+  tanpa error di konsol
+- **Konflik**: "Keep your version" memakai `--ours` di setiap operasi, padahal
+  saat rebase ours adalah upstream; commit pengguna hilang dari cabang. Kini
+  jendela meminta `mine`/`incoming`, dan `conflictSides()` di main.js satu-
+  satunya tempat yang menerjemahkannya per operasi. Sisi yang menghapus
+  berkas di-`git rm`, dan berkas yang sudah tidak berkonflik ditolak alih-alih
+  dihapus; "Mark resolved" bertanya bila penanda konflik masih ada;
+  cherry-pick, revert, rebase, dan `git am` punya Skip, dan `git am` tidak lagi
+  terbaca sebagai rebase
+- **Cabang dan remote**: rename ke `-M` memaksa cabang aktif pindah nama;
+  tag dan cabang bernama sama tertukar karena handler menerima nama pendek;
+  push selalu ke `origin` dengan nama lokal; remote yang path-nya berspasi
+  tidak terbaca. Kini sidebar mengirim nama ref lengkap, push memakai
+  `%(upstream:remotename)`/`%(upstream:remoteref)` — tetapi cabang yang
+  melacak cabang bernama lain (git melakukannya sendiri untuk cabang yang
+  dibuat dari origin/main) ditanya dulu, kecuali `push.default=upstream` —
+  cabang tanpa upstream ke
+  origin atau ditanyakan, dan force push dari toolbar dikonfirmasi serta
+  memakai lease atas commit yang terakhir dilihat
+- **Stash dan riwayat berkas**: drop memakai `stash@{n}` yang bisa bergeser
+  selama dialog terbuka; kini hash-nya dibawa dan dicocokkan. File history
+  memakai `-z`, menampilkan merge yang mengubah berkas, dan rename sebagai
+  rename
+- **Sistem**: AppRun AppImage meninggalkan `./share/` di XDG_DATA_DIRS dan
+  entri kosong di LD_LIBRARY_PATH, sehingga repo hasil clone bisa memilih
+  program pembuka folder; kini dibersihkan saat start. URL clone diberi `--`.
+  Restart sesudah update menjalankan `$APPIMAGE`, bukan image lama. Stop di
+  terminal mematikan seluruh process group. Berkas JSON ditulis atomik
+- **Keyboard dan dialog**: Enter di dialog konfirmasi ikut sampai ke daftar
+  berkas di belakangnya; Enter pada Cancel mengonfirmasi; Caps Lock mengubah
+  pull menjadi push. Kini dialog memindahkan dan menjebak fokus, dan di
+  dialog berbahaya fokus awal ada di Cancel — Enter membatalkan, Tab lalu
+  Enter mengonfirmasi. Daftar commit dan sidebar bisa dijelajahi dengan
+  panah. Kontras isi aksen di tema terang dinaikkan ke 5,28:1
+
 ## Batasan yang perlu diketahui
 
 Ini prototipe yang berfungsi, bukan pengganti GitKraken. Yang belum ada:
@@ -2030,7 +2090,9 @@ src/renderer.js      State, rendering, dan seluruh aksi UI.
 src/highlight.js     Tokenizer syntax highlight (tanpa dependency).
 src/releases.js      Isi halaman release notes, sebagai data.
 src/styles.css       Tema.
-test/parsers.test.js Test suite.
+test/run.js          Menjalankan setiap *.test.js di prosesnya sendiri.
+test/harness.js      Memuat main.js asli dengan pengganti electron.
+test/*.test.js       Test suite — lihat bagian Test.
 ```
 
 Renderer berjalan dengan `contextIsolation` menyala, `nodeIntegration` mati, dan
@@ -2128,6 +2190,9 @@ Tiga langkah:
 2. Tambahkan `'repo:namaAksi'` ke `CHANNELS` di `preload.js`.
 3. Panggil dari `renderer.js` dengan `await call('repo:namaAksi', repoPath(), arg)`,
    lalu `await refresh()`.
+4. Uji handler-nya lewat `test/harness.js` terhadap repo sungguhan. Nama ref
+   atau path yang datang dari repo diberi `--` sebelum diserahkan ke git: nama
+   yang diawali tanda minus dibaca git sebagai opsi.
 
 Helper `handle()` sudah membungkus semua error jadi `{ok:false, error}`, dan
 `call()` di renderer otomatis menampilkannya di status bar.
