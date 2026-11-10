@@ -705,7 +705,12 @@ function addEntry(res, xy, filePath, orig) {
   const staged = xy[0];
   const worktree = xy[1];
   if (staged !== '.') res.staged.push({ path: filePath, orig, status: staged });
-  if (worktree !== '.') res.unstaged.push({ path: filePath, orig, status: worktree });
+  if (worktree !== '.') {
+    const entry = { path: filePath, orig, status: worktree };
+    // ".A" is `git add -N`: known to the index, with nothing in it yet.
+    if (xy === '.A') entry.intentToAdd = true;
+    res.unstaged.push(entry);
+  }
 }
 
 /** Parse `git status --porcelain=v2 --branch -z`. */
@@ -2397,18 +2402,25 @@ handle('repo:log', async (repo, { limit = 400, all = true, skip = 0 } = {}) => {
 
    --follow carries the history across renames, which is the whole reason a file
    older than its current name has any history worth reading. It only accepts a
-   single path, which is why this takes one rather than a list. */
+   single path, which is why this takes one rather than a list.
+
+   --cc brings in the merges. Without it --follow leaves every merge out, and
+   with it the merge where a conflict in this file was settled by hand — often
+   the commit that made the file what it is now — was missing from the file's
+   own history. With it, --follow lists every merge, including the ones that did
+   nothing to this file; those are dropped below, by the same test git itself
+   uses: a merge whose combined diff names no file did not change this one. */
 handle('repo:fileLog', async (repo, file, { limit = 200 } = {}) => {
   if (typeof file !== 'string' || !file.trim()) throw new Error('No file was named.');
   let commits;
   try {
-    commits = parseLog(await git(repo, ['log', '--follow', '--date-order', '-z',
+    commits = parseLog(await git(repo, ['log', '--follow', '--cc', '-s', '--date-order', '-z',
       `--pretty=format:${LOG_FORMAT}`, `--max-count=${limit}`, '--', file]));
   } catch (e) {
-    if (/does not have any commits|unknown revision/i.test(e.message)) return { commits: [], names: {} };
+    if (/does not have any commits|unknown revision/i.test(e.message)) return { commits: [], names: {}, origs: {} };
     throw e;
   }
-  if (!commits.length) return { commits: [], names: {} };
+  if (!commits.length) return { commits: [], names: {}, origs: {} };
 
   /* What the file was called at each of those commits.
 
@@ -2416,25 +2428,40 @@ handle('repo:fileLog', async (repo, file, { limit = 200 } = {}) => {
      for today's path returns nothing — which read as "this commit changed
      nothing", when what it changed was a file with another name. --name-status
      reports the path as it was at each commit, and spells a rename out as
-     "R100 <old> <new>", which is the only place the old name appears at all.
+     "R100 <old> <new>", which is the only place the old name appears at all;
+     the old name is kept too, so the rename commit reads as a rename.
 
-     core.quotePath is turned off so a path with an accent or a space arrives as
-     itself rather than as escapes. */
-  const names = {};
-  const raw = await git(repo, ['-c', 'core.quotePath=false', 'log', '--follow',
-    `--max-count=${limit}`, '--format=%x00%H', '--name-status', '--', file]);
-  for (const chunk of raw.split('\0')) {
-    const lines = chunk.split('\n').map((l) => l.trim()).filter(Boolean);
-    if (!lines.length) continue;
-    const hash = lines[0];
-    const record = lines[1];
-    if (!record) continue;
-    const parts = record.split('\t');
-    // "R100 old new" names both; everything else names one.
-    names[hash] = parts.length >= 3 ? parts[2] : parts[1];
-  }
-  return { commits, names };
+     Read with -z: without it git quotes a name holding a quote, a backslash, a
+     tab or a newline, and the quoted spelling matched no file. Each commit
+     opens with \x01 and its hash; then come status, path(s), status, path(s).
+     The paths are taken by count, so a name can hold anything. */
+  const { names, origs } = parseFollowNames(await git(repo, ['log', '--follow', '--cc', '--date-order', '-z',
+    `--max-count=${limit}`, '--format=%x01%H', '--name-status', '--', file]));
+  commits = commits.filter((c) => c.parents.length < 2 || names[c.hash] !== undefined);
+  return { commits, names, origs };
 });
+
+/* The --name-status records of `git log -z --format=%x01%H`, as the name the
+   file had at each commit and, for a rename or copy, the name before it. */
+function parseFollowNames(raw) {
+  const names = {};
+  const origs = {};
+  const parts = raw.split('\0');
+  let hash = null;
+  for (let i = 0; i < parts.length; i++) {
+    const tok = parts[i].replace(/^\n/, '');
+    if (tok.startsWith('\x01')) { hash = tok.slice(1).trim(); continue; }
+    if (!hash || !tok) continue;
+    if (/^[RC]\d*$/.test(tok)) {
+      origs[hash] = parts[++i];
+      names[hash] = parts[++i];
+    } else if (/^[A-Z]+$/.test(tok)) {
+      // One letter for a commit, one per parent for a merge's combined diff.
+      names[hash] = parts[++i];
+    }
+  }
+  return { names, origs };
+}
 
 /* Adding a line to .gitignore. The file is created if it is missing, the line is
    not written twice, and a file that does not end in a newline gets one first —
@@ -3004,6 +3031,18 @@ handle('repo:discard', async (repo, files, untracked) => {
   if (!list.length) throw new Error('Nothing was named to discard.');
   files = list;
 
+  /* A file added with `git add -N` is in the index with nothing in it, so
+     restoring it from the index wrote an empty file over its contents and left
+     it listed. It has no committed state to go back to: discarding it is what
+     discarding an untracked file is — it stops being known, and it goes. */
+  const fresh = await intentToAdd(repo, files);
+  if (fresh.length) {
+    await git(repo, ['rm', '--cached', '-q', '--', ...fresh]);
+    await git(repo, ['clean', '-f', '--', ...fresh]);
+    files = files.filter((f) => !fresh.includes(f));
+    if (!files.length) return '';
+  }
+
   if (untracked) return git(repo, ['clean', '-fd', '--', ...files]);
   try {
     return await git(repo, ['restore', '--worktree', '--', ...files]);
@@ -3011,6 +3050,13 @@ handle('repo:discard', async (repo, files, untracked) => {
     return git(repo, ['checkout', '--', ...files]);
   }
 });
+
+/* Which of these paths are intent-to-add: in the index, but only as a promise. */
+async function intentToAdd(repo, files) {
+  const raw = await git(repo, ['status', '--porcelain=v2', '-z', '--untracked-files=no', '--', ...files]);
+  return raw.split('\0').filter((l) => l.startsWith('1 .A ')).map((l) => l.split(' ').slice(8).join(' '))
+    .filter((p) => files.includes(p));
+}
 
 /** Apply a single hunk patch. action: stage | unstage | discard */
 handle('repo:applyPatch', async (repo, patch, action) => {
@@ -3250,7 +3296,8 @@ function operationState(gitDir) {
     const total = Number(readGitFile(gitDir, dir, 'end')) || 0;
     // head-name is "refs/heads/feature/x"; onto is a bare hash.
     const head = readGitFile(gitDir, dir, 'head-name').replace(/^refs\/heads\//, '');
-    return { kind: 'rebase', label: 'Rebasing', target: head, step, total };
+    return { kind: 'rebase', label: 'Rebasing', target: head, step, total,
+      onto: readGitFile(gitDir, dir, 'onto') };
   }
 
   if (gitPathExists(gitDir, 'CHERRY_PICK_HEAD')) {
@@ -3264,14 +3311,82 @@ function operationState(gitDir) {
   return null;
 }
 
-handle('repo:state', async (repo) => {
-  const gitDir = gitDirOf(repo);
-  return gitDir ? operationState(gitDir) : null;
-});
+/* Which of git's two sides of a conflict is the reader's own, and what to call
+   each one. git names them by position — `--ours` is whatever HEAD was when the
+   conflict happened, `--theirs` is what was being brought in — and that is the
+   reader's side in a merge, a cherry-pick, a revert and a stash apply. A rebase
+   turns it round: HEAD is the branch being rebased onto, and the commit being
+   replayed, the reader's own work, is `--theirs`. "Keep your version" mapped to
+   --ours there took the upstream's file, and the rebase then dropped the
+   reader's commit as empty.
+
+   This is the only place the mapping is written down. The window asks for a
+   side as "mine" or "incoming" and repo:resolve turns that into a stage here;
+   the labels travel with the operation state so the buttons say the same. */
+function conflictSides(op) {
+  const short = (h) => String(h || '').slice(0, 7);
+  switch (op?.kind) {
+    case 'rebase':
+      return {
+        mine: { stage: 'theirs', label: 'your commit (being replayed)' },
+        incoming: { stage: 'ours', label: `the ${op.ontoName || short(op.onto) || 'upstream'} version` },
+      };
+    case 'merge':
+      return {
+        mine: { stage: 'ours', label: 'your version' },
+        incoming: { stage: 'theirs', label: op.target ? `the ${op.target} version` : 'their version' },
+      };
+    case 'cherry-pick':
+      return {
+        mine: { stage: 'ours', label: 'your version' },
+        incoming: { stage: 'theirs', label: `the picked commit's version (${op.target})` },
+      };
+    case 'revert':
+      return {
+        mine: { stage: 'ours', label: 'your version' },
+        incoming: { stage: 'theirs', label: `the reverted version (undoing ${op.target})` },
+      };
+    default:
+      // No operation on record: a stash apply or pop, where --ours is the
+      // working tree it was applied to and --theirs is the stash.
+      return {
+        mine: { stage: 'ours', label: 'your version' },
+        incoming: { stage: 'theirs', label: 'the incoming version' },
+      };
+  }
+}
+
+/* The branch a rebase is going onto, by name when one points at it. git keeps
+   only the hash; a hash on a button says nothing to most readers. */
+async function ontoName(repo, onto) {
+  if (!onto) return '';
+  try {
+    const refs = (await git(repo, ['for-each-ref', `--points-at=${onto}`,
+      '--format=%(refname:short)', 'refs/heads', 'refs/remotes'])).split('\n').filter(Boolean);
+    return refs[0] || '';
+  } catch {
+    return '';
+  }
+}
 
 const ABORTABLE = {
   merge: 'merge', rebase: 'rebase', 'cherry-pick': 'cherry-pick', revert: 'revert',
 };
+
+/* A merge has no "skip": there is one commit being made and nothing after it. */
+const SKIPPABLE = {
+  rebase: 'rebase', 'cherry-pick': 'cherry-pick', revert: 'revert',
+};
+
+handle('repo:state', async (repo) => {
+  const gitDir = gitDirOf(repo);
+  const op = gitDir ? operationState(gitDir) : null;
+  if (!op) return null;
+  if (op.kind === 'rebase') op.ontoName = await ontoName(repo, op.onto);
+  op.sides = conflictSides(op);
+  op.canSkip = Boolean(SKIPPABLE[op.kind]);
+  return op;
+});
 
 handle('repo:abort', async (repo, kind) => {
   const cmd = ABORTABLE[kind];
@@ -3288,16 +3403,65 @@ handle('repo:continue', async (repo, kind) => {
   return git(repo, [cmd, '--continue'], { GIT_EDITOR: 'true' });
 });
 
-/** Take one side of a conflict wholesale, or accept the file as it now stands. */
+handle('repo:skip', async (repo, kind) => {
+  const cmd = SKIPPABLE[kind];
+  if (!cmd) throw new Error(`Nothing called "${kind}" can be skipped.`);
+  // Skipping moves on to the next commit, which may want its message accepted.
+  return git(repo, [cmd, '--skip'], { GIT_EDITOR: 'true' });
+});
+
+/* The stages git holds for one unmerged path: 1 the common ancestor, 2 ours,
+   3 theirs. A side that deleted the file has no stage at all. */
+async function unmergedStages(repo, filePath) {
+  const raw = await git(repo, ['ls-files', '-u', '-z', '--', filePath]);
+  const stages = new Set();
+  for (const rec of raw.split('\0')) {
+    const m = /^\d+ [0-9a-f]+ (\d)\t([\s\S]*)$/.exec(rec);
+    if (m && m[2] === filePath) stages.add(Number(m[1]));
+  }
+  return stages;
+}
+
+/** Take one side of a conflict wholesale, or accept the file as it now stands.
+    `side` is "mine" or "incoming" — which git stage that is depends on the
+    operation, and conflictSides() is where that is decided. */
 handle('repo:resolve', async (repo, filePath, side) => {
-  if (side === 'ours' || side === 'theirs') {
-    await git(repo, ['checkout', `--${side}`, '--', filePath]);
+  if (side === 'mine' || side === 'incoming') {
+    const gitDir = gitDirOf(repo);
+    const stage = conflictSides(gitDir ? operationState(gitDir) : null)[side].stage;
+    /* A side that deleted the file has no version to check out — git answers
+       "does not have our version" — and taking that side means the deletion.
+       Without this the side that removed a file could not be chosen at all. */
+    const stages = await unmergedStages(repo, filePath);
+    if (!stages.has(stage === 'ours' ? 2 : 3)) {
+      await git(repo, ['rm', '-q', '-f', '--', filePath]);
+      return { removed: true };
+    }
+    await git(repo, ['checkout', `--${stage}`, '--', filePath]);
   } else if (side !== 'mark') {
     throw new Error(`Unknown resolution "${side}".`);
   }
   // Staging a conflicted path is what tells git the conflict is settled.
   await git(repo, ['add', '--', filePath]);
-  return true;
+  return { removed: false };
+});
+
+/* Which of these files still hold a conflict marker. Marking such a file
+   resolved commits the markers, and git does not object; the window asks
+   first. A line starting with seven < or > (or the | of the diff3 style),
+   then a space or the end of the line, is what git writes. A bare ======= is
+   left out: it is also how a reStructuredText heading is underlined. */
+const MARKER = /^(?:<{7}|>{7}|\|{7})(?:[ \t]|\r?$)/m;
+
+handle('repo:conflictMarkers', async (repo, files) => {
+  const list = (Array.isArray(files) ? files : [files]).filter((f) => typeof f === 'string' && f);
+  const marked = [];
+  for (const f of list) {
+    let text;
+    try { text = fs.readFileSync(path.join(repo, f), 'utf8'); } catch { continue; }
+    if (MARKER.test(text)) marked.push(f);
+  }
+  return marked;
 });
 
 /* --- stash --- */
@@ -3379,11 +3543,33 @@ handle('repo:savePatch', async (repo, files, opts) => {
   return { path: filePath, bytes: Buffer.byteLength(patch), skipped };
 });
 
-handle('repo:stashApply', async (repo, ref, pop) =>
-  git(repo, ['stash', pop ? 'pop' : 'apply', ref])
+/* A stash@{n} is a position, not a name: every stash pushed since the list was
+   drawn moves each entry down one. The window hands over the hash it saw with
+   the ref, and the ref is checked against it here, at the moment it is used —
+   dropping stash@{0} from a list drawn before someone stashed in a terminal
+   dropped the new stash instead of the one that was clicked. If the entry has
+   moved it is found again by its hash; if it is gone, nothing is done. */
+async function stashAt(repo, ref, hash) {
+  if (!/^[0-9a-f]{40,64}$/i.test(String(hash || ''))) {
+    throw new Error('Which stash was meant is not known. Refresh and try again.');
+  }
+  let at = '';
+  try { at = (await git(repo, ['rev-parse', '--verify', '-q', String(ref)])).trim(); } catch { at = ''; }
+  if (at && at === hash) return ref;
+  const list = await git(repo, ['stash', 'list', '--format=%gd %H']).catch(() => '');
+  for (const line of list.split('\n')) {
+    const [gd, h] = line.trim().split(' ');
+    if (h && h === hash) return gd;
+  }
+  throw new Error('That stash is no longer in the list — it was dropped or applied elsewhere.');
+}
+
+handle('repo:stashApply', async (repo, ref, pop, hash) =>
+  git(repo, ['stash', pop ? 'pop' : 'apply', await stashAt(repo, ref, hash)])
 );
 
-handle('repo:stashDrop', async (repo, ref) => git(repo, ['stash', 'drop', ref]));
+handle('repo:stashDrop', async (repo, ref, hash) =>
+  git(repo, ['stash', 'drop', await stashAt(repo, ref, hash)]));
 
 /* --- misc --- */
 
